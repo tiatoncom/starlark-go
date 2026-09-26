@@ -18,10 +18,10 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/internal/spell"
-	"go.starlark.net/resolve"
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/internal/compile"
+	"github.com/tiatoncom/starlark-go/internal/spell"
+	"github.com/tiatoncom/starlark-go/resolve"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 // A Thread contains the state of a Starlark thread,
@@ -450,7 +450,7 @@ func (prog *Program) Init(thread *Thread, predeclared StringDict) (StringDict, e
 // syntactically a File, manipulates the same set of module globals,
 // which are not frozen after execution.
 //
-// This function is intended to support only go.starlark.net/repl.
+// This function is intended to support only github.com/tiatoncom/starlark-go/repl.
 // Its API stability is not guaranteed.
 func ExecREPLChunk(f *syntax.File, thread *Thread, globals StringDict) error {
 	var predeclared StringDict

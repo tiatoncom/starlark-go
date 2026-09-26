@@ -17,15 +17,15 @@ import (
 	"strings"
 	"testing"
 
-	"go.starlark.net/internal/chunkedfile"
-	"go.starlark.net/lib/json"
-	starlarkmath "go.starlark.net/lib/math"
-	starlarkproto "go.starlark.net/lib/proto"
-	"go.starlark.net/lib/time"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
-	"go.starlark.net/starlarktest"
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/internal/chunkedfile"
+	"github.com/tiatoncom/starlark-go/lib/json"
+	starlarkmath "github.com/tiatoncom/starlark-go/lib/math"
+	starlarkproto "github.com/tiatoncom/starlark-go/lib/proto"
+	"github.com/tiatoncom/starlark-go/lib/time"
+	"github.com/tiatoncom/starlark-go/starlark"
+	"github.com/tiatoncom/starlark-go/starlarkstruct"
+	"github.com/tiatoncom/starlark-go/starlarktest"
+	"github.com/tiatoncom/starlark-go/syntax"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 
@@ -1073,7 +1073,7 @@ func TestDeps(t *testing.T) {
 		slash := strings.IndexByte(pkg, '/')
 		dot := strings.IndexByte(pkg, '.')
 		if 0 < dot && dot < slash {
-			if strings.HasPrefix(pkg, "go.starlark.net/") ||
+			if strings.HasPrefix(pkg, "github.com/tiatoncom/starlark-go/") ||
 				strings.HasPrefix(pkg, "golang.org/x/sys/") {
 				continue // permitted dependencies
 			}

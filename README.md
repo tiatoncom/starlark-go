@@ -1,15 +1,18 @@
 
-<!-- This file is the project homepage for go.starlark.net -->
-
 # Starlark in Go
 
-[![Go Tests](https://github.com/google/starlark-go/actions/workflows/tests.yml/badge.svg)](https://github.com/google/starlark-go/actions/workflows/tests.yml)
-[![Go Reference](https://pkg.go.dev/badge/go.starlark.net/starlark.svg)](https://pkg.go.dev/go.starlark.net/starlark)
+> **tiatoncom fork** of [google/starlark-go](https://github.com/google/starlark-go),
+> published as `github.com/tiatoncom/starlark-go`. The fork bounds allocations
+> from concatenation, list extension, and string formatting. See
+> [fork maintenance](tiaton/README.md) for details and update instructions.
+
+[![Go Tests](https://github.com/tiatoncom/starlark-go/actions/workflows/tests.yml/badge.svg)](https://github.com/tiatoncom/starlark-go/actions/workflows/tests.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/tiatoncom/starlark-go/starlark.svg)](https://pkg.go.dev/github.com/tiatoncom/starlark-go/starlark)
 
 This is the home of the _Starlark in Go_ project.
 Starlark in Go is an interpreter for Starlark, implemented in Go.
 Starlark was formerly known as Skylark.
-The import path for the Go package is `"go.starlark.net/starlark"`.
+The import path for the Go package is `"github.com/tiatoncom/starlark-go/starlark"`.
 
 Starlark is a dialect of Python intended for use as a configuration language.
 Like Python, it is an untyped dynamic language with high-level data
@@ -40,7 +43,7 @@ languages and compilers.
 
 * About the Go implementation: [doc/impl.md](doc/impl.md)
 
-* API documentation: [pkg.go.dev/go.starlark.net/starlark](https://pkg.go.dev/go.starlark.net/starlark)
+* API documentation: [pkg.go.dev/github.com/tiatoncom/starlark-go/starlark](https://pkg.go.dev/github.com/tiatoncom/starlark-go/starlark)
 
 * Mailing list: [starlark-go](https://groups.google.com/forum/#!forum/starlark-go)
 
@@ -53,7 +56,7 @@ Build the code:
 ```shell
 # check out the code and dependencies,
 # and install interpreter in $GOPATH/bin
-$ go install go.starlark.net/cmd/starlark@latest
+$ go install github.com/tiatoncom/starlark-go/cmd/starlark@latest
 ```
 
 Run the interpreter:
@@ -94,7 +97,7 @@ When you have finished, type `Ctrl-D` to close the REPL's input stream.
 Embed the interpreter in your Go program:
 
 ```go
-import "go.starlark.net/starlark"
+import "github.com/tiatoncom/starlark-go/starlark"
 
 // Execute Starlark program in a file.
 thread := &starlark.Thread{Name: "my thread"}

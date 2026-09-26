@@ -4,7 +4,7 @@
 
 // The starlark command interprets a Starlark file.
 // With no arguments, it starts a read-eval-print loop (REPL).
-package main // import "go.starlark.net/cmd/starlark"
+package main // import "github.com/tiatoncom/starlark-go/cmd/starlark"
 
 import (
 	"flag"
@@ -15,13 +15,13 @@ import (
 	"runtime/pprof"
 	"strings"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/lib/json"
-	"go.starlark.net/lib/math"
-	"go.starlark.net/lib/time"
-	"go.starlark.net/repl"
-	"go.starlark.net/resolve"
-	"go.starlark.net/starlark"
+	"github.com/tiatoncom/starlark-go/internal/compile"
+	"github.com/tiatoncom/starlark-go/lib/json"
+	"github.com/tiatoncom/starlark-go/lib/math"
+	"github.com/tiatoncom/starlark-go/lib/time"
+	"github.com/tiatoncom/starlark-go/repl"
+	"github.com/tiatoncom/starlark-go/resolve"
+	"github.com/tiatoncom/starlark-go/starlark"
 	"golang.org/x/term"
 )
 
@@ -123,7 +123,7 @@ func doMain() int {
 	case flag.NArg() == 0:
 		stdinIsTerminal := term.IsTerminal(int(os.Stdin.Fd()))
 		if stdinIsTerminal {
-			fmt.Println("Welcome to Starlark (go.starlark.net)")
+			fmt.Println("Welcome to Starlark (github.com/tiatoncom/starlark-go)")
 		}
 		thread.Name = "REPL"
 		repl.REPL(thread, globals)

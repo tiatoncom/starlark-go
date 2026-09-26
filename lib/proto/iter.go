@@ -5,7 +5,7 @@ package proto
 import (
 	"iter"
 
-	"go.starlark.net/starlark"
+	"github.com/tiatoncom/starlark-go/starlark"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 

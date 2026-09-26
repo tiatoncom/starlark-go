@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 // smallLimit lowers maxAlloc so the tests need no large allocations.

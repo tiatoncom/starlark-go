@@ -3,7 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // Package time provides time-related constants and functions.
-package time // import "go.starlark.net/lib/time"
+package time // import "github.com/tiatoncom/starlark-go/lib/time"
 
 import (
 	"errors"
@@ -11,9 +11,9 @@ import (
 	"sort"
 	"time"
 
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/starlark"
+	"github.com/tiatoncom/starlark-go/starlarkstruct"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 // Module time is a Starlark module of time-related functions and constants.

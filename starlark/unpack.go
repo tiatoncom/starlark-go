@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 
-	"go.starlark.net/internal/spell"
+	"github.com/tiatoncom/starlark-go/internal/spell"
 )
 
 // An Unpacker defines custom argument unpacking behavior.

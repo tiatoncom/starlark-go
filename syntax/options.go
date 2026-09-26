@@ -9,7 +9,7 @@ import _ "unsafe" // for linkname
 // FileOptions specifies various per-file options that affect static
 // aspects of an individual file such as parsing, name resolution, and
 // code generation. (Options that affect global dynamics are typically
-// controlled through [go.starlark.net/starlark.Thread].)
+// controlled through [github.com/tiatoncom/starlark-go/starlark.Thread].)
 //
 // The zero value of FileOptions is the default behavior.
 //
@@ -19,7 +19,7 @@ import _ "unsafe" // for linkname
 // provided options. The second form is preferred. In other packages,
 // the modern version is a standalone function with a leading
 // FileOptions parameter and the name suffix "Options", such as
-// [go.starlark.net/starlark.ExecFileOptions].
+// [github.com/tiatoncom/starlark-go/starlark.ExecFileOptions].
 type FileOptions struct {
 	// resolver
 	Set               bool // allow references to the 'set' built-in function
@@ -52,12 +52,12 @@ func LegacyFileOptions() *FileOptions {
 
 // Access resolver (legacy) flags, if they are linked in; false otherwise.
 var (
-	//go:linkname resolverAllowSet go.starlark.net/resolve.AllowSet
+	//go:linkname resolverAllowSet github.com/tiatoncom/starlark-go/resolve.AllowSet
 	resolverAllowSet bool
-	//go:linkname resolverAllowGlobalReassign go.starlark.net/resolve.AllowGlobalReassign
+	//go:linkname resolverAllowGlobalReassign github.com/tiatoncom/starlark-go/resolve.AllowGlobalReassign
 	resolverAllowGlobalReassign bool
-	//go:linkname resolverAllowRecursion go.starlark.net/resolve.AllowRecursion
+	//go:linkname resolverAllowRecursion github.com/tiatoncom/starlark-go/resolve.AllowRecursion
 	resolverAllowRecursion bool
-	//go:linkname resolverLoadBindsGlobally go.starlark.net/resolve.LoadBindsGlobally
+	//go:linkname resolverLoadBindsGlobally github.com/tiatoncom/starlark-go/resolve.LoadBindsGlobally
 	resolverLoadBindsGlobally bool
 )

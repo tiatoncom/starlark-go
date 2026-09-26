@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.starlark.net/lib/json"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarktest"
+	"github.com/tiatoncom/starlark-go/lib/json"
+	"github.com/tiatoncom/starlark-go/starlark"
+	"github.com/tiatoncom/starlark-go/starlarktest"
 )
 
 func BenchmarkStarlark(b *testing.B) {

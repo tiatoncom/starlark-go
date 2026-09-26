@@ -64,7 +64,7 @@
 // through Starlark code and into callbacks.  When evaluation fails it
 // returns an EvalError from which the application may obtain a
 // backtrace of active Starlark calls.
-package starlark // import "go.starlark.net/starlark"
+package starlark // import "github.com/tiatoncom/starlark-go/starlark"
 
 // This file defines the data types of Starlark and their basic operations.
 
@@ -78,8 +78,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/internal/compile"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 // Value is a value in the Starlark interpreter.

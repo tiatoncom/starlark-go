@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"go.starlark.net/internal/compile"
-	"go.starlark.net/internal/spell"
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/internal/compile"
+	"github.com/tiatoncom/starlark-go/internal/spell"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 const vmdebug = false // TODO(adonovan): use a bitfield of specific kinds of error.

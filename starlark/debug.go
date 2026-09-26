@@ -1,7 +1,7 @@
 package starlark
 
 import (
-	"go.starlark.net/syntax"
+	"github.com/tiatoncom/starlark-go/syntax"
 )
 
 // This file defines an experimental API for the debugging tools.

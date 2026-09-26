@@ -1,4 +1,4 @@
-module go.starlark.net
+module github.com/tiatoncom/starlark-go
 
 go 1.25.0
 

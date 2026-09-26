@@ -6,7 +6,7 @@
 //
 // Usage:
 //
-//   $ cd $GOPATH/src/go.starlark.net
+//   $ cd $GOPATH/src/github.com/tiatoncom/starlark-go
 //   $ go run docs/update.go
 //
 package main
@@ -29,8 +29,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if filepath.Base(cwd) != "go.starlark.net" {
-		log.Fatalf("must run from the go.starlark.net directory")
+	if filepath.Base(cwd) != "github.com/tiatoncom/starlark-go" {
+		log.Fatalf("must run from the github.com/tiatoncom/starlark-go directory")
 	}
 
 	cmd := exec.Command("go", "list", "./...")
@@ -40,7 +40,7 @@ func main() {
 		log.Fatal(err)
 	}
 	for _, pkg := range strings.Split(strings.TrimSpace(fmt.Sprint(cmd.Stdout)), "\n") {
-		rel := strings.TrimPrefix(pkg, "go.starlark.net/") // e.g. "cmd/starlark"
+		rel := strings.TrimPrefix(pkg, "github.com/tiatoncom/starlark-go/") // e.g. "cmd/starlark"
 		subdir := filepath.Join("docs", rel)
 		if err := os.MkdirAll(subdir, 0777); err != nil {
 			log.Fatal(err)
@@ -60,7 +60,7 @@ func main() {
 
 const defaultHTML = `<html>
 <head>
-  <meta name="go-import" content="go.starlark.net git https://github.com/google/starlark-go"></meta>
+  <meta name="go-import" content="github.com/tiatoncom/starlark-go git https://github.com/google/starlark-go"></meta>
   <meta http-equiv="refresh" content="0;URL='http://godoc.org/$PKG'" /></meta>
 </head>
 <body>
