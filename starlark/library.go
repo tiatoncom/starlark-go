@@ -1102,7 +1102,12 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		// Invalid encodings are replaced by that of U+FFFD.
 		return String(utf8Transcode(string(x))), nil
 	default:
-		return String(x.String()), nil
+		// Report an error if a value's string form exceeds the size bound.
+		out := x.String()
+		if stringOverflowed(out) {
+			return nil, fmt.Errorf("str: value's string form exceeds the size limit")
+		}
+		return String(out), nil
 	}
 }
 
@@ -1364,7 +1369,9 @@ func list_extend(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	if err := recv.checkMutable("extend"); err != nil {
 		return nil, nameErr(b, err)
 	}
-	listExtend(recv, iterable)
+	if err := listExtend(recv, iterable); err != nil {
+		return nil, nameErr(b, err)
+	}
 	return None, nil
 }
 

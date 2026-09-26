@@ -619,18 +619,27 @@ func makeExprFunc(opts *syntax.FileOptions, expr syntax.Expr, env StringDict) (*
 // The following functions are primitive operations of the byte code interpreter.
 
 // list += iterable
-func listExtend(x *List, y Iterable) {
+func listExtend(x *List, y Iterable) error {
+	// Bound growth like repeat (maxAlloc). Repeated x += x doubles the list
+	// in a single step.
 	if ylist, ok := y.(*List); ok {
 		// fast path: list += list
+		if len(x.elems)+len(ylist.elems) >= maxAlloc {
+			return fmt.Errorf("excessive list extension (%d + %d elements)", len(x.elems), len(ylist.elems))
+		}
 		x.elems = append(x.elems, ylist.elems...)
 	} else {
 		iter := y.Iterate()
 		defer iter.Done()
 		var z Value
 		for iter.Next(&z) {
+			if len(x.elems) >= maxAlloc {
+				return fmt.Errorf("excessive list extension (over %d elements)", maxAlloc)
+			}
 			x.elems = append(x.elems, z)
 		}
 	}
+	return nil
 }
 
 // getAttr implements x.dot.
@@ -773,6 +782,11 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 		switch x := x.(type) {
 		case String:
 			if y, ok := y.(String); ok {
+				// Bound concatenation like repeat (maxAlloc). Repeated
+				// s = s + s doubles the string in a single step.
+				if len(x)+len(y) >= maxAlloc {
+					return nil, fmt.Errorf("excessive string concatenation (%d + %d bytes)", len(x), len(y))
+				}
 				return x + y, nil
 			}
 		case Int:
@@ -799,6 +813,11 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *List:
 			if y, ok := y.(*List); ok {
+				// Bound concatenation like repeat (maxAlloc). Repeated
+				// x = x + x doubles the list in a single step.
+				if x.Len()+y.Len() >= maxAlloc {
+					return nil, fmt.Errorf("excessive list concatenation (%d + %d elements)", x.Len(), y.Len())
+				}
 				z := make([]Value, 0, x.Len()+y.Len())
 				z = append(z, x.elems...)
 				z = append(z, y.elems...)
@@ -806,6 +825,10 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case Tuple:
 			if y, ok := y.(Tuple); ok {
+				// Bound concatenation like repeat (maxAlloc).
+				if len(x)+len(y) >= maxAlloc {
+					return nil, fmt.Errorf("excessive tuple concatenation (%d + %d elements)", len(x), len(y))
+				}
 				z := make(Tuple, 0, len(x)+len(y))
 				z = append(z, x...)
 				z = append(z, y...)
@@ -1137,7 +1160,11 @@ unknown:
 
 // It's always possible to overeat in small bites but we'll
 // try to stop someone swallowing the world in one gulp.
-const maxAlloc = 1 << 30
+// maxAlloc bounds the size of a single allocation made by one operation
+// (repeat, concatenation, list extension, string forms): elements for
+// lists/tuples, bytes for strings. It is a variable so package tests can
+// lower the limit.
+var maxAlloc = 1 << 30
 
 func tupleRepeat(elems Tuple, n Int) (Tuple, error) {
 	if len(elems) == 0 {
@@ -1152,7 +1179,7 @@ func tupleRepeat(elems Tuple, n Int) (Tuple, error) {
 	}
 	// Inv: i > 0, len > 0
 	of, sz := bits.Mul(uint(len(elems)), uint(i))
-	if of != 0 || sz >= maxAlloc { // of != 0 => overflow
+	if of != 0 || sz >= uint(maxAlloc) { // of != 0 => overflow
 		// Don't print sz.
 		return nil, fmt.Errorf("excessive repeat (%d * %d elements)", len(elems), i)
 	}
@@ -1184,7 +1211,7 @@ func stringRepeat(s String, n Int) (String, error) {
 	}
 	// Inv: i > 0, len > 0
 	of, sz := bits.Mul(uint(len(s)), uint(i))
-	if of != 0 || sz >= maxAlloc { // of != 0 => overflow
+	if of != 0 || sz >= uint(maxAlloc) { // of != 0 => overflow
 		// Don't print sz.
 		return "", fmt.Errorf("excessive repeat (%d * %d elements)", len(s), i)
 	}
@@ -1520,6 +1547,10 @@ func interpolate(format string, x Value) (Value, error) {
 		nargs = len(tuple)
 	}
 	for {
+		// Bound the interpolation result like repeat.
+		if buf.Len() >= maxAlloc {
+			return nil, fmt.Errorf("excessive string interpolation (over %d bytes)", maxAlloc)
+		}
 		i := strings.IndexByte(format, '%')
 		if i < 0 {
 			buf.WriteString(format)

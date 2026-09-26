@@ -1366,6 +1366,9 @@ func (s *Set) SymmetricDifference(other Iterator) (Value, error) {
 	return diff, nil
 }
 
+// writeValueOverflowMark ends a string form that hit the size bound.
+const writeValueOverflowMark = "...<truncated at size limit>"
+
 // toString returns the string form of value v.
 // It may be more efficient than v.String() for larger values.
 func toString(v Value) string {
@@ -1373,6 +1376,11 @@ func toString(v Value) string {
 	writeValue(buf, v, nil)
 	return buf.String()
 }
+
+// stringOverflowed reports whether a value's string form hit the size bound:
+// writeValue stops descending once the output reaches maxAlloc, so only a
+// bounded form is that long.
+func stringOverflowed(s string) bool { return len(s) >= maxAlloc }
 
 // writeValue writes x to out.
 //
@@ -1382,6 +1390,15 @@ func toString(v Value) string {
 // Callers should generally pass nil for path.
 // It is safe to re-use the same path slice for multiple calls.
 func writeValue(out *strings.Builder, x Value, path []Value) {
+	// A shared (non-cyclic) subgraph can expand exponentially in the
+	// string form. Stop at the size limit; callers that can report errors
+	// detect the marked output.
+	if out.Len() >= maxAlloc {
+		if !strings.Contains(out.String()[out.Len()-min(out.Len(), 64):], writeValueOverflowMark) {
+			out.WriteString(writeValueOverflowMark)
+		}
+		return
+	}
 	switch x := x.(type) {
 	case nil:
 		out.WriteString("<nil>") // indicates a bug

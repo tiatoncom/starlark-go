@@ -230,7 +230,9 @@ loop:
 					if err = xlist.checkMutable("apply += to"); err != nil {
 						break loop
 					}
-					listExtend(xlist, yiter)
+					if err = listExtend(xlist, yiter); err != nil {
+						break loop
+					}
 					z = xlist
 				}
 			}
