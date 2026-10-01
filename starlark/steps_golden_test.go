@@ -31,6 +31,8 @@ d = {}
 for i in range(N // 10):
     d[i] = i
 e = dict(d)
+lk = 'k' * 200000
+dk = {lk: 1}
 s = 'ab' * (K // 2)
 w = 'a' * K
 sp = 'ab ' * (K // 3)
@@ -157,6 +159,15 @@ var stepsOps = []struct{ name, op string }{
 	{"s * 3", "r = s * 3"},
 	{"s == w", "r = s == s[:-1] + 'b'"},
 	{"s < w", "r = s < w"},
+	{"st - st", "r = st - st"},
+	{"st ^ st", "r = st ^ st"},
+	{"d |= e", "d |= e"},
+	{"long key in dict", "r = lk in dk"},
+	{"long key in set", "r = lk in set([1])"},
+	{"dk[long key]", "r = dk[lk]"},
+	{"dk[long key] = 1", "dk[lk] = 2"},
+	{"d.get(long key)", "r = dk.get(lk)"},
+	{"'%(key)s' % dk", "r = ('%(' + lk + ')s') % dk"},
 	{"set(strs) (hash of long strings)", "r = set(strs)"},
 	{"set(bk) (hash of long bytes)", "r = set(bk)"},
 	{"set(tl) (hash of long tuples)", "r = set(tl)"},
