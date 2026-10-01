@@ -394,9 +394,22 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 				}
 				*garbage = satAdd(*garbage, n)
 			}
+			var keyBytes uint64
 			for _, item := range items {
-				if _, ok := item[0].(starlark.String); !ok {
+				k, ok := item[0].(starlark.String)
+				if !ok {
 					return fmt.Errorf("%s has %s key, want string", x.Type(), item[0].Type())
+				}
+				keyBytes += uint64(len(k))
+			}
+			// The sort is paid by a formula of the size, not by the comparisons
+			// that sort.Slice makes (their number is not the same in every
+			// version of Go): log2(n) rounds, each of two units for a key (a
+			// comparison and a move) and a unit for 64 bytes that are compared.
+			if n := uint64(len(items)); n > 1 {
+				if err := work.add(uint64(bits.Len64(n-1)) * (2*n + keyBytes/64)); err != nil {
+					stop = err
+					return err
 				}
 			}
 			sort.Slice(items, func(i, j int) bool {

@@ -195,6 +195,35 @@ r = [hash(s) for s in ["", "a", "abc", "hello world", "key-long-prefix-1", "x" *
 	}
 }
 
+// hashByLength are the hashes of the prefixes of a text, by length: FNV-1a up to
+// 11 bytes (as in v0.2.0), and from 12 bytes the fixed-key hash of hashtable.go
+// (v0.2.0 had one with a random seed there). A change of the function, of the
+// length at which it begins, or of the way it takes the bytes at the end, is a
+// change of the steps of every program that keeps such keys in a dict.
+var hashByLength = []uint32{
+	2166136261, 3507227459, 1089836209, 379144636, 793698452, 1579944063, 1230022590, 1090008949,
+	1556002722, 3376107883, 325122321, 4104695817, 1541095329, 1880947173, 1252006628, 879963087,
+	1554180710, 597779906, 4163389171, 4286725217, 2091802317, 329542255, 211147958, 3975057898,
+	4269330920, 2260966766, 1785926101, 943013459, 1978570197, 3008203101, 2670924539, 186583636,
+	1398587218, 917064843, 1439953342, 2958933362, 252502126, 4125134233, 130905657, 759191180,
+	2397680512, 1913793607, 1097170107, 1091321398, 3890381201, 1321695116, 2738376740, 1650508382,
+	1362493484, 4088720849,
+}
+
+func TestDeterminism_HashOfEveryLength(t *testing.T) {
+	base := "The quick brown fox jumps over the lazy dog 0123456789 ABCDEFGHIJ"
+	for n, want := range hashByLength {
+		if got := hashString(base[:n]); got != want {
+			t.Errorf("hashString of %d bytes = %d, want %d", n, got, want)
+		}
+	}
+	for n := 0; n < 12; n++ {
+		if got, want := hashString(base[:n]), softHashString(base[:n]); got != want {
+			t.Errorf("hashString of %d bytes = %d, not the FNV-1a hash %d", n, got, want)
+		}
+	}
+}
+
 // The hash spreads the keys that programs make: names with a counter, a long
 // common prefix or suffix, the same character repeated, keys that differ in
 // one byte at any place. A bad hash is a long chain, which costs steps.

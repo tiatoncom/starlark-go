@@ -331,3 +331,33 @@ func TestErrValue_TheBoundaryIsExact(t *testing.T) {
 		t.Errorf("a long list: %q", long)
 	}
 }
+
+// The size of the form of a value in an error message is 256 bytes: the text of
+// a name or of a value up to it is whole, as it was in v0.2.0, and a longer one is
+// cut there. (The constant is not used: a change of it is a change of every
+// message of that kind.)
+func TestErrValue_TheLimitIs256Bytes(t *testing.T) {
+	for _, n := range []int{250, 253, 254, 255, 256, 257, 300, 1000} {
+		s := String(strings.Repeat("k", n))
+		got := errValue(s)
+		if n+2 <= 256 { // with the quotes
+			if want := `"` + string(s) + `"`; got != want {
+				t.Errorf("a string of %d bytes: got %d bytes, want it whole", n, len(got))
+			}
+			continue
+		}
+		if want := `"` + strings.Repeat("k", 255) + writeValueOverflowMark; got != want {
+			t.Errorf("a string of %d bytes: got %q (%d bytes), want the first 256 bytes and the mark", n, got, len(got))
+		}
+	}
+	for _, n := range []int{255, 256, 257} {
+		name := strings.Repeat("n", n)
+		got := errStr(name)
+		if n <= 256 && got != name {
+			t.Errorf("a name of %d bytes was cut", n)
+		}
+		if n > 256 && got != strings.Repeat("n", 256)+fmt.Sprintf("...<%d bytes>", n) {
+			t.Errorf("a name of %d bytes: got %q", n, got)
+		}
+	}
+}

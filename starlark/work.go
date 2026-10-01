@@ -75,6 +75,17 @@ func (e *WorkBudgetError) Error() string {
 // operation would take it over the limit, the operation fails with a
 // *WorkBudgetError and the thread is cancelled. A limit of 0, the default,
 // means no limit: the work is counted all the same.
+//
+// The limit is the bound of the CPU that a program may use, and it is the only
+// one that does not depend on the data of the program: it is checked at every
+// opcode and at every chunk of work of an operation. What it does not do is to
+// bound the time on the wall clock (a goroutine that waits is not working), so
+// a host that must also bound the elapsed time calls Thread.Cancel from another
+// goroutine: a cancellation is noticed at the next opcode and at the next
+// charge of an operation, which is a chunk of at most a thousand units (a
+// polling of OnMaxSteps alone does not see the inside of a long operation).
+// The limit is a property of one Thread: the threads that a program starts
+// itself (load) are not limited unless the host sets the limit on each.
 func (thread *Thread) SetMaxWork(max uint64) {
 	thread.maxWork = max
 	thread.regate()
@@ -100,8 +111,9 @@ func (thread *Thread) Work() uint64 {
 // a few hundred units at a time is as promptly stopped as a chunk of one).
 // n = 0 is free.
 //
-// Like every method of Thread that changes it, ChargeWork must be called only
-// from the goroutine that runs the thread.
+// ChargeWork, like every method of Thread that changes it (and like Work,
+// Steps and AllocatedBytes), must be called only from the goroutine that runs
+// the thread; only Cancel may be called from another one.
 func (thread *Thread) ChargeWork(n uint64) error {
 	if thread == nil {
 		return nil

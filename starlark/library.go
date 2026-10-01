@@ -1333,7 +1333,7 @@ func (s *sortSlice) Less(i, j int) bool {
 		keys = s.values
 	}
 	if s.stop != nil {
-		return false // the steps are used up: stop the work of the comparisons
+		return false // the work is used up: stop the comparisons
 	}
 	if err := s.m.add(1); err != nil {
 		s.stop = err
@@ -1342,6 +1342,9 @@ func (s *sortSlice) Less(i, j int) bool {
 	ok, err := compareM(&s.m, syntax.LT, keys[i], keys[j], CompareLimit)
 	if err != nil {
 		s.err = err // (as before, the last error is the one reported)
+		if isResourceError(err) {
+			s.stop = err // a refusal of a limit ends the work: no more comparisons
+		}
 	}
 	return ok
 }

@@ -1,12 +1,12 @@
 encode(x)	284028
 encode(sx)	40903
-encode(d)	129932
+encode(d)	420614
 encode(nested)	83057
 encode(bn)	2583
 encode(long string)	125001
 encode(string with escapes)	190626
 encode_indent(x)	504861
-encode_indent(d)	177849
+encode_indent(d)	468531
 decode(s)	200004
 decode(sd)	240868
 decode(ss)	30004
@@ -19,13 +19,13 @@ indent(sd)	47917
 indent(ss)	37083
 small: encode(x)	2216
 small: encode(sx)	347
-small: encode(d)	776
+small: encode(d)	2204
 small: encode(nested)	707
 small: encode(bn)	2583
 small: encode(long string)	1251
 small: encode(string with escapes)	1907
 small: encode_indent(x)	3674
-small: encode_indent(d)	1106
+small: encode_indent(d)	2534
 small: decode(s)	2004
 small: decode(sd)	1567
 small: decode(ss)	304
