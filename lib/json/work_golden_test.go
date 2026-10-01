@@ -1,7 +1,7 @@
 package json_test
 
-// The steps that encode, decode and indent cost on large and on small
-// operands, exactly, in testdata/steps.golden: every price of the module
+// The work that encode, decode and indent cost, beyond the steps, on large and small
+// operands, exactly, in testdata/work.golden: every price of the module
 // (a unit a value, a quarter a byte quoted, the digits of an integer squared)
 // is a line that changes if it is dropped. STARLARK_WRITE_STEPS=1 writes it.
 
@@ -63,15 +63,15 @@ func jsonSteps(t *testing.T, setup, op string) (uint64, error) {
 	extra := starlark.StringDict{
 		"json": json.Module,
 		"reset": starlark.NewBuiltin("reset", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
-			base = th.Steps
+			base = th.Work() - th.Steps
 			return starlark.None, nil
 		}),
 	}
 	_, err := starlark.ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, TopLevelControl: true}, th, "t.star", setup+"\nreset()\n"+op+"\n", extra)
-	return th.Steps - base, err
+	return th.Work() - th.Steps - base, err
 }
 
-func TestJSON_StepsGolden(t *testing.T) {
+func TestJSON_WorkGolden(t *testing.T) {
 	var got strings.Builder
 	for _, scale := range []struct {
 		name string
@@ -86,11 +86,11 @@ func TestJSON_StepsGolden(t *testing.T) {
 			}
 			fmt.Fprintf(&got, "%s%s\t%d\n", scale.name, o.name, n)
 			if n < 50 && scale.name == "" && o.name != "encode(bn)" && o.name != "decode(4000 digits)" {
-				t.Errorf("%s: %d steps for an operation on a large operand", o.name, n)
+				t.Errorf("%s: %d units of work for an operation on a large operand", o.name, n)
 			}
 		}
 	}
-	const file = "testdata/steps.golden"
+	const file = "testdata/work.golden"
 	if os.Getenv("STARLARK_WRITE_STEPS") != "" {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatal(err)

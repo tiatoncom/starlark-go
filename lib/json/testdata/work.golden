@@ -1,0 +1,38 @@
+encode(x)	284028
+encode(sx)	40903
+encode(d)	129932
+encode(nested)	83057
+encode(bn)	2583
+encode(long string)	125001
+encode(string with escapes)	190626
+encode_indent(x)	504861
+encode_indent(d)	177849
+decode(s)	200004
+decode(sd)	240868
+decode(ss)	30004
+decode(floats)	200006
+decode(4000 digits)	4041
+decode(long string)	125001
+decode(string with escapes)	125001
+indent(s)	220833
+indent(sd)	47917
+indent(ss)	37083
+small: encode(x)	2216
+small: encode(sx)	347
+small: encode(d)	776
+small: encode(nested)	707
+small: encode(bn)	2583
+small: encode(long string)	1251
+small: encode(string with escapes)	1907
+small: encode_indent(x)	3674
+small: encode_indent(d)	1106
+small: decode(s)	2004
+small: decode(sd)	1567
+small: decode(ss)	304
+small: decode(floats)	2006
+small: decode(4000 digits)	4041
+small: decode(long string)	1251
+small: decode(string with escapes)	1251
+small: indent(s)	1458
+small: indent(sd)	330
+small: indent(ss)	295

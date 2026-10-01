@@ -27,8 +27,9 @@ type run struct {
 	th      *starlark.Thread
 	err     error
 	marks   []uint64
-	memMark uint64 // runtime TotalAlloc at the first mark()
-	memEnd  uint64 // and when the program ended
+	works   []uint64 // Work() at each mark()
+	memMark uint64   // runtime TotalAlloc at the first mark()
+	memEnd  uint64   // and when the program ended
 }
 
 func exec(t *testing.T, budget uint64, src string) *run {
@@ -39,6 +40,7 @@ func exec(t *testing.T, budget uint64, src string) *run {
 		"json": json.Module,
 		"mark": starlark.NewBuiltin("mark", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
 			r.marks = append(r.marks, th.AllocatedBytes())
+			r.works = append(r.works, th.Work())
 			if len(r.marks) == 1 {
 				var ms runtime.MemStats
 				runtime.ReadMemStats(&ms)
@@ -274,33 +276,75 @@ func itoa(n int) string {
 	return string(d)
 }
 
-// ---- time: the work of encode, decode and indent is charged in steps ----
+// ---- time: the work of encode, decode and indent is charged as work ----
 
-func TestJSON_WorkIsChargedInSteps(t *testing.T) {
-	// 20000 numbers: ~20000 nodes to write, quoted bytes, a list: well past the
-	// free window; v0.2.0 charged the 4 steps of the calls.
-	r := exec(t, 0, "x = [i for i in range(20000)]\ns = json.encode(x)\nmark()\ny = json.decode(s)\nmark()\nz = json.indent(s)\nmark()\n")
+func TestJSON_WorkIsChargedAsWork(t *testing.T) {
+	// 20000 numbers: ~20000 nodes to write, quoted bytes, a list: a unit a node
+	// at least, besides the steps of the program.
+	r := exec(t, 0, "x = [i for i in range(20000)]\nmark()\ns = json.encode(x)\nmark()\ny = json.decode(s)\nmark()\nz = json.indent(s)\nmark()\n")
 	if r.err != nil {
 		t.Fatal(r.err)
 	}
-	base := exec(t, 0, "x = [i for i in range(20000)]\n")
-	if r.th.Steps-base.th.Steps < 2000 {
-		t.Errorf("encode, decode and indent of 20000 numbers cost %d steps beyond the list", r.th.Steps-base.th.Steps)
+	if got := r.works[1] - r.works[0]; got < 20000 {
+		t.Errorf("encode of 20000 numbers was charged %d units of work", got)
 	}
-	// And with a limit they are stopped: encode of a large value is refused,
-	// not run to the end.
+	if got := r.works[2] - r.works[1]; got < 20000 {
+		t.Errorf("decode of 20000 numbers was charged %d units of work", got)
+	}
+	if got := r.works[3] - r.works[2]; got < 20000/4 {
+		t.Errorf("indent of 20000 numbers was charged %d units of work", got)
+	}
+	// The steps are those of the program alone, as without the calls.
+	if base := exec(t, 0, "x = [i for i in range(20000)]\nmark()\ns = 1\nmark()\ny = 1\nmark()\nz = 1\nmark()\n"); r.th.Steps-base.th.Steps > 20 {
+		t.Errorf("%d steps for the three calls: the work of the module is not in them", r.th.Steps-base.th.Steps)
+	}
+	// With a limit of work they are stopped: encode of a large value is
+	// refused, not run to the end.
 	th := &starlark.Thread{}
-	th.SetMaxExecutionSteps(30_000)
+	th.SetMaxWork(300_000)
 	_, err := starlark.ExecFileOptions(&syntax.FileOptions{TopLevelControl: true, GlobalReassign: true}, th, "t.star",
 		"x = [i for i in range(20000)]\nfor i in range(100): s = json.encode(x)\n", starlark.StringDict{"json": json.Module})
-	if err == nil || !strings.Contains(err.Error(), "too many steps") {
-		t.Fatalf("err = %v (steps %d)", err, th.Steps)
+	var we *starlark.WorkBudgetError
+	if !errors.As(err, &we) {
+		t.Fatalf("err = %v (work %d)", err, th.Work())
 	}
-	// A small value is not charged: the steps of the calls are those of v0.2.0.
-	small := exec(t, 0, "s = json.encode([1, 2, {'a': 'b'}])\ny = json.decode(s)\nz = json.indent(s)\n")
-	smallBase := exec(t, 0, "s = '[1, 2, {\"a\": \"b\"}]'\n")
-	if small.th.Steps-smallBase.th.Steps > 20 {
-		t.Errorf("small json calls cost %d steps", small.th.Steps-smallBase.th.Steps)
+	if th.Work() != 300_000 {
+		t.Errorf("work %d after the refusal, want the limit", th.Work())
+	}
+}
+
+// A value of the host that counts the nodes that encode asks it to write.
+type countingMarshaler struct{ n *int }
+
+func (c countingMarshaler) String() string               { return "counting" }
+func (c countingMarshaler) Type() string                 { return "counting" }
+func (c countingMarshaler) Freeze()                      {}
+func (c countingMarshaler) Truth() starlark.Bool         { return true }
+func (c countingMarshaler) Hash() (uint32, error)        { return 0, nil }
+func (c countingMarshaler) MarshalJSON() ([]byte, error) { *c.n++; return []byte("1"), nil }
+
+// One operation is stopped near the limit of work, not at its end: encode of a
+// list of 400000 values stops after about the units that the limit allows (a
+// chunk of metering past it), and writes no more of the list.
+func TestJSON_AnOperationIsStoppedNearTheLimit(t *testing.T) {
+	var n int
+	l := starlark.NewList(nil)
+	for i := 0; i < 400000; i++ {
+		l.Append(countingMarshaler{&n})
+	}
+	th := &starlark.Thread{}
+	th.SetMaxWork(5000)
+	_, err := starlark.Call(th, json.Module.Members["encode"], starlark.Tuple{l}, nil)
+	var we *starlark.WorkBudgetError
+	if !errors.As(err, &we) {
+		t.Fatalf("err = %v", err)
+	}
+	// a node is at least a unit: at most 5000 + a chunk of them were written
+	if n > 5000+2048 {
+		t.Errorf("%d of 400000 nodes were written under a limit of 5000 units", n)
+	}
+	if th.Work() != 5000 {
+		t.Errorf("work %d, want the limit", th.Work())
 	}
 }
 
@@ -342,37 +386,5 @@ func TestJSON_BigIntegersHaveTheDigitLimit(t *testing.T) {
 	r = exec(t, 0, "y = json.decode('1' * 4300)\n")
 	if r.err != nil {
 		t.Errorf("decode of 4300 digits: %v", r.err)
-	}
-}
-
-// One operation is stopped near the limit of steps, not at its end.
-func TestJSON_AnOperationIsStoppedNearTheLimit(t *testing.T) {
-	for _, op := range []string{"s = json.encode(x)", "y = json.decode(s)", "z = json.indent(s)"} {
-		th := &starlark.Thread{}
-		th.SetMaxExecutionSteps(50_000_000)
-		var base uint64
-		extra := starlark.StringDict{
-			"json": json.Module,
-			"limit": starlark.NewBuiltin("limit", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
-				base = th.Steps
-				th.SetMaxExecutionSteps(th.Steps + 2000)
-				return starlark.None, nil
-			}),
-		}
-		_, err := starlark.ExecFileOptions(&syntax.FileOptions{TopLevelControl: true, GlobalReassign: true}, th, "t.star",
-			"x = [i for i in range(400000)]\ns = json.encode(x)\nlimit()\n"+op+"\n", extra)
-		if err == nil || !strings.Contains(err.Error(), "too many steps") {
-			t.Errorf("%s: err = %v", op, err)
-			continue
-		}
-		// 400000 numbers are ~100k steps: stopped within a chunk (256 steps) of the
-		// limit. (indent is charged whole before it runs, so it is refused, not
-		// stopped.)
-		if strings.HasPrefix(op, "z = ") {
-			continue
-		}
-		if over := th.Steps - (base + 2000); over > 600 {
-			t.Errorf("%s: stopped %d steps past the limit", op, over)
-		}
 	}
 }

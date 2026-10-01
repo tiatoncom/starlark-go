@@ -553,7 +553,8 @@ func quotedLen(s string) int {
 // budget error as it is (it is recognized by type, and its text is fixed),
 // and any other with the name of b.
 func allocErr(b *starlark.Builtin, err error) error {
-	if _, ok := err.(*starlark.AllocBudgetError); ok {
+	switch err.(type) {
+	case *starlark.AllocBudgetError, *starlark.WorkBudgetError:
 		return err
 	}
 	if strings.HasPrefix(err.Error(), "Starlark computation cancelled") {
