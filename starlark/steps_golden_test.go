@@ -168,6 +168,7 @@ var stepsOps = []struct{ name, op string }{
 	{"long key in set", "r = lk in set([1])"},
 	{"dk[long key]", "r = dk[lk]"},
 	{"dk[long key] = 1", "dk[lk] = 2"},
+	{"{long key: 1} (a literal)", "r = {lk: 1}"},
 	{"d.get(long key)", "r = dk.get(lk)"},
 	{"'%(key)s' % dk", "r = ('%(' + lk + ')s') % dk"},
 	{"set(strs) (hash of long strings)", "r = set(strs)"},

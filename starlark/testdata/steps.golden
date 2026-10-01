@@ -108,6 +108,7 @@ long key in dict	202
 long key in set	107
 dk[long key]	202
 dk[long key] = 1	204
+{long key: 1} (a literal)	106
 d.get(long key)	203
 '%(key)s' % dk	397
 set(strs) (hash of long strings)	230
@@ -226,6 +227,7 @@ small: long key in dict	202
 small: long key in set	107
 small: dk[long key]	202
 small: dk[long key] = 1	204
+small: {long key: 1} (a literal)	106
 small: d.get(long key)	203
 small: '%(key)s' % dk	397
 small: set(strs) (hash of long strings)	230
