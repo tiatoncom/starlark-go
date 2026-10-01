@@ -250,9 +250,7 @@ func bytes_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		return x, nil
 	case String:
 		// Invalid encodings are replaced by that of U+FFFD.
-		if err := thread.chargeBytes(len(x)); err != nil {
-			return nil, excess(err, "bytes: excessive size (%d bytes)", len(x))
-		}
+		// (Call charges the result: a valid string is returned as is.)
 		return Bytes(utf8Transcode(string(x))), nil
 	case Iterable:
 		// iterable of numeric byte values
@@ -1004,13 +1002,10 @@ func repr(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	limit := thread.stringLimit()
 	buf := new(strings.Builder)
 	writeValueLimit(buf, x, nil, limit)
-	out := buf.String()
-	if err := thread.chargeBytes(len(out)); err != nil && err != errExcessive {
-		return nil, err
-	}
-	// At the ceiling repr returns the bounded form (see writeValue); Call
-	// charges its bytes to the budget.
-	return String(out), nil
+	// The form is bounded by the limit, as in str; but where str reports an
+	// error, repr returns the bounded form (see writeValue). Call charges
+	// its bytes to the budget, and refuses a form that outgrew it.
+	return String(buf.String()), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#reversed
@@ -1174,9 +1169,7 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		return x, nil
 	case Bytes:
 		// Invalid encodings are replaced by that of U+FFFD.
-		if err := thread.chargeBytes(len(x)); err != nil {
-			return nil, excess(err, "str: bytes value exceeds the size limit")
-		}
+		// (Call charges the result: a valid string is returned as is.)
 		return String(utf8Transcode(string(x))), nil
 	default:
 		// Report an error if a value's string form exceeds the size bound
@@ -2035,9 +2028,7 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 			elems = append(elems, x)
 		}
 	}
-	if err := thread.chargeBytes(total); err != nil {
-		return nil, excess(err, "join: excessive result size")
-	}
+	// total is below the limit: Call charges the result.
 	buf := new(strings.Builder)
 	buf.Grow(total)
 	for i, x := range elems {

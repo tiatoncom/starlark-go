@@ -11,6 +11,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +30,8 @@ type progRun struct {
 	marks   []uint64 // AllocatedBytes at each call of mark()
 	traced  []int    // arguments of trace()
 	printed int      // number of print calls
+	memMark uint64   // runtime TotalAlloc at the first mark()
+	memEnd  uint64   // runtime TotalAlloc when the program ended
 }
 
 // runProg executes src on a fresh thread with the given budget (0: none).
@@ -48,6 +51,11 @@ func runProgWith(t *testing.T, budget uint64, src string, extra StringDict) *pro
 	predeclared := StringDict{
 		"mark": NewBuiltin("mark", func(th *Thread, _ *Builtin, _ Tuple, _ []Tuple) (Value, error) {
 			r.marks = append(r.marks, th.AllocatedBytes())
+			if len(r.marks) == 1 {
+				var ms runtime.MemStats
+				runtime.ReadMemStats(&ms)
+				r.memMark = ms.TotalAlloc
+			}
 			return None, nil
 		}),
 		"trace": NewBuiltin("trace", func(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
@@ -64,6 +72,9 @@ func runProgWith(t *testing.T, budget uint64, src string, extra StringDict) *pro
 	}
 	opts := &syntax.FileOptions{GlobalReassign: true, Set: true, While: true, TopLevelControl: true}
 	_, r.err = ExecFileOptions(opts, r.th, "t.star", src, predeclared)
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	r.memEnd = ms.TotalAlloc
 	return r
 }
 
@@ -232,6 +243,10 @@ var refuseCases = []struct {
 	nBudget int
 	ceil    string // source for the ceiling test; "" means src
 	nCeil   int    // 0: the result cannot exceed the ceiling without an operand doing so
+	// late: the operation builds its result up to the limit of the thread
+	// before it is refused (a string form cannot be sized in advance); every
+	// other operation is refused before it allocates the result.
+	late bool
 }{
 	{name: "str*n", src: "s = 'abc'\nmark()\nr = s * {N}", nBudget: 400000, nCeil: 30000},
 	{name: "bytes*n", src: "s = b'abc'\nmark()\nr = s * {N}", nBudget: 400000, nCeil: 30000},
@@ -242,13 +257,14 @@ var refuseCases = []struct {
 	{name: "tuple+tuple", src: "s = (1,) * {N}\nmark()\nr = s + s", nBudget: 40000, nCeil: 40000},
 	{name: "list+=list", src: "s = [1] * {N}\nmark()\ns += s", nBudget: 40000, nCeil: 40000},
 	{name: "list.extend", src: "s = [1] * {N}\nmark()\ns.extend(s)", nBudget: 40000, nCeil: 40000},
-	{name: "%", src: "s = 'a' * {N}\nmark()\nr = '%s%s' % (s, s)", nBudget: 600000, nCeil: 40000},
-	{name: "str(x)", src: "s = 'a' * {N}\nmark()\nr = str([s, s])", nBudget: 600000, nCeil: 40000},
-	{name: "repr(x)", src: "s = 'a' * {N}\nmark()\nr = repr([s, s])", nBudget: 600000}, // repr truncates at the ceiling
-	{name: "print", src: "s = 'a' * {N}\nmark()\nprint(s)", nBudget: 600000},
+	{name: "%", src: "s = 'a' * {N}\nmark()\nr = '%s%s' % (s, s)", nBudget: 600000, nCeil: 40000, late: true},
+	{name: "str(x)", src: "s = 'a' * {N}\nmark()\nr = str([s, s])", nBudget: 600000, nCeil: 40000, late: true},
+	{name: "repr(x)", src: "s = 'a' * {N}\nmark()\nr = repr([s, s])", nBudget: 600000, late: true}, // repr truncates at the ceiling
+	{name: "print", src: "s = 'a' * {N}\nmark()\nprint(s)", nBudget: 600000, late: true},
 	{name: "replace", src: "s = 'a' * {N}\nt = 'b' * {N}\nmark()\nr = s.replace('a', t)", nBudget: 1100, nCeil: 300},
 	{name: "join", src: "s = 'x' * {N}\nparts = [s, s, s]\nmark()\nr = s.join(parts)", nBudget: 300000, nCeil: 20000},
-	{name: "format", src: "s = 'a' * {N}\nmark()\nr = '{}{}'.format(s, s)", nBudget: 600000, nCeil: 40000},
+	{name: "format", src: "s = 'a' * {N}\nmark()\nr = '{}{}'.format(s, s)", nBudget: 600000, nCeil: 40000, late: true},
+	{name: "format/trailing literal", src: "s = 'a' * {N}\nf = '{}' + s\nmark()\nr = f.format(s)", nBudget: 300000, nCeil: 40000, late: true},
 	{name: "bytes(range)", src: "mark()\nr = bytes(range({N}))", nBudget: 2000000, nCeil: 70000},
 	{name: "bytes(str)", src: "s = 'a' * {N}\nmark()\nr = bytes(s)", nBudget: 600000},
 	{name: "list(range)", src: "mark()\nr = list(range({N}))", nBudget: 100000, nCeil: 70000},
@@ -318,6 +334,29 @@ func TestAllocBudget_RefusesOverBudget(t *testing.T) {
 		// The refused operation charged nothing.
 		if len(r.marks) != 1 || r.th.AllocatedBytes() != r.marks[0] {
 			t.Errorf("%s: refused operation charged: marks %v, allocated %d", c.name, r.marks, r.th.AllocatedBytes())
+		}
+	}
+}
+
+// A refused operation must be refused before it allocates its result: the
+// charge in Call, which counts a result after it is made, would give the same
+// error and the same count, but only after the memory was spent. The runtime's
+// count of bytes allocated since the mark bounds what the refused operation
+// allocated; it is far below the size of the result.
+func TestAllocBudget_RefusalPrecedesAllocation(t *testing.T) {
+	const slack = 16 << 10 // the error, its backtrace
+	for _, c := range refuseCases {
+		if c.nBudget == 0 || c.late {
+			continue
+		}
+		budget := c.budget
+		if budget == 0 {
+			budget = budgetMiB
+		}
+		r := runProg(t, budget, withN(c.src, c.nBudget))
+		wantBudgetErr(t, r, budget)
+		if spent := r.memEnd - r.memMark; spent > slack {
+			t.Errorf("%s: the refused operation allocated %d bytes, want at most %d", c.name, spent, slack)
 		}
 	}
 }
@@ -891,5 +930,66 @@ func TestAllocBudget_EndlessIterableIsStopped(t *testing.T) {
 				t.Errorf("without a budget: err = %v", r.err)
 			}
 		})
+	}
+}
+
+// ---- mappings of unknown length ----
+
+// A lazyMap is an IterableMapping without a Len: its items are materialized
+// by Items, which cannot be charged before it is called.
+type lazyMap struct{ n int }
+
+func (m lazyMap) String() string                 { return "lazy_map" }
+func (m lazyMap) Type() string                   { return "lazy_map" }
+func (m lazyMap) Freeze()                        {}
+func (m lazyMap) Truth() Bool                    { return True }
+func (m lazyMap) Hash() (uint32, error)          { return 0, errors.New("unhashable") }
+func (m lazyMap) Get(Value) (Value, bool, error) { return nil, false, nil }
+func (m lazyMap) Iterate() Iterator              { return lazyIter{n: m.n}.Iterate() }
+func (m lazyMap) Items() []Tuple {
+	items := make([]Tuple, m.n)
+	for i := range items {
+		items[i] = Tuple{String("k" + strconv.Itoa(i)), MakeInt(i)}
+	}
+	return items
+}
+
+func lazyMapBuiltins() StringDict {
+	return StringDict{"lazy_map": NewBuiltin("lazy_map", func(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+		var n int
+		if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &n); err != nil {
+			return nil, err
+		}
+		return lazyMap{n}, nil
+	})}
+}
+
+func TestAllocCharge_MappingOfUnknownLength(t *testing.T) {
+	for _, c := range []struct {
+		name, setup, op string
+		want            uint64
+	}{
+		{"dict(m)", "", "r = dict(lazy_map(3))", 3 * 96},
+		{"dict.update(m)", "d = {}", "d.update(lazy_map(3))", 3 * 96},
+		{"f(**m)", "def f(**k): return None", "f(**lazy_map(3))", 3 * 48},
+	} {
+		r := runProgWith(t, 0, c.setup+"\nmark()\n"+c.op+"\nmark()\n", lazyMapBuiltins())
+		if r.err != nil {
+			t.Errorf("%s: %v", c.name, r.err)
+			continue
+		}
+		if got := r.marks[1] - r.marks[0]; got != c.want {
+			t.Errorf("%s: charged %d, want %d", c.name, got, c.want)
+		}
+	}
+	// Over the budget: refused once the items exist and their number is known.
+	for _, op := range []string{"dict(lazy_map(100000))", "d.update(lazy_map(100000))", "f(**lazy_map(100000))"} {
+		r := runProgWith(t, budgetMiB, "d = {}\ndef f(**k): return None\nmark()\nr = "+strings.Replace(op, "d.update", "d.update", 1)+"\n", lazyMapBuiltins())
+		if strings.HasPrefix(op, "d.update") {
+			r = runProgWith(t, budgetMiB, "d = {}\nmark()\n"+op+"\n", lazyMapBuiltins())
+		} else if strings.HasPrefix(op, "f(") {
+			r = runProgWith(t, budgetMiB, "def f(**k): return None\nmark()\n"+op+"\n", lazyMapBuiltins())
+		}
+		wantBudgetErr(t, r, budgetMiB)
 	}
 }
