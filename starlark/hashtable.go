@@ -206,6 +206,9 @@ func (ht *hashtable) lookupM(m *meter, k Value) (v Value, found bool, err error)
 	if ht.table == nil {
 		return None, false, nil // empty
 	}
+	if err := m.add(lookupWork(int(ht.len))); err != nil { // the cache misses of a large table
+		return nil, false, err
+	}
 
 	// Inspect each bucket in the bucket list.
 	for p := &ht.table[h&(uint32(len(ht.table)-1))]; p != nil; p = p.next {
@@ -256,6 +259,10 @@ func (ht *hashtable) countM(m *meter, iter Iterator) (int, error) {
 		}
 		if h == 0 {
 			h = 1 // zero is reserved
+		}
+
+		if err := m.add(lookupWork(int(ht.len))); err != nil { // the cache misses of a large table
+			return 0, err
 		}
 
 		// Inspect each bucket in the bucket list.
@@ -333,6 +340,9 @@ func (ht *hashtable) deleteM(m *meter, k Value) (v Value, found bool, err error)
 	}
 	if h == 0 {
 		h = 1 // zero is reserved
+	}
+	if err := m.add(lookupWork(int(ht.len))); err != nil { // the cache misses of a large table
+		return nil, false, err
 	}
 
 	// Inspect each bucket in the bucket list.

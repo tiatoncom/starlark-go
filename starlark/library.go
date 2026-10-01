@@ -264,6 +264,9 @@ func bytes_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	case String:
 		// Invalid encodings are replaced by that of U+FFFD. A valid string is
 		// returned as it is, which allocates nothing.
+		if err := thread.chargeWork(workFast(len(x))); err != nil { // the scan for invalid encodings
+			return nil, err
+		}
 		if n := utf8TranscodedLen(string(x)); n != len(x) {
 			if err := thread.chargeBytes(n); err != nil {
 				return nil, excess(err, "bytes: excessive size (%d bytes)", n)
@@ -1303,8 +1306,8 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	} else {
 		stableSort(slice, len(slice.values))
 	}
-	if slice.stop != nil {
-		return nil, slice.stop
+	if slice.stopped {
+		return nil, slice.err
 	}
 	if slice.err == nil {
 		slice.err = slice.m.flush()
@@ -1315,10 +1318,12 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 type sortSlice struct {
 	keys   []Value // nil => values[i] is key
 	values []Value
-	err    error
+	err    error // the error that is reported: the last of the comparisons, or the refusal of the work
 	m      meter // charged with the comparisons and the swaps
-	stop   error // the error of m: the work is used up
-	odd    bool  // a swap is half a unit: the swaps are counted in pairs
+	// stopped: the work is used up (err is the refusal): the sort goes on
+	// calling Less and Swap, which are free from now on, and compares nothing.
+	stopped bool
+	odd     bool // a swap is half a unit: the swaps are counted in pairs
 }
 
 func (s *sortSlice) Len() int { return len(s.values) }
@@ -1332,18 +1337,18 @@ func (s *sortSlice) Less(i, j int) bool {
 	if s.keys == nil {
 		keys = s.values
 	}
-	if s.stop != nil {
+	if s.stopped {
 		return false // the work is used up: stop the comparisons
 	}
 	if err := s.m.add(1); err != nil {
-		s.stop = err
+		s.err, s.stopped = err, true
 		return false
 	}
 	ok, err := compareM(&s.m, syntax.LT, keys[i], keys[j], CompareLimit)
 	if err != nil {
 		s.err = err // (as before, the last error is the one reported)
 		if isResourceError(err) {
-			s.stop = err // a refusal of a limit ends the work: no more comparisons
+			s.stopped = true // a refusal of a limit ends the work: no more comparisons
 		}
 	}
 	return ok
@@ -1351,10 +1356,10 @@ func (s *sortSlice) Less(i, j int) bool {
 func (s *sortSlice) Swap(i, j int) {
 	// A swap of two values (two slots, with the keys: four) takes half the time
 	// of a comparison of small integers: a unit for each two.
-	if s.stop == nil {
+	if !s.stopped {
 		if s.odd = !s.odd; !s.odd {
 			if err := s.m.add(1); err != nil {
-				s.stop = err
+				s.err, s.stopped = err, true
 			}
 		}
 	}
@@ -1378,6 +1383,9 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	case Bytes:
 		// Invalid encodings are replaced by that of U+FFFD. A valid string is
 		// returned as it is, which allocates nothing.
+		if err := thread.chargeWork(workFast(len(x))); err != nil { // the scan for invalid encodings
+			return nil, err
+		}
 		if n := utf8TranscodedLen(string(x)); n != len(x) {
 			if err := thread.chargeBytes(n); err != nil {
 				return nil, excess(err, "str: bytes value exceeds the size limit")
@@ -1792,7 +1800,7 @@ func list_index(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#list·insert
-func list_insert(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+func list_insert(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	recv := b.Receiver().(*List)
 	var index int
 	var object Value
@@ -1813,6 +1821,13 @@ func list_insert(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	} else {
 		if index < 0 {
 			index = 0 // start
+		}
+		if len(recv.elems) == cap(recv.elems) {
+			// The slice grows: every slot is copied to new memory, which is
+			// zeroed first and touched for the first time (~13 ns a slot).
+			if err := thread.chargeWork(2 * uint64(len(recv.elems))); err != nil {
+				return nil, err
+			}
 		}
 		recv.elems = append(recv.elems, nil)
 		copy(recv.elems[index+1:], recv.elems[index:]) // slide up one
@@ -2215,6 +2230,9 @@ func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, a
 			// would otherwise look at every one)
 			if len(kwargs) > 8 {
 				if kwmap == nil {
+					if err := m.add(8 * uint64(len(kwargs))); err != nil { // a map insert each: ~70 ns
+						return err
+					}
 					kwmap = make(map[string]Value, len(kwargs))
 					for i := len(kwargs) - 1; i >= 0; i-- { // (the first of two equal names wins)
 						kwmap[string(kwargs[i][0].(String))] = kwargs[i][1]
@@ -2253,6 +2271,9 @@ func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, a
 			return fmt.Errorf("format spec features not supported in replacement fields: %s", errStr(spec))
 		}
 
+		if err := m.add(6); err != nil { // a field: the parse, the lookup, the conversion, the write: ~55 ns
+			return err
+		}
 		switch conv {
 		case "s":
 			if str, ok := AsString(arg); ok {

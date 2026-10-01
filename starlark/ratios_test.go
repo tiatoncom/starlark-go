@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"go.starlark.net/starlark"
 )
@@ -18,6 +19,7 @@ type ratioRow struct {
 	src         string
 	steps, work uint64
 	alloc       uint64
+	ns          float64 // the least wall time of the runs
 }
 
 func runRatio(src string) (row ratioRow, err error) {
@@ -28,8 +30,9 @@ func runRatio(src string) (row ratioRow, err error) {
 			err = fmt.Errorf("panic: %v", p)
 		}
 	}()
+	t0 := time.Now()
 	_, err = runDiffWith(th, src)
-	return ratioRow{src: src, steps: th.Steps, work: th.Work(), alloc: th.AllocatedBytes()}, err
+	return ratioRow{src: src, steps: th.Steps, work: th.Work(), alloc: th.AllocatedBytes(), ns: float64(time.Since(t0).Nanoseconds())}, err
 }
 
 func TestRatios_WorkToStepsOfTheHandlers(t *testing.T) {
@@ -47,6 +50,11 @@ func TestRatios_WorkToStepsOfTheHandlers(t *testing.T) {
 				t.Errorf("%s: %v", names[i], err)
 				continue
 			}
+			for r := 0; r < 4; r++ { // the least of five runs
+				if again, err := runRatio(fmt.Sprintf("N = %d\n%s", n, h)); err == nil && again.ns < row.ns {
+					row.ns = again.ns
+				}
+			}
 			ratio := float64(row.work) / float64(row.steps)
 			if ratio < min {
 				min = ratio
@@ -54,7 +62,7 @@ func TestRatios_WorkToStepsOfTheHandlers(t *testing.T) {
 			if ratio > max {
 				max = ratio
 			}
-			fmt.Printf("RATIO %-32s N=%-5d steps %8d work %9d  work/steps %5.2f  charged %9d bytes\n", names[i], n, row.steps, row.work, ratio, row.alloc)
+			fmt.Printf("RATIO %-32s N=%-5d steps %8d work %9d  work/steps %5.2f  charged %9d bytes  real %8.0f us  %5.1f ns/unit\n", names[i], n, row.steps, row.work, ratio, row.alloc, row.ns/1000, row.ns/float64(row.work))
 		}
 	}
 	fmt.Printf("RATIO handlers: work/steps from %.2f to %.2f\n", min, max)

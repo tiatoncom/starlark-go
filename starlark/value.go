@@ -1762,10 +1762,10 @@ func (w *valueWriter) full() {
 //
 // exact says that n is the length of what emit writes, so that a pass that
 // only counts need not write it.
-func (w *valueWriter) leaf(n int, exact bool, emit func(), cut func(room int) string) {
+func (w *valueWriter) leaf(n int, units uint64, exact bool, emit func(), cut func(room int) string) {
 	switch {
 	case w.fits(n):
-		w.work(workSlow(n))
+		w.work(units)
 		if exact {
 			w.out.room(n)
 			if w.out.counting {
@@ -1817,7 +1817,7 @@ func (w *valueWriter) write(x Value, depth int) {
 			w.work(d * d / 4096)
 			// The decimal form has at most BitLen/3+1 digits.
 			n := big.BitLen()/3 + 2
-			w.leaf(n, false, func() { w.out.WriteString(x.String()) }, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
+			w.leaf(n, workSlow(n), false, func() { w.out.WriteString(x.String()) }, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
 		} else {
 			var tmp [24]byte
 			iSmall, _ := x.get()
@@ -1825,6 +1825,7 @@ func (w *valueWriter) write(x Value, depth int) {
 		}
 
 	case Float:
+		w.work(4) // the shortest digits that read back as x: ~65 ns
 		var tmp [40]byte
 		w.out.Write(appendFloatG(tmp[:0], x))
 
@@ -1836,11 +1837,11 @@ func (w *valueWriter) write(x Value, depth int) {
 		}
 
 	case String:
-		w.leaf(syntax.QuoteLen(string(x), false), true, func() { w.out.writeQuoted(string(x), false) },
+		w.leaf(syntax.QuoteLen(string(x), false), workRunes(len(x)), true, func() { w.out.writeQuoted(string(x), false) },
 			func(room int) string { return quotedPrefix(string(x), false, room) })
 
 	case Bytes:
-		w.leaf(syntax.QuoteLen(string(x), true), true, func() { w.out.writeQuoted(string(x), true) },
+		w.leaf(syntax.QuoteLen(string(x), true), workRunes(len(x)), true, func() { w.out.writeQuoted(string(x), true) },
 			func(room int) string { return quotedPrefix(string(x), true, room) })
 
 	case *List:

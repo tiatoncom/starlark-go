@@ -86,8 +86,9 @@ func TestWork_LimitReachedBySteps(t *testing.T) {
 	if !errors.As(err, &we) {
 		t.Fatalf("err = %v", err)
 	}
-	if th.Work() != 5000 || th.Steps != 5000 {
-		t.Errorf("work %d, steps %d: both are the limit", th.Work(), th.Steps)
+	// (the call of range is a built-in: baseCall units beyond its steps)
+	if th.Work() != 5000 || th.Steps != 5000-baseCall {
+		t.Errorf("work %d, steps %d: the work is the limit, the steps are the work less the %d units of the call of range", th.Work(), th.Steps, baseCall)
 	}
 	// With work charged by operations too: the limit is hit by the sum.
 	th = &Thread{}

@@ -663,6 +663,15 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 		if err := thread.charge(listBytes(len(x.elems)+n), satMul(uint64(n), allocBytesPerValue)); err != nil {
 			return excess(err, "excessive list extension (%d + %d elements)", len(x.elems), n)
 		}
+		// A unit for each element that is added, and for each that is there if
+		// the slice grows (it is copied, and the new memory is zeroed).
+		w := uint64(n)
+		if cap(x.elems) < len(x.elems)+n {
+			w += uint64(len(x.elems))
+		}
+		if err := thread.chargeWork(satMul(w, elemWork(y))); err != nil {
+			return err
+		}
 		if ylist, ok := y.(*List); ok {
 			x.elems = append(x.elems, ylist.elems...)
 			return nil
@@ -998,7 +1007,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.intRoom(wordsMul(x, y)); err != nil {
 					return nil, excess(err, "excessive integer multiplication")
 				}
-				if err := thread.chargeIntQuadratic(x, y); err != nil {
+				if err := thread.chargeIntMul(x, y); err != nil {
 					return nil, err
 				}
 				return thread.intDone(x.Mul(y))
@@ -1108,7 +1117,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if _, _, ok := smallPair(x, y); ok {
 					return thread.intDone(x.Div(y)) // (2**31 // -1 is beyond int32)
 				}
-				if err := thread.chargeIntQuadratic(x, y); err != nil {
+				if err := thread.chargeIntDiv(x, y); err != nil {
 					return nil, err
 				}
 				if err := thread.intRoom(bigWords(x)); err != nil { // the quotient is not longer than x
@@ -1155,7 +1164,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if _, _, ok := smallPair(x, y); ok {
 					return x.Mod(y), nil // (smaller than y: small)
 				}
-				if err := thread.chargeIntQuadratic(x, y); err != nil {
+				if err := thread.chargeIntDiv(x, y); err != nil {
 					return nil, err
 				}
 				if err := thread.intRoom(bigWords(y)); err != nil { // the remainder is shorter than y
@@ -1548,11 +1557,25 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 
 	builtin, isBuiltin := c.(*Builtin)
 	var workErr error
-	if isBuiltin && builtin.price != nil && builtin.price.work != nil {
-		// The work of the built-in, from the sizes of its operands, before it
-		// is done (see prices.go): a call that does not fit in the steps that
-		// are left is refused, not run.
-		workErr = thread.chargeWork(builtin.price.work(builtin.recv, args, kwargs))
+	if !isBuiltin {
+		// A function that a built-in calls back (the key of sorted, max, min):
+		// the Go code sets up a frame and a call, ~30 ns beyond the step of the
+		// opcode that the built-in itself counted.
+		if n := len(thread.stack); n >= 2 {
+			if _, fromBuiltin := thread.stack[n-2].callable.(*Builtin); fromBuiltin {
+				workErr = thread.chargeWork(callbackWork)
+			}
+		}
+	}
+	if isBuiltin && builtin.price != nil {
+		// The work of the call, and of the built-in from the sizes of its
+		// operands, before it is done (see prices.go): a call that does not fit
+		// in the work that is left is refused, not run.
+		n := builtin.price.call
+		if builtin.price.work != nil {
+			n = satAdd(n, builtin.price.work(builtin.recv, args, kwargs))
+		}
+		workErr = thread.chargeWork(n)
 	}
 	isBuiltin = isBuiltin && !(builtin.price != nil && builtin.price.accounts)
 	var allocBefore uint64
@@ -1665,10 +1688,18 @@ func slice(thread *Thread, x, lo, hi, step_ Value) (Value, error) {
 		if err := thread.chargeValues(sliceLen(start, end, step)); err != nil {
 			return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
 		}
+		if step != 1 {
+			if err := thread.chargeWork(satMul(uint64(sliceLen(start, end, step)), 4)); err != nil { // a cache miss for each
+				return nil, err
+			}
+		}
 	case Tuple:
 		if step != 1 {
 			if err := thread.chargeTuple(sliceLen(start, end, step)); err != nil {
 				return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
+			}
+			if err := thread.chargeWork(satMul(uint64(sliceLen(start, end, step)), 4)); err != nil { // a cache miss for each
+				return nil, err
 			}
 		}
 	case String, Bytes:
@@ -2110,6 +2141,13 @@ func (thread *Thread) maxCallDepth() int {
 // function is kept in a map, so that a call is not as slow as the stack is
 // deep (a chain of a hundred thousand functions made it quadratic).
 const recursionScanDepth = 32
+
+// callbackWork is the work of a call of a function by a built-in.
+const callbackWork = 3
+
+// deepCallWork is the work of a call that is more than recursionScanDepth
+// frames deep.
+const deepCallWork = 56
 
 // enterFunction reports an error if fn is active: called, and not returned
 // from. The funcode is compared, not the function value, otherwise the user

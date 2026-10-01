@@ -46,19 +46,47 @@ type price struct {
 	accounts bool
 	o1       bool
 	inside   bool
-	work     func(recv Value, args Tuple, kwargs []Tuple) uint64
+	// call is the work of the call itself, whatever the operands: the frame, the
+	// arguments, the lookup, the result. A call of a built-in takes 40-150 ns,
+	// which is five to fifteen steps of the interpreter, and the steps count
+	// the one opcode that makes it. It is charged by Call, before the work.
+	call uint64
+	work func(recv Value, args Tuple, kwargs []Tuple) uint64
 }
 
-func o1(desc string) price     { return price{desc: desc, o1: true} }
-func inside(desc string) price { return price{desc: desc, inside: true} }
+// baseCall is the work of the call of a built-in that has no work of its own
+// to speak of (len, type, a method that appends).
+const baseCall = 4
+
+func o1(desc string) price     { return price{desc: desc, o1: true, call: baseCall} }
+func inside(desc string) price { return price{desc: desc, inside: true, call: baseCall} }
 func work(desc string, f func(Value, Tuple, []Tuple) uint64) price {
-	return price{desc: desc, work: f}
+	return price{desc: desc, work: f, call: baseCall}
+}
+
+// fixed sets the work of the call itself of a built-in that is dearer than
+// baseCall whatever its operands are (a lookup of an attribute by name, a
+// conversion that parses, a constructor that allocates a container).
+func (p price) fixed(n uint64) price {
+	p.call = n
+	return p
 }
 
 // argLen is the length of the i'th argument if it has one.
 func argLen(args Tuple, i int) int {
 	if i < len(args) {
 		return max(Len(args[i]), 0)
+	}
+	return 0
+}
+
+// argWork is the work of taking the elements of the i'th argument: a unit for
+// each of a list, a tuple or a string, three for each of a dict or a set.
+func argWork(args Tuple, i int) uint64 {
+	if i < len(args) {
+		if n := Len(args[i]); n > 0 {
+			return satMul(uint64(n), elemWork(args[i]))
+		}
 	}
 	return 0
 }
@@ -97,35 +125,35 @@ var universePrices = map[string]price{
 	"chr":       o1("one code point"),
 	"dict":      inside("one insert (8 units + hash + chain) per entry"),
 	"dir":       o1("the attributes of a type, not of the data"),
-	"enumerate": work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
+	"enumerate": work("three units per element (a tuple for each)", func(_ Value, a Tuple, _ []Tuple) uint64 { return 3 * argWork(a, 0) }),
 	"fail":      work("len of the message/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) }),
 	"float":     work("float(str): len/4", func(_ Value, a Tuple, _ []Tuple) uint64 { return workSlow(strBytesAt(a, 0)) }),
-	"getattr":   o1("a lookup of an attribute by name"),
-	"hasattr":   o1("a lookup of an attribute by name"),
+	"getattr":   o1("a lookup of an attribute by name, and the bound method").fixed(12),
+	"hasattr":   o1("a lookup of an attribute by name").fixed(12),
 	"hash":      work("len/4 (FNV, byte by byte)", func(_ Value, a Tuple, _ []Tuple) uint64 { return workSlow(strBytesAt(a, 0)) }),
 	"int":       inside("int(str): digits^2/4096 (and at most maxIntDigits digits); other: o1"),
 	"len":       o1("the length is stored"),
-	"list":      work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
-	"max":       inside("one comparison (a unit and the leaves) per element"),
-	"min":       inside("one comparison (a unit and the leaves) per element"),
+	"list":      work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return argWork(a, 0) }),
+	"max":       inside("one comparison (a unit and the leaves) per element").fixed(8),
+	"min":       inside("one comparison (a unit and the leaves) per element").fixed(8),
 	"ord":       o1("one code point"),
 	"print":     work("len of the output/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) }),
 	"range":     o1("a range is lazy"),
 	"repr":      inside("len of the result/4"),
-	"reversed":  work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
+	"reversed":  work("two units per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return 2 * argWork(a, 0) }),
 	"set":       inside("one insert (8 units + hash + chain) per element"),
 	"sorted":    inside("a unit for each comparison and each two swaps that the stable sort (sortstable.go) makes, and what the comparisons cost: ~1.4 n log2 n comparisons and ~4 n log2 n swaps on random data"),
 	"str":       inside("len of the result/4"),
-	"tuple":     work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
+	"tuple":     work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return argWork(a, 0) }),
 	"type":      o1("the name of a type"),
-	"zip": work("one unit per element of each column", func(_ Value, a Tuple, _ []Tuple) uint64 {
+	"zip": work("two units per element of each column", func(_ Value, a Tuple, _ []Tuple) uint64 {
 		rows := 0
 		for i := range a {
 			if n := argLen(a, i); i == 0 || n < rows {
 				rows = n
 			}
 		}
-		return satMul(uint64(rows), uint64(len(a)))
+		return satMul(uint64(rows), 2*uint64(len(a)))
 	}),
 }
 
@@ -157,20 +185,20 @@ func strBytesAt(a Tuple, i int) int {
 var dictPrices = map[string]price{
 	"clear":      o1("the table is replaced by that of a new dict (not zeroed)"),
 	"get":        inside("hash of the key, chain of the bucket"),
-	"items":      work("3 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 3 * uint64(recvLen(r)) }),
-	"keys":       work("3 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 3 * uint64(recvLen(r)) }),
+	"items":      work("4 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 4 * uint64(recvLen(r)) }),
+	"keys":       work("4 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 4 * uint64(recvLen(r)) }),
 	"pop":        inside("hash of the key, chain of the bucket"),
 	"popitem":    inside("hash of the key, chain of the bucket"),
 	"setdefault": inside("hash of the key, chain of the bucket, an insert"),
 	"update":     inside("one insert (8 units + hash + chain) per entry"),
-	"values":     work("3 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 3 * uint64(recvLen(r)) }),
+	"values":     work("4 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 4 * uint64(recvLen(r)) }),
 }
 
 // listPrices are the prices of the methods of list.
 var listPrices = map[string]price{
 	"append": o1("amortized: the growth of the array is charged as memory"),
-	"clear":  work("one unit per 4 slots (zeroed)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlots(recvLen(r)) }),
-	"extend": work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
+	"clear":  work("one unit per 2 slots (zeroed)", func(r Value, _ Tuple, _ []Tuple) uint64 { return 2 * workSlots(recvLen(r)) }),
+	"extend": inside("one unit per element added, and per element there if the slice grows (listExtend)"),
 	"index":  inside("one comparison per element, until the first match"),
 	"insert": work("slots after the index/4 (memmove)", func(r Value, a Tuple, _ []Tuple) uint64 { return workSlots(recvLen(r) - indexArg(a, 0)) }),
 	"pop": work("slots after the index/4 (memmove)", func(r Value, a Tuple, _ []Tuple) uint64 {
@@ -215,7 +243,7 @@ var setPrices = map[string]price{
 
 // stringPrices are the prices of the methods of string.
 var stringPrices = map[string]price{
-	"capitalize":     work("2 x len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return 2 * workSlow(strBytes(r)) }),
+	"capitalize":     work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),
 	"codepoint_ords": o1("lazy: the iterator is the work"),
 	"codepoints":     o1("lazy: the iterator is the work"),
 	"count": work("the search of the needle in len bytes (workSearch), and half a unit for each of the len/needle matches", func(r Value, a Tuple, _ []Tuple) uint64 {
@@ -236,7 +264,7 @@ var stringPrices = map[string]price{
 	"istitle":      work("len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlow(strBytes(r)) }),
 	"isupper":      work("len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlow(strBytes(r)) }),
 	"join":         inside("total bytes/64 and one unit per element"),
-	"lower":        work("len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlow(strBytes(r)) }),
+	"lower":        work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),
 	"lstrip":       inside("bytes trimmed/4"),
 	"partition":    inside("position of the match/64"),
 	"removeprefix": work("bytes of the prefix/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(strBytesAt(a, 0)) }),
@@ -251,8 +279,8 @@ var stringPrices = map[string]price{
 	"splitlines":   inside("len/64, and 4 units per line"),
 	"startswith":   work("bytes of the prefix(es)/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) + uint64(argLen(a, 0)) }),
 	"strip":        inside("bytes trimmed/4"),
-	"title":        work("2 x len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return 2 * workSlow(strBytes(r)) }),
-	"upper":        work("len/4", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlow(strBytes(r)) }),
+	"title":        work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),
+	"upper":        work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),
 }
 
 // bytesPrices are the prices of the methods of bytes.

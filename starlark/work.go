@@ -47,7 +47,14 @@ import (
 // error, are stopped at the next opcode), and Work() is the limit, not more.
 // The thread also notices a cancellation by the host (Thread.Cancel) at every
 // charge, so a long operation is stopped as promptly as a long loop.
-const workNanoseconds = 10
+//
+// C is 12 ns: the worst probe of the calibration (calibrate_probes_test.go,
+// 308 programs, each the worst form of an operation, steps-prices.md) took 11.7
+// ns for a unit of work, on a machine that was not quiet (load 5-9); the
+// interpreter's own loops take 8-11, the units of the operations that are
+// priced less than that (the prices are set so that none of the probes is
+// over it), and TestWork_NoProbeCostsMoreThanC holds all of them to it.
+const workNanoseconds = 12
 
 // workCancelReason is the reason of the cancellation of a thread that has done
 // all the work it may.
@@ -283,6 +290,11 @@ func workSearch(n, m int) uint64 {
 // is* predicates, quoting: 1-4 ns a byte).
 func workSlow(n int) uint64 { return uint64(max(n, 0)) / 4 }
 
+// workRunes is the work of decoding, mapping and encoding n bytes of a text
+// rune by rune and writing the result (case mapping, quoting; ~7 ns a rune of a
+// text that is not ASCII, and the escapes).
+func workRunes(n int) uint64 { return uint64(max(n, 0)) * 3 / 4 }
+
 // workSlots is the work of copying n Value slots (16 bytes each, ~1 ns).
 func workSlots(n int) uint64 { return uint64(max(n, 0)) / 4 }
 
@@ -303,6 +315,18 @@ func iterWork(v Value) uint64 {
 		}
 	case bytesIterable:
 		return 6
+	}
+	return 1
+}
+
+// elemWork is the work of taking an element of the iterable y, whose length is
+// known: a unit for a list or a tuple, which are slices that are read in order,
+// and three for a dict or a set, whose entries are linked records that are
+// read by following pointers (~30 ns an entry of a large one).
+func elemWork(y Value) uint64 {
+	switch y.(type) {
+	case *Dict, *Set:
+		return 3
 	}
 	return 1
 }
@@ -332,26 +356,41 @@ func (thread *Thread) chargeIntLinear(x, y Int) error {
 	return thread.chargeWork(w)
 }
 
-// chargeIntQuadratic charges the work of an operation on two integers that is
-// quadratic in their length (multiply, divide, modulo): the product of their
-// words, a word product being ~1 ns (an eighth of a unit). It is an upper
+// chargeIntMul charges the work of the product of two integers: the product of
+// their words, a word product being ~1.6 ns (a fifth of a unit). It is an upper
 // bound for the Karatsuba multiplication that Go uses for long operands.
-func (thread *Thread) chargeIntQuadratic(x, y Int) error {
+func (thread *Thread) chargeIntMul(x, y Int) error {
 	wx, wy := bigWords(x), bigWords(y)
 	if wx == 0 && wy == 0 {
 		return nil
 	}
-	return thread.chargeWork(satMul(max(wx, 1), max(wy, 1)) / 8)
+	return thread.chargeWork(satMul(max(wx, 1), max(wy, 1)) / 5)
+}
+
+// chargeIntDiv charges the work of the quotient or the remainder of two
+// integers: the product of their words, a word step of the division being a
+// hardware division, ~5 ns (half a unit).
+func (thread *Thread) chargeIntDiv(x, y Int) error {
+	wx, wy := bigWords(x), bigWords(y)
+	if wx == 0 && wy == 0 {
+		return nil
+	}
+	return thread.chargeWork(satMul(max(wx, 1), max(wy, 1)) / 2)
 }
 
 // insertWork is the work of adding an entry to a hash table of n entries,
 // beyond hashing the key and walking the chain: the entry and its links, and
 // the cache misses of a large table, which grow with its size. A warm insert
-// into a table of a few entries takes ~30 ns, a cold one into a million 340 ns
-// (and more under load): 1 unit up to 15 entries, so that a small table costs
-// nothing beyond the free window, and one more unit for each doubling after
-// that (18 units for two million entries).
-func insertWork(n uint32) uint64 { return 1 + uint64(max(bits.Len32(n)-4, 0)) }
+// into a table of a thousand entries takes ~30 ns, a cold one into a million
+// 350 ns and more (under load): a unit up to a thousand entries, and four more
+// for each doubling after that (45 units for two million entries).
+func insertWork(n uint32) uint64 { return 1 + 4*uint64(max(bits.Len32(n)-10, 0)) }
+
+// lookupWork is the work of looking for a key in a hash table of n entries,
+// beyond the hash and the walk of the chain: the cache misses of a large table.
+// Nothing up to a thousand entries; two units for each doubling after that
+// (a probe of a table of 300 000 entries takes ~100 ns).
+func lookupWork(n int) uint64 { return 2 * uint64(max(bits.Len(uint(n))-10, 0)) }
 
 // chargeIntToString checks and charges the conversion of the integer x to a
 // string: refused if it has more than MaxIntBits bits, and else charged the

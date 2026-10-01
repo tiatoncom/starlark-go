@@ -163,7 +163,7 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	if err := thread.ChargeAlloc(uint64(n)); err != nil {
 		return nil, allocErr(b, err)
 	}
-	if err := work.add(uint64(n) / 4); err != nil { // the quoting
+	if err := work.add(uint64(n) * 3 / 4); err != nil { // the quoting, rune by rune
 		return nil, err
 	}
 	if err := work.flush(); err != nil {
@@ -267,7 +267,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 		// It is only necessary to push/pop the item when it might contain
 		// itself (i.e. the last three switch cases), but omitting it in the other
 		// cases did not show significant improvement on the benchmarks.
-		if err := work.add(1); err != nil {
+		if err := work.add(4); err != nil { // a node: the dispatch, the cycle check, the write (~45 ns)
 			stop = err
 			return err
 		}
@@ -404,10 +404,10 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 			}
 			// The sort is paid by a formula of the size, not by the comparisons
 			// that sort.Slice makes (their number is not the same in every
-			// version of Go): log2(n) rounds, each of two units for a key (a
+			// version of Go): log2(n) rounds, each of three units for a key (a
 			// comparison and a move) and a unit for 64 bytes that are compared.
 			if n := uint64(len(items)); n > 1 {
-				if err := work.add(uint64(bits.Len64(n-1)) * (2*n + keyBytes/64)); err != nil {
+				if err := work.add(uint64(bits.Len64(n-1)) * (3*n + keyBytes/64)); err != nil {
 					stop = err
 					return err
 				}
@@ -664,8 +664,9 @@ func indentString(thread *starlark.Thread, b *starlark.Builtin, str, prefix, ind
 	if err := thread.ChargeAlloc(size); err != nil {
 		return "", allocErr(b, err)
 	}
-	// The scan and the indentation: ~2 ns a byte of the input.
-	if err := chargeUnits(thread, uint64(len(str))/4); err != nil {
+	// The scan of the input (~2 ns a byte) and the writing of the output
+	// (~1.7 ns a byte, and the indentation of a deep value is most of it).
+	if err := chargeUnits(thread, uint64(len(str))/4+size/8); err != nil {
 		return "", err
 	}
 	if len(str) == 0 {
@@ -818,7 +819,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	var parse func() starlark.Value
 	parse = func() starlark.Value {
 		b := next()
-		spend(1)
+		spend(6) // a value: the dispatch, the scan, the number or the container (~55 ns)
 		switch b {
 		case '"':
 			// string

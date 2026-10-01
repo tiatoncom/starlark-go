@@ -31,6 +31,14 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	if len(thread.stack) > thread.maxCallDepth() {
 		return nil, fmt.Errorf("Starlark stack overflow")
 	}
+	if len(thread.stack) > recursionScanDepth {
+		// A deep stack is dear: the Go stack grows (it is copied each time it
+		// doubles, and every page of it is touched for the first time), and
+		// the call is counted in a map (~500 ns a level of a chain).
+		if err := thread.chargeWork(deepCallWork); err != nil {
+			return nil, err
+		}
+	}
 	entered := false // the function is counted as active (see enterFunction)
 	if !f.Prog.Recursion {
 		// detect recursion

@@ -143,7 +143,7 @@ const (
 	// collector does not look at it, so it costs what the copy into it costs,
 	// 0.04 ns a byte for a string of a megabyte (s + s, s * n: 1-2 us a
 	// megabyte, 0.1 ns a byte for short ones).
-	allocBytesPerWorkNoscan = 128
+	allocBytesPerWorkNoscan = 96
 
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
@@ -498,6 +498,9 @@ func (thread *Thread) intDone(z Int) (Value, error) {
 			if err := thread.chargeBudget(intBytesOfWords(words64(big))); err != nil {
 				return nil, err
 			}
+			if err := thread.chargeWork(bigResultWork); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return z, nil
@@ -766,12 +769,20 @@ func smallPair(x, y Int) (xs, ys int64, ok bool) {
 // integers (so that it is of at most 64 bits): the operation of the hot path
 // of the interpreter, which makes a big integer only when the result is
 // beyond int32, and then charges its box.
+// bigResultWork is the work of making an integer that is not small: the big.Int,
+// its slice of words and the interface that holds it, three allocations
+// (~45 ns) that the bytes of the budget do not show.
+const bigResultWork = 5
+
 func (thread *Thread) smallResult(r int64) (Value, error) {
 	if math.MinInt32 <= r && r <= math.MaxInt32 {
 		return makeSmallInt(r), nil
 	}
 	if thread != nil {
 		if err := thread.chargeBudget(intBytesOfWords(1)); err != nil {
+			return nil, err
+		}
+		if err := thread.chargeWork(bigResultWork); err != nil {
 			return nil, err
 		}
 	}

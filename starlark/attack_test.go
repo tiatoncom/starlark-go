@@ -58,7 +58,7 @@ var attackForms = []attackForm{
 	{"l[::2], 1M elements, 100 times", "l = list(range(1000000))\nfor i in range(100):\n    r = l[::2]\n", true, false, false},
 	{"repr of 3M empty lists nested 40 deep", "x = [[]] * 3000000\nfor i in range(40):\n    x = [x]\nr = str(x)\n", true, false, false},
 	{"list(b.elems()), 300000, 20 times", "b = bytes('a' * 300000)\nfor i in range(20):\n    r = list(b.elems())\n", true, false, false},
-	{"d.clear(), after growth, 300000 times", "d = {i: i for i in range(300000)}\nd.clear()\nfor k in range(300000):\n    d['a'] = 1\n    d.clear()\n", false, false, false},
+	{"d.clear(), after growth, 150000 times", "d = {i: i for i in range(300000)}\nd.clear()\nfor k in range(150000):\n    d['a'] = 1\n    d.clear()\n", false, false, false},
 	{"l.insert(0, 1); l.pop(0), 1M slots, 1000 times", "l = [0] * 1000000\nfor i in range(1000):\n    l.insert(0, 1)\n    l.pop(0)\n", true, false, false},
 	{"x = x * x, 500 bits, 22 times", "x = 1 << 500\nfor i in range(22):\n    x = x * x\n", true, false, false},
 	{"-1.5 in l, 300000 elements, 100 times", "l = list(range(300000))\nfor i in range(100):\n    r = -1.5 in l\n", true, false, false},

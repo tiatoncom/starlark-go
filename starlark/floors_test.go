@@ -19,10 +19,14 @@ import (
 
 // priceNanoseconds is the cost of a unit of work that the prices are held to:
 // a priced operation does at most this many nanoseconds of work for each unit
-// that it is charged (the nominal unit is 8 ns). The steps of the interpreter,
-// which are not priced but counted, cost up to 16 (workNanoseconds: the C of
-// the invariant).
-const priceNanoseconds = 10.0
+// that it is charged. It is the C of the invariant (workNanoseconds): the steps
+// of the interpreter, which are not priced but counted, are held to the same.
+const priceNanoseconds = float64(starlark.WorkNanoseconds)
+
+// minProbeNanoseconds is the time under which a probe measures the harness (two
+// marks, a call of a built-in, the clock) and not the operation: it is not held
+// to a price.
+const minProbeNanoseconds = 2000.0
 
 func probeWork(t *testing.T, p probe) (work, steps uint64, err error) {
 	t.Helper()
@@ -57,7 +61,7 @@ func TestPrices_AtLeastTheMeasuredCost(t *testing.T) {
 	checked := 0
 	for _, p := range calibrationProbes {
 		ns, ok := calibratedNs[p.name]
-		if !ok || strings.HasPrefix(p.name, "loop:") {
+		if !ok || strings.HasPrefix(p.name, "loop:") || ns < minProbeNanoseconds {
 			continue
 		}
 		work, steps, err := probeWork(t, p)
@@ -74,4 +78,33 @@ func TestPrices_AtLeastTheMeasuredCost(t *testing.T) {
 	if checked < 150 {
 		t.Errorf("only %d probes were checked", checked)
 	}
+}
+
+// The invariant: no probe, priced or not, loops included, has cost more than C
+// nanoseconds for each unit of work that it was charged (C is workNanoseconds,
+// the nanoseconds the invariant of work.go promises for a unit).
+func TestWork_NoProbeCostsMoreThanC(t *testing.T) {
+	if len(calibratedNs) == 0 {
+		t.Skip("no calibration")
+	}
+	worst, worstName := 0.0, ""
+	for _, p := range calibrationProbes {
+		ns, ok := calibratedNs[p.name]
+		if !ok || ns < minProbeNanoseconds {
+			continue
+		}
+		work, _, err := probeWork(t, p)
+		if err != nil {
+			t.Errorf("%s: %v", p.name, err)
+			continue
+		}
+		r := ns / float64(max(work, 1))
+		if r > worst {
+			worst, worstName = r, p.name
+		}
+		if c := float64(starlark.WorkNanoseconds); r > c {
+			t.Errorf("%s: %d units of work for %.0f ns: %.1f ns a unit, over C = %.0f", p.name, work, ns, r, c)
+		}
+	}
+	t.Logf("the worst probe: %s, %.1f ns a unit", worstName, worst)
 }
