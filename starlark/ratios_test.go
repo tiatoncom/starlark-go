@@ -62,6 +62,11 @@ func TestRatios_WorkToStepsOfTheHandlers(t *testing.T) {
 
 func TestRatios_WorkToStepsOfTheDifferentialPrograms(t *testing.T) {
 	var ratios []float64
+	type top struct {
+		r   float64
+		src string
+	}
+	var tops []top
 	for _, golden := range []string{goldenSmall, goldenBig, goldenReview} {
 		for _, g := range readGolden(t, golden) {
 			if g.Status == "panic" || g.Steps < 50 {
@@ -73,9 +78,18 @@ func TestRatios_WorkToStepsOfTheDifferentialPrograms(t *testing.T) {
 				continue
 			}
 			ratios = append(ratios, float64(row.work)/float64(row.steps))
+			tops = append(tops, top{float64(row.work) / float64(row.steps), g.Src})
 		}
 	}
 	sort.Float64s(ratios)
+	sort.Slice(tops, func(i, j int) bool { return tops[i].r > tops[j].r })
+	for i := 0; i < 5 && i < len(tops); i++ {
+		src := strings.ReplaceAll(tops[i].src, "\n", "; ")
+		if len(src) > 110 {
+			src = src[:110] + "..."
+		}
+		fmt.Printf("RATIO top %d: %.1f  %s\n", i+1, tops[i].r, src)
+	}
 	at := func(p float64) float64 { return ratios[int(float64(len(ratios)-1)*p)] }
 	fmt.Printf("RATIO differential programs (%d of 50+ steps): work/steps p50 %.2f p90 %.2f p99 %.2f max %.2f\n", len(ratios), at(0.5), at(0.9), at(0.99), ratios[len(ratios)-1])
 }
