@@ -1195,12 +1195,20 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			found, err := hasElems(&m, y, x)
 			return Bool(found), err
 		case String:
-			if err := thread.chargeWork(workFast(len(y))); err != nil {
-				return nil, err
+			if x, ok := x.(String); ok {
+				if err := thread.chargeWork(workSearch(len(y), len(x))); err != nil {
+					return nil, err
+				}
 			}
 		case Bytes:
-			if err := thread.chargeWork(workFast(len(y))); err != nil {
-				return nil, err
+			if xb, ok := x.(Bytes); ok {
+				if err := thread.chargeWork(workSearch(len(y), len(xb))); err != nil {
+					return nil, err
+				}
+			} else if xi, ok := x.(Int); ok && xi.Sign() >= 0 {
+				if err := thread.chargeWork(workFast(len(y))); err != nil { // (an integer in bytes: IndexByte)
+					return nil, err
+				}
 			}
 		case *Set:
 			found, err := y.hasM(&m, x)

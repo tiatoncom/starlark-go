@@ -249,6 +249,24 @@ func (thread *Thread) meter() meter { return meter{thread: thread} }
 // (memmove, memcmp, IndexByte: 0.02-0.1 ns a byte).
 func workFast(n int) uint64 { return uint64(max(n, 0)) / 64 }
 
+// workSearch is the work of looking for a needle of m bytes in n bytes of
+// haystack, in the worst case: a needle of a byte is IndexByte (SIMD: 0.01 ns a
+// byte), a short one a vectorised search that fails at every position of a text
+// that looks like it, a long one (more than the 64 bytes that the assembly
+// takes) Rabin-Karp: 1.3 ns a byte, the search of Count and Split twice that.
+func workSearch(n, m int) uint64 {
+	n = max(n, 0)
+	switch {
+	case m <= 1:
+		return uint64(n) / 128
+	case m <= 16:
+		return uint64(n) / 16
+	case m <= 63:
+		return uint64(n) / 8
+	}
+	return uint64(n) / 4
+}
+
 // workSlow is the work of transforming n bytes rune by rune (case mapping,
 // is* predicates, quoting: 1-4 ns a byte).
 func workSlow(n int) uint64 { return uint64(max(n, 0)) / 4 }

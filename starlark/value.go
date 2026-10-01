@@ -1711,6 +1711,9 @@ func (w *valueWriter) onPath(x Value) bool {
 }
 
 func (w *valueWriter) push(x Value) {
+	if len(w.path) >= pathSetDepth {
+		w.work(8) // below the first levels the container is in a map
+	}
 	w.path = append(w.path, x)
 	if len(w.path) == pathSetDepth {
 		w.pathSet = make(map[Value]struct{}, 2*pathSetDepth)
@@ -1850,7 +1853,7 @@ func (w *valueWriter) write(x Value, depth int) {
 				if i > 0 {
 					w.out.WriteString(", ")
 				}
-				w.work(1)
+				w.work(4)
 				w.write(elem, depth+1)
 				if w.result != writeOK {
 					return
@@ -1866,7 +1869,7 @@ func (w *valueWriter) write(x Value, depth int) {
 			if i > 0 {
 				w.out.WriteString(", ")
 			}
-			w.work(1)
+			w.work(4)
 			w.write(elem, depth+1)
 			if w.result != writeOK {
 				return
@@ -1897,7 +1900,7 @@ func (w *valueWriter) write(x Value, depth int) {
 			for e := x.ht.head; e != nil; e = e.next {
 				k, v := e.key, e.value
 				w.out.WriteString(sep)
-				w.work(1)
+				w.work(8)
 				w.write(k, depth+1)
 				w.out.WriteString(": ")
 				w.write(v, depth+1)
@@ -1916,7 +1919,7 @@ func (w *valueWriter) write(x Value, depth int) {
 			if e != x.ht.head {
 				w.out.WriteString(", ")
 			}
-			w.work(1)
+			w.work(4)
 			w.write(e.key, depth+1)
 			if w.result != writeOK {
 				return

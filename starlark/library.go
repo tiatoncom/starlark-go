@@ -2406,7 +2406,7 @@ func string_partition(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (V
 			scanned = len(recv) - i
 		}
 	}
-	if err := thread.chargeWork(workFast(scanned)); err != nil {
+	if err := thread.chargeWork(workSearch(scanned, len(sep))); err != nil {
 		return nil, err
 	}
 	tuple := make(Tuple, 0, 3)
@@ -2449,7 +2449,7 @@ func string_replace(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Val
 	// m replacements turn len(recv) into len(recv) + m*(len(new)-len(old)):
 	// quadratic when both are large. Compute the size before replacing.
 	// (strings.Count counts the empty string as len(recv)+1 runes.)
-	if err := thread.chargeWork(workFast(len(recv))); err != nil { // the scan
+	if err := thread.chargeWork(workSearch(len(recv), len(old))); err != nil { // the scan
 		return nil, err
 	}
 	m := strings.Count(recv, old)
@@ -2719,8 +2719,10 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		return nil, excess(err, "%s: excessive size (%d elements)", b.Name(), fields)
 	}
 	// The scan, and a field is a new string.
-	scan := workFast(len(recv))
-	if sep_ == nil || sep_ == None {
+	scan := workSearch(len(recv), 1)
+	if sep, ok := AsString(sep_); ok {
+		scan = 2 * workSearch(len(recv), len(sep)) // (Split counts, then searches)
+	} else if sep_ == nil || sep_ == None {
 		scan = workSlow(len(recv)) // whitespace is decided rune by rune
 	}
 	if err := thread.chargeWork(scan + 4*uint64(fields)); err != nil {
@@ -3230,7 +3232,7 @@ func string_find_impl(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple, al
 			scanned = i + len(sub)
 		}
 	}
-	if err := thread.chargeWork(workFast(scanned)); err != nil {
+	if err := thread.chargeWork(workSearch(scanned, len(sub))); err != nil {
 		return nil, err
 	}
 	if i < 0 {
