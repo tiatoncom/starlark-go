@@ -42,7 +42,6 @@ func runDiffProgram(src string) (out diffOutcome) {
 	out.Src = src
 	var prints []string
 	th := &starlark.Thread{Name: "diff", Print: func(_ *starlark.Thread, msg string) { prints = append(prints, msg) }}
-	opts := &syntax.FileOptions{GlobalReassign: true, Set: true, While: true, TopLevelControl: true}
 	defer func() {
 		if p := recover(); p != nil {
 			out.Status = "panic"
@@ -51,7 +50,7 @@ func runDiffProgram(src string) (out diffOutcome) {
 		out.Steps = th.Steps
 		out.Prints = strings.Join(prints, "\n")
 	}()
-	globals, err := starlark.ExecFileOptions(opts, th, "p.star", src, starlark.StringDict{"json": starjson.Module})
+	globals, err := runDiffWith(th, src)
 	if err != nil {
 		out.Status = "error"
 		out.Err = err.Error()
@@ -62,6 +61,12 @@ func runDiffProgram(src string) (out diffOutcome) {
 		out.Result = r.Type() + ":" + r.String()
 	}
 	return
+}
+
+// runDiffWith runs src on th with the options and the names of the differential.
+func runDiffWith(th *starlark.Thread, src string) (starlark.StringDict, error) {
+	opts := &syntax.FileOptions{GlobalReassign: true, Set: true, While: true, TopLevelControl: true}
+	return starlark.ExecFileOptions(opts, th, "p.star", src, starlark.StringDict{"json": starjson.Module})
 }
 
 // ---- the programs ----

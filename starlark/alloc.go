@@ -138,6 +138,13 @@ const (
 	// new memory takes 8 ms, and the collector marks what is alive).
 	allocBytesPerWork = 16
 
+	// allocBytesPerWorkNoscan is the same for memory without pointers (a string,
+	// bytes, the digits of an integer): it is not zeroed by the program and the
+	// collector does not look at it, so it costs what the copy into it costs,
+	// 0.04 ns a byte for a string of a megabyte (s + s, s * n: 1-2 us a
+	// megabyte, 0.1 ns a byte for short ones).
+	allocBytesPerWorkNoscan = 128
+
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
 	// charged (see above). It is asserted by TestAllocUnchargedGrowthPerStep.
@@ -256,6 +263,13 @@ func (thread *Thread) AllocHeadroom() uint64 {
 // A nil thread has no budget: only the ceiling applies. This is how the
 // exported functions that take no thread (Binary) are bounded.
 func (thread *Thread) charge(size, bytes uint64) error {
+	return thread.chargeAt(size, bytes, allocBytesPerWork)
+}
+
+// chargeAt is charge with the memory that takes one unit of work to allocate:
+// allocBytesPerWork for memory that holds pointers (the collector marks it),
+// allocBytesPerWorkNoscan for strings and the digits of integers (it does not).
+func (thread *Thread) chargeAt(size, bytes, perWork uint64) error {
 	if thread != nil && thread.maxAllocBytes != 0 {
 		if err := thread.overBudget(bytes); err != nil {
 			return err
@@ -268,7 +282,7 @@ func (thread *Thread) charge(size, bytes uint64) error {
 		// Allocating and zeroing memory takes time, and the collector's, and
 		// the memory that is allocated is garbage soon: a unit of work for each
 		// allocBytesPerWork bytes.
-		if err := thread.chargeWork(bytes / allocBytesPerWork); err != nil {
+		if err := thread.chargeWork(bytes / perWork); err != nil {
 			return err
 		}
 		thread.allocated = satAdd(thread.allocated, bytes)
@@ -335,7 +349,7 @@ func (thread *Thread) chargeEntries(n int) error {
 
 // chargeBytes charges for a new String or Bytes of n bytes.
 func (thread *Thread) chargeBytes(n int) error {
-	return thread.charge(uint64(max(n, 0)), uint64(max(n, 0)))
+	return thread.chargeAt(uint64(max(n, 0)), uint64(max(n, 0)), allocBytesPerWorkNoscan)
 }
 
 // excess translates the error of charge into the error of an operation: a
