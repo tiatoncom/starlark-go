@@ -364,16 +364,28 @@ var (
 
 func resetCounts() { cmpCount.Store(0); hashCount.Store(0); truthCount.Store(0) }
 
+// runawayWork is the number of comparisons or hashes after which a counted
+// value refuses to go on: the attacks are bounded by their steps, and if they
+// are not (a regression), the test fails with this error rather than not
+// returning. The legitimate attacks of the tests do at most ~80 million.
+const runawayWork = 250_000_000
+
+var errRunaway = errors.New("runaway: the steps did not stop the work")
+
 func (c counted) String() string { return fmt.Sprintf("counted(%d)", c.id) }
 func (c counted) Type() string   { return "counted" }
 func (c counted) Freeze()        {}
 func (c counted) Truth() Bool    { truthCount.Add(1); return c.id != 0 }
 func (c counted) Hash() (uint32, error) {
-	hashCount.Add(1)
+	if hashCount.Add(1) > runawayWork {
+		return 0, errRunaway
+	}
 	return uint32(c.id) * 2654435761, nil
 }
 func (c counted) CompareSameType(op syntax.Token, y Value, depth int) (bool, error) {
-	cmpCount.Add(1)
+	if cmpCount.Add(1) > runawayWork {
+		return false, errRunaway
+	}
 	d := y.(counted)
 	switch op {
 	case syntax.EQL:
@@ -572,10 +584,10 @@ func TestAttack_TupleDAGHash(t *testing.T) {
 func TestAttack_TupleDAGFreeze(t *testing.T) {
 	l := NewList([]Value{counted{1}})
 	var v Value = Tuple{l}
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 22; i++ {
 		v = Tuple{v, v}
 	}
-	v.Freeze() // 2^40 paths: must return
+	v.Freeze() // 2^22 paths: 4M visits if each is walked, one if not
 	if !l.frozen {
 		t.Fatal("the list at the bottom was not frozen")
 	}

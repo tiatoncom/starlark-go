@@ -10,6 +10,7 @@ dict(d)	10647
 l.insert(0, 1)	1571
 l.pop(0)	1570
 l.remove(l[-1])	6261
+l.remove(l[0]) (the memmove)	1572
 l.extend(m)	9381
 l.index(l[-1])	6261
 list(l)	9380
@@ -43,6 +44,7 @@ l[::-1]	3133
 str(l)	7600
 repr(bigl)	1567
 str(bn)	162
+'%d' % bn	120
 big + 1	262
 big - big2	262
 big & big2	262
