@@ -19,11 +19,11 @@ import (
 // A stack overflow is a fatal error, not a panic: it kills the process and
 // every other test with it. So the deep values are built and walked in a child
 // process, with a small stack limit, and the parent checks that the child
-// finished. The values are 200000 levels deep, far past MaxValueDepth, and
-// would need ~140 MiB of stack to recurse; the child's limit is 32 MiB.
+// finished. The values are 60000 levels deep, far past MaxValueDepth, and
+// would need ~40 MiB of stack (a walk of MaxValueDepth levels needs ~8 MiB) to recurse; the child's limit is 24 MiB.
 func TestDeepNesting_ChildProcess(t *testing.T) {
 	if os.Getenv("STARLARK_DEEP_CHILD") == "1" {
-		debug.SetMaxStack(32 << 20)
+		debug.SetMaxStack(24 << 20)
 		runDeepNestingBattery(t)
 		return
 	}
@@ -43,7 +43,7 @@ func TestDeepNesting_ChildProcess(t *testing.T) {
 }
 
 func runDeepNestingBattery(t *testing.T) {
-	const depth = 200000
+	const depth = 60000
 	deepTuple := func() Value {
 		var v Value = Tuple{}
 		for i := 0; i < depth; i++ {

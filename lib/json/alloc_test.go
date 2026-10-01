@@ -149,8 +149,8 @@ if json.indent(s) != json.encode_indent(x, prefix="", indent="\t"): fail("indent
 
 func TestJSON_DeepNesting_ChildProcess(t *testing.T) {
 	if os.Getenv("STARLARK_JSON_DEEP_CHILD") == "1" {
-		debug.SetMaxStack(32 << 20) // 200000 levels would need ~100 MiB
-		const depth = 200000
+		debug.SetMaxStack(24 << 20) // 60000 levels would need ~60 MiB, MaxValueDepth levels ~10 MiB
+		const depth = 60000
 		th := &starlark.Thread{}
 		deepList := func() starlark.Value {
 			v := starlark.NewList(nil)
