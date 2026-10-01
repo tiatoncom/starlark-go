@@ -1,6 +1,7 @@
 package starlark_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.starlark.net/starlark"
@@ -8,10 +9,16 @@ import (
 )
 
 // Benchmarks of the hot path: calls of built-ins and operators on small
-// operands, where nothing is charged beyond the opcodes (the free window). They
-// run unchanged on v0.2.0, to show what the accounting of work costs there.
+// operands, where the work that is charged is a few units a call. They run
+// unchanged on v0.2.0, to show what the accounting of work costs there. A setup
+// that starts with "local:" is made inside f (a value that the benchmark
+// changes cannot be a global, which is frozen).
 func benchProgram(b *testing.B, setup, body string) {
-	src := setup + "\ndef f():\n  for i in range(1000):\n" + body + "\n"
+	local := ""
+	if rest, ok := strings.CutPrefix(setup, "local:"); ok {
+		setup, local = "", "  "+rest+"\n"
+	}
+	src := setup + "\ndef f():\n" + local + "  for i in range(1000):\n" + body + "\n"
 	th := &starlark.Thread{}
 	globals, err := starlark.ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, Set: true}, th, "b.star", src, nil)
 	if err != nil {
@@ -39,7 +46,7 @@ func BenchmarkSmall_dict_index(b *testing.B) {
 	benchProgram(b, "d = {'a': 1, 'b': 2}", "    x = d['b']")
 }
 func BenchmarkSmall_dict_set(b *testing.B) {
-	benchProgram(b, "d = {'a': 1, 'b': 2}", "    d['c'] = i")
+	benchProgram(b, "local:d = {'a': 1, 'b': 2}", "    d['c'] = i")
 }
 func BenchmarkSmall_str_find(b *testing.B) {
 	benchProgram(b, "s = 'hello world'", "    x = s.find('wor')")
@@ -51,13 +58,13 @@ func BenchmarkSmall_eq_lists(b *testing.B) {
 	benchProgram(b, "l = [1, 2, 3]\nm = [1, 2, 3]", "    x = l == m")
 }
 func BenchmarkSmall_append(b *testing.B) {
-	benchProgram(b, "l = []", "    l.append(i)\n    l.pop()")
+	benchProgram(b, "local:l = []", "    l.append(i)\n    l.pop()")
 }
 func BenchmarkSmall_sorted(b *testing.B) {
 	benchProgram(b, "l = [3, 1, 2, 5, 4]", "    x = sorted(l)")
 }
 func BenchmarkSmall_set_add(b *testing.B) {
-	benchProgram(b, "s = set([1, 2])", "    s.add(3)")
+	benchProgram(b, "local:s = set([1, 2])", "    s.add(3)")
 }
 
 func BenchmarkSmall_percent_d(b *testing.B) {
