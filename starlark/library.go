@@ -131,9 +131,9 @@ var (
 		"replace":        NewBuiltin("replace", string_replace),
 		"rfind":          NewBuiltin("rfind", string_rfind),
 		"rindex":         NewBuiltin("rindex", string_rindex),
-		"rpartition":     NewBuiltin("rpartition", string_partition),    // sic
-		"rsplit":         NewBuiltin("rsplit", string_split),            // sic
-		"rstrip":         NewBuiltin("rstrip", string_strip), // sic
+		"rpartition":     NewBuiltin("rpartition", string_partition), // sic
+		"rsplit":         NewBuiltin("rsplit", string_split),         // sic
+		"rstrip":         NewBuiltin("rstrip", string_strip),         // sic
 		"split":          NewBuiltin("split", string_split),
 		"splitlines":     NewBuiltin("splitlines", string_splitlines),
 		"startswith":     NewBuiltin("startswith", string_startswith),
