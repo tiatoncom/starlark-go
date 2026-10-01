@@ -837,6 +837,11 @@ type Builtin struct {
 	// not charge their result. It is not exported, so a built-in of the host
 	// is never exempt: Call charges what it returns. See alloc.go.
 	accounts bool
+
+	// price is the work of the built-in in units (see prices.go): a built-in
+	// of this package has one, a built-in of the host has none and is not
+	// charged by Call (the host charges its own work with ChargeSteps).
+	price *price
 }
 
 func (b *Builtin) Name() string { return b.name }
@@ -879,7 +884,7 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 //
 //	"abc".index("a")
 func (b *Builtin) BindReceiver(recv Value) *Builtin {
-	return &Builtin{name: b.name, fn: b.fn, recv: recv, accounts: b.accounts}
+	return &Builtin{name: b.name, fn: b.fn, recv: recv, accounts: b.accounts, price: b.price}
 }
 
 // A *Dict represents a Starlark dictionary.
@@ -913,11 +918,50 @@ func (d *Dict) Truth() Bool                                     { return d.Len()
 func (d *Dict) Hash() (uint32, error)                           { return 0, fmt.Errorf("unhashable type: dict") }
 
 func (x *Dict) Union(y *Dict) *Dict {
+	z, _ := x.unionM(nil, y)
+	return z
+}
+
+// unionM is Union, charging its work to m (see work.go).
+func (x *Dict) unionM(m *meter, y *Dict) (*Dict, error) {
 	z := new(Dict)
 	z.ht.init(x.Len()) // a lower bound
-	z.ht.addAll(&x.ht) // can't fail
-	z.ht.addAll(&y.ht) // can't fail
-	return z
+	if err := z.ht.addAllM(m, &x.ht); err != nil {
+		return nil, err
+	}
+	if err := z.ht.addAllM(m, &y.ht); err != nil {
+		return nil, err
+	}
+	return z, nil
+}
+
+// SetKeyWork is SetKey, charging the work of the insertion (the hash of the key,
+// the walk of the chain of its bucket, the entry) to the steps of thread, as the
+// built-ins of this package do: a built-in of the host that fills a dict from
+// keys of the script calls it. A nil thread is not charged.
+func (d *Dict) SetKeyWork(thread *Thread, k, v Value) error {
+	m := thread.meter()
+	if err := d.ht.insertM(&m, k, v); err != nil {
+		return err
+	}
+	return m.flush()
+}
+
+// InsertWork is Insert, charging its work to thread (see Dict.SetKeyWork).
+func (s *Set) InsertWork(thread *Thread, k Value) error {
+	m := thread.meter()
+	if err := s.ht.insertM(&m, k, None); err != nil {
+		return err
+	}
+	return m.flush()
+}
+
+// getM, setKeyM and deleteM are Get, SetKey and Delete, charging their work
+// (the hash of the key, the chain of the bucket) to m.
+func (d *Dict) getM(m *meter, k Value) (Value, bool, error) { return d.ht.lookupM(m, k) }
+func (d *Dict) setKeyM(m *meter, k, v Value) error          { return d.ht.insertM(m, k, v) }
+func (d *Dict) deleteM(m *meter, k Value) (Value, bool, error) {
+	return d.ht.deleteM(m, k)
 }
 
 func (d *Dict) Attr(name string) (Value, error) { return builtinAttr(d, name, dictMethods) }
@@ -1026,7 +1070,7 @@ func (x *List) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, erro
 	y := y_.(*List)
 	// It's tempting to check x == y as an optimization here,
 	// but wrong because a list containing NaN is not equal to itself.
-	return sliceCompare(op, x.elems, y.elems, depth)
+	return sliceCompareM(nil, op, x.elems, y.elems, depth)
 }
 
 func sliceCompare(op syntax.Token, x, y []Value, depth int) (bool, error) {
@@ -1129,7 +1173,7 @@ func (t Tuple) Truth() Bool    { return len(t) > 0 }
 
 func (x Tuple) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error) {
 	y := y_.(Tuple)
-	return sliceCompare(op, x, y, depth)
+	return sliceCompareM(nil, op, x, y, depth)
 }
 
 func (t Tuple) Has(y Value) (bool, error) {
@@ -1143,32 +1187,7 @@ func (t Tuple) Has(y Value) (bool, error) {
 	return false, nil
 }
 
-func (t Tuple) Hash() (uint32, error) { return t.hash(0) }
-
-// hash is Hash at the given nesting depth: a tuple nested deeper than
-// MaxValueDepth is refused (the recursion would overflow the Go stack).
-func (t Tuple) hash(depth int) (uint32, error) {
-	if depth > MaxValueDepth {
-		return 0, fmt.Errorf("tuple is nested more than %d levels deep", MaxValueDepth)
-	}
-	// Use same algorithm as Python.
-	var x, mult uint32 = 0x345678, 1000003
-	for _, elem := range t {
-		var y uint32
-		var err error
-		if et, ok := elem.(Tuple); ok {
-			y, err = et.hash(depth + 1)
-		} else {
-			y, err = elem.Hash()
-		}
-		if err != nil {
-			return 0, err
-		}
-		x = x ^ y*mult
-		mult += 82520 + uint32(len(t)+len(t))
-	}
-	return x, nil
-}
+func (t Tuple) Hash() (uint32, error) { return t.hashM(nil, 0) }
 
 type tupleIterator struct{ elems Tuple }
 
@@ -1200,16 +1219,27 @@ func NewSet(size int) *Set {
 }
 
 func (s *Set) Delete(k Value) (found bool, err error) { _, found, err = s.ht.delete(k); return }
-func (s *Set) Clear() error                           { return s.ht.clear() }
-func (s *Set) Has(k Value) (found bool, err error)    { _, found, err = s.ht.lookup(k); return }
-func (s *Set) Insert(k Value) error                   { return s.ht.insert(k, None) }
-func (s *Set) Len() int                               { return int(s.ht.len) }
-func (s *Set) Iterate() Iterator                      { return s.ht.iterate() }
-func (s *Set) String() string                         { return toString(s) }
-func (s *Set) Type() string                           { return "set" }
-func (s *Set) Freeze()                                { freezeTree(s) }
-func (s *Set) Hash() (uint32, error)                  { return 0, fmt.Errorf("unhashable type: set") }
-func (s *Set) Truth() Bool                            { return s.Len() > 0 }
+
+// hasM, insertM and deleteM are Has, Insert and Delete, charging their work to m.
+func (s *Set) hasM(m *meter, k Value) (found bool, err error) {
+	_, found, err = s.ht.lookupM(m, k)
+	return
+}
+func (s *Set) insertM(m *meter, k Value) error { return s.ht.insertM(m, k, None) }
+func (s *Set) deleteM(m *meter, k Value) (found bool, err error) {
+	_, found, err = s.ht.deleteM(m, k)
+	return
+}
+func (s *Set) Clear() error                        { return s.ht.clear() }
+func (s *Set) Has(k Value) (found bool, err error) { _, found, err = s.ht.lookup(k); return }
+func (s *Set) Insert(k Value) error                { return s.ht.insert(k, None) }
+func (s *Set) Len() int                            { return int(s.ht.len) }
+func (s *Set) Iterate() Iterator                   { return s.ht.iterate() }
+func (s *Set) String() string                      { return toString(s) }
+func (s *Set) Type() string                        { return "set" }
+func (s *Set) Freeze()                             { freezeTree(s) }
+func (s *Set) Hash() (uint32, error)               { return 0, fmt.Errorf("unhashable type: set") }
+func (s *Set) Truth() Bool                         { return s.Len() > 0 }
 
 func (s *Set) Attr(name string) (Value, error) { return builtinAttr(s, name, setMethods) }
 func (s *Set) AttrNames() []string             { return builtinAttrNames(setMethods) }
@@ -1281,49 +1311,70 @@ func setFromIterator(iter Iterator) (*Set, error) {
 }
 
 func (s *Set) clone() *Set {
-	set := new(Set)
-	for e := s.ht.head; e != nil; e = e.next {
-		set.Insert(e.key) // can't fail
-	}
+	set, _ := s.cloneM(nil)
 	return set
 }
 
-func (s *Set) Union(iter Iterator) (Value, error) {
-	set := s.clone()
-	var x Value
-	for iter.Next(&x) {
-		if err := set.Insert(x); err != nil {
+func (s *Set) cloneM(m *meter) (*Set, error) {
+	set := new(Set)
+	for e := s.ht.head; e != nil; e = e.next {
+		if err := set.insertM(m, e.key); err != nil { // (can't fail otherwise)
 			return nil, err
 		}
 	}
 	return set, nil
 }
 
-func (s *Set) InsertAll(iter Iterator) error {
+func (s *Set) Union(iter Iterator) (Value, error) { return s.unionM(nil, iter) }
+
+func (s *Set) unionM(m *meter, iter Iterator) (Value, error) {
+	set, err := s.cloneM(m)
+	if err != nil {
+		return nil, err
+	}
 	var x Value
 	for iter.Next(&x) {
-		if err := s.Insert(x); err != nil {
+		if err := set.insertM(m, x); err != nil {
+			return nil, err
+		}
+	}
+	return set, nil
+}
+
+func (s *Set) InsertAll(iter Iterator) error { return s.insertAllM(nil, iter) }
+
+func (s *Set) insertAllM(m *meter, iter Iterator) error {
+	var x Value
+	for iter.Next(&x) {
+		if err := s.insertM(m, x); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Set) Difference(other Iterator) (Value, error) {
-	diff := s.clone()
+func (s *Set) Difference(other Iterator) (Value, error) { return s.differenceM(nil, other) }
+
+func (s *Set) differenceM(m *meter, other Iterator) (Value, error) {
+	diff, err := s.cloneM(m)
+	if err != nil {
+		return nil, err
+	}
 	var x Value
 	for other.Next(&x) {
-		if _, err := diff.Delete(x); err != nil {
+		if _, err := diff.deleteM(m, x); err != nil {
 			return nil, err
 		}
 	}
 	return diff, nil
 }
 
-func (s *Set) IsSuperset(other Iterator) (bool, error) {
+func (s *Set) IsSuperset(other Iterator) (bool, error) { return s.isSupersetM(nil, other) }
+
+func (s *Set) isSupersetM(m *meter, other Iterator) (bool, error) {
 	var x Value
 	for other.Next(&x) {
-		found, err := s.Has(x)
+		found, err := s.hasM(m, x)
 		if err != nil {
 			return false, err
 		}
@@ -1334,24 +1385,28 @@ func (s *Set) IsSuperset(other Iterator) (bool, error) {
 	return true, nil
 }
 
-func (s *Set) IsSubset(other Iterator) (bool, error) {
-	if count, err := s.ht.count(other); err != nil {
+func (s *Set) IsSubset(other Iterator) (bool, error) { return s.isSubsetM(nil, other) }
+
+func (s *Set) isSubsetM(m *meter, other Iterator) (bool, error) {
+	if count, err := s.ht.countM(m, other); err != nil {
 		return false, err
 	} else {
 		return count == s.Len(), nil
 	}
 }
 
-func (s *Set) Intersection(other Iterator) (Value, error) {
+func (s *Set) Intersection(other Iterator) (Value, error) { return s.intersectionM(nil, other) }
+
+func (s *Set) intersectionM(m *meter, other Iterator) (Value, error) {
 	intersect := new(Set)
 	var x Value
 	for other.Next(&x) {
-		found, err := s.Has(x)
+		found, err := s.hasM(m, x)
 		if err != nil {
 			return nil, err
 		}
 		if found {
-			err = intersect.Insert(x)
+			err = intersect.insertM(m, x)
 			if err != nil {
 				return nil, err
 			}
@@ -1361,18 +1416,46 @@ func (s *Set) Intersection(other Iterator) (Value, error) {
 }
 
 func (s *Set) SymmetricDifference(other Iterator) (Value, error) {
-	diff := s.clone()
+	return s.symmetricDifferenceM(nil, other)
+}
+
+func (s *Set) symmetricDifferenceM(m *meter, other Iterator) (Value, error) {
+	diff, err := s.cloneM(m)
+	if err != nil {
+		return nil, err
+	}
 	var x Value
 	for other.Next(&x) {
-		found, err := diff.Delete(x)
+		found, err := diff.deleteM(m, x)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
-			diff.Insert(x)
+			if err := diff.insertM(m, x); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return diff, nil
+}
+
+// A tupleKey identifies a tuple by its first element and its length.
+type tupleKey struct {
+	p *Value
+	n int
+}
+
+// onlyImmutable reports whether every element of the tuple is a value of a
+// type that has nothing to freeze.
+func onlyImmutable(t Tuple) bool {
+	for _, v := range t {
+		switch v.(type) {
+		case nil, NoneType, Bool, Int, Float, String, Bytes:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // freezeTree freezes root and everything reachable from it through lists,
@@ -1388,6 +1471,7 @@ func freezeTree(root Value) {
 		val   bool    // whose value is the next to visit
 	}
 	var stack []frame
+	var seen map[tupleKey]struct{}
 	visit := func(v Value) {
 		switch v := v.(type) {
 		case nil, NoneType, Bool, Int, Float, String, Bytes:
@@ -1400,8 +1484,18 @@ func freezeTree(root Value) {
 				}
 			}
 		case Tuple:
-			if len(v) > 0 {
-				stack = append(stack, frame{elems: v})
+			// A tuple has no frozen flag, so a shared tuple (t = (t, t) repeated)
+			// would be walked once for each path to it: exponential. Walk each
+			// distinct tuple once; one with only immutable elements needs no walk.
+			if len(v) > 0 && !onlyImmutable(v) {
+				key := tupleKey{&v[0], len(v)}
+				if _, done := seen[key]; !done {
+					if seen == nil {
+						seen = make(map[tupleKey]struct{})
+					}
+					seen[key] = struct{}{}
+					stack = append(stack, frame{elems: v})
+				}
 			}
 		case *Dict:
 			if !v.ht.frozen {
@@ -1462,6 +1556,21 @@ const writeValueDeepMark = "...<nested too deeply>"
 // levels deep, and the engine's own limit on state depth is far lower.
 const MaxValueDepth = 10000
 
+// MaxIntDigits is the number of decimal digits of the largest integer that is
+// converted to a string, or parsed from one: int(s), str(n), repr(n), %d, {},
+// json. The conversion is quadratic in the digits, and one call of a built-in
+// is a step or two: int("9" * 1000000) took 4 s and 12 steps. The integers of a
+// program (amounts, identifiers, timestamps, counters) have a few dozen digits;
+// Python's default limit is the same 4300. An integer longer than this is
+// still an integer: it can be computed with, compared and hashed; only its
+// conversion to and from a string is refused.
+const MaxIntDigits = 4300
+
+// MaxIntBits is the number of bits of MaxIntDigits decimal digits.
+const MaxIntBits = 14285
+
+const maxIntBits = MaxIntBits
+
 // A leaf that does not fit in what remains of the limit is cut at this many
 // bytes in an error message (see errValue).
 const errValueLimit = 96
@@ -1481,7 +1590,7 @@ func toString(v Value) string {
 func errValue(v Value) string {
 	buf := new(strings.Builder)
 	w := valueWriter{out: buf, limit: errValueLimit, cut: true}
-	w.write(v, nil, 0)
+	w.write(v, 0)
 	return buf.String()
 }
 
@@ -1501,9 +1610,11 @@ func errStr(s string) string {
 
 // The results of writeValueLimit.
 const (
-	writeOK    = iota // the whole form was written
-	writeLimit        // the form reached the limit, or a leaf would have
-	writeDeep         // the value is nested deeper than MaxValueDepth
+	writeOK     = iota // the whole form was written
+	writeLimit         // the form reached the limit, or a leaf would have
+	writeDeep          // the value is nested deeper than MaxValueDepth
+	writeStop          // the thread has used up its steps (the error of the meter)
+	writeBigInt        // a big integer too long to convert to a string (maxIntBits)
 )
 
 // writeValue writes x to out.
@@ -1530,8 +1641,18 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 // be charged to its budget.
 func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) int {
 	w := valueWriter{out: out, limit: limit}
-	w.write(x, path, 0)
+	w.write(x, 0)
 	return w.result
+}
+
+// writeValueMeter is writeValueLimit, charging the work of the form to m (a
+// leaf by its bytes, a container by its elements, a big integer by its digits
+// squared). The error is that of a thread whose steps are used up; the form is
+// then incomplete.
+func writeValueMeter(out *strings.Builder, x Value, limit int, m *meter) (int, error) {
+	w := valueWriter{out: out, limit: limit, m: m}
+	w.write(x, 0)
+	return w.result, w.err
 }
 
 type valueWriter struct {
@@ -1539,6 +1660,58 @@ type valueWriter struct {
 	limit  int
 	cut    bool // cut a leaf that does not fit, instead of refusing it
 	result int
+	m      *meter // charged with the work; nil: none
+	err    error  // the error of m
+
+	// The lists and dicts that are being written, to detect a cycle: a slice
+	// for the first levels, and a set below them, so that a cycle check is not
+	// linear in the depth (which would make the form of a deep value
+	// quadratic).
+	path    []Value
+	pathSet map[Value]struct{}
+}
+
+// pathSetDepth is the depth from which the cycle check uses a set.
+const pathSetDepth = 32
+
+func (w *valueWriter) onPath(x Value) bool {
+	if w.pathSet != nil {
+		_, ok := w.pathSet[x]
+		return ok
+	}
+	return pathContains(w.path, x)
+}
+
+func (w *valueWriter) push(x Value) {
+	w.path = append(w.path, x)
+	if len(w.path) == pathSetDepth {
+		w.pathSet = make(map[Value]struct{}, 2*pathSetDepth)
+		for _, v := range w.path {
+			w.pathSet[v] = struct{}{}
+		}
+	} else if w.pathSet != nil {
+		w.pathSet[x] = struct{}{}
+	}
+}
+
+func (w *valueWriter) pop() {
+	x := w.path[len(w.path)-1]
+	w.path = w.path[:len(w.path)-1]
+	if w.pathSet != nil {
+		delete(w.pathSet, x)
+	}
+}
+
+// work charges n units to the meter, and stops the form if the thread has
+// used up its steps.
+func (w *valueWriter) work(n uint64) {
+	if w.m == nil || w.err != nil {
+		return
+	}
+	if err := w.m.add(n); err != nil {
+		w.err = err
+		w.result = writeStop
+	}
 }
 
 // fits reports whether n more bytes keep the form below the limit.
@@ -1558,6 +1731,7 @@ func (w *valueWriter) full() {
 func (w *valueWriter) leaf(n int, form func() string, cut func(room int) string) {
 	switch {
 	case w.fits(n):
+		w.work(workSlow(n))
 		w.out.WriteString(form())
 	case w.cut:
 		if room := w.limit - w.out.Len(); room > 0 {
@@ -1569,7 +1743,10 @@ func (w *valueWriter) leaf(n int, form func() string, cut func(room int) string)
 	}
 }
 
-func (w *valueWriter) write(x Value, path []Value, depth int) {
+func (w *valueWriter) write(x Value, depth int) {
+	if w.result != writeOK && w.result != writeLimit {
+		return
+	}
 	if w.out.Len() >= w.limit {
 		w.full()
 		return
@@ -1589,6 +1766,14 @@ func (w *valueWriter) write(x Value, path []Value, depth int) {
 
 	case Int:
 		if _, big := x.get(); big != nil {
+			if big.BitLen() > maxIntBits {
+				w.result = writeBigInt
+				w.out.WriteString("<int of " + strconv.Itoa(big.BitLen()) + " bits>")
+				return
+			}
+			// The conversion is quadratic in the digits.
+			d := uint64(big.BitLen()/3 + 1)
+			w.work(d * d / 4096)
 			// The decimal form has at most BitLen/3+1 digits.
 			n := big.BitLen()/3 + 2
 			w.leaf(n, x.String, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
@@ -1613,18 +1798,21 @@ func (w *valueWriter) write(x Value, path []Value, depth int) {
 
 	case *List:
 		w.out.WriteByte('[')
-		if pathContains(path, x) {
+		if w.onPath(x) {
 			w.out.WriteString("...") // list contains itself
 		} else {
+			w.push(x)
 			for i, elem := range x.elems {
 				if i > 0 {
 					w.out.WriteString(", ")
 				}
-				w.write(elem, append(path, x), depth+1)
+				w.work(1)
+				w.write(elem, depth+1)
 				if w.result != writeOK {
 					return
 				}
 			}
+			w.pop()
 		}
 		w.out.WriteByte(']')
 
@@ -1634,7 +1822,8 @@ func (w *valueWriter) write(x Value, path []Value, depth int) {
 			if i > 0 {
 				w.out.WriteString(", ")
 			}
-			w.write(elem, path, depth+1)
+			w.work(1)
+			w.write(elem, depth+1)
 			if w.result != writeOK {
 				return
 			}
@@ -1656,21 +1845,24 @@ func (w *valueWriter) write(x Value, path []Value, depth int) {
 
 	case *Dict:
 		w.out.WriteByte('{')
-		if pathContains(path, x) {
+		if w.onPath(x) {
 			w.out.WriteString("...") // dict contains itself
 		} else {
 			sep := ""
+			w.push(x) // (the original pushed x for the values only; the keys are hashable)
 			for e := x.ht.head; e != nil; e = e.next {
 				k, v := e.key, e.value
 				w.out.WriteString(sep)
-				w.write(k, path, depth+1)
+				w.work(1)
+				w.write(k, depth+1)
 				w.out.WriteString(": ")
-				w.write(v, append(path, x), depth+1) // cycle check
+				w.write(v, depth+1)
 				if w.result != writeOK {
 					return
 				}
 				sep = ", "
 			}
+			w.pop()
 		}
 		w.out.WriteByte('}')
 
@@ -1680,7 +1872,8 @@ func (w *valueWriter) write(x Value, path []Value, depth int) {
 			if e != x.ht.head {
 				w.out.WriteString(", ")
 			}
-			w.write(e.key, path, depth+1)
+			w.work(1)
+			w.write(e.key, depth+1)
 			if w.result != writeOK {
 				return
 			}
@@ -1735,74 +1928,7 @@ func Compare(op syntax.Token, x, y Value) (bool, error) {
 // The depth parameter limits the maximum depth of recursion
 // in cyclic data structures.
 func CompareDepth(op syntax.Token, x, y Value, depth int) (bool, error) {
-	if depth < 1 {
-		return false, fmt.Errorf("comparison exceeded maximum recursion depth")
-	}
-	if sameType(x, y) {
-		if xcomp, ok := x.(Comparable); ok {
-			return xcomp.CompareSameType(op, y, depth)
-		}
-
-		if xcomp, ok := x.(TotallyOrdered); ok {
-			t, err := xcomp.Cmp(y, depth)
-			if err != nil {
-				return false, err
-			}
-			return threeway(op, t), nil
-		}
-
-		// use identity comparison
-		switch op {
-		case syntax.EQL:
-			return x == y, nil
-		case syntax.NEQ:
-			return x != y, nil
-		}
-		return false, fmt.Errorf("%s %s %s not implemented", x.Type(), op, y.Type())
-	}
-
-	// different types
-
-	// int/float ordered comparisons
-	switch x := x.(type) {
-	case Int:
-		if y, ok := y.(Float); ok {
-			var cmp int
-			if y != y {
-				cmp = -1 // y is NaN
-			} else if !math.IsInf(float64(y), 0) {
-				cmp = x.rational().Cmp(y.rational()) // y is finite
-			} else if y > 0 {
-				cmp = -1 // y is +Inf
-			} else {
-				cmp = +1 // y is -Inf
-			}
-			return threeway(op, cmp), nil
-		}
-	case Float:
-		if y, ok := y.(Int); ok {
-			var cmp int
-			if x != x {
-				cmp = +1 // x is NaN
-			} else if !math.IsInf(float64(x), 0) {
-				cmp = x.rational().Cmp(y.rational()) // x is finite
-			} else if x > 0 {
-				cmp = +1 // x is +Inf
-			} else {
-				cmp = -1 // x is -Inf
-			}
-			return threeway(op, cmp), nil
-		}
-	}
-
-	// All other values of different types compare unequal.
-	switch op {
-	case syntax.EQL:
-		return false, nil
-	case syntax.NEQ:
-		return true, nil
-	}
-	return false, fmt.Errorf("%s %s %s not implemented", x.Type(), op, y.Type())
+	return compareM(nil, op, x, y, depth)
 }
 
 func sameType(x, y Value) bool {

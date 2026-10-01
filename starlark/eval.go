@@ -703,10 +703,21 @@ func setField(x Value, name string, y Value) error {
 }
 
 // getIndex implements x[y].
-func getIndex(x, y Value) (Value, error) {
+func getIndex(thread *Thread, x, y Value) (Value, error) {
 	switch x := x.(type) {
 	case Mapping: // dict
-		z, found, err := x.Get(y)
+		var z Value
+		var found bool
+		var err error
+		if d, ok := x.(*Dict); ok {
+			m := thread.meter() // the hash of the key, the chain of the bucket
+			z, found, err = d.getM(&m, y)
+			if err == nil {
+				err = m.flush()
+			}
+		} else {
+			z, found, err = x.Get(y)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -789,6 +800,25 @@ func Unary(op syntax.Token, x Value) (Value, error) {
 	return nil, fmt.Errorf("unknown unary op: %s %s", op, x.Type())
 }
 
+// hasElems reports whether x is equal to an element of elems, charging the
+// comparisons to m as they are made (x in l is linear in l, and stops at the
+// first match).
+func hasElems(m *meter, elems []Value, x Value) (bool, error) {
+	for _, e := range elems {
+		if err := m.add(1); err != nil {
+			return false, err
+		}
+		eq, err := equalM(m, e, x, CompareLimit)
+		if err != nil {
+			return false, err
+		}
+		if eq {
+			return true, m.flush()
+		}
+	}
+	return false, m.flush()
+}
+
 // Binary applies a strict binary operator (not AND or OR) to its operands.
 // For equality tests or ordered comparisons, use Compare instead.
 //
@@ -817,6 +847,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				if err := thread.chargeIntLinear(x, y); err != nil {
+					return nil, err
+				}
 				return x.Add(y), nil
 			case Float:
 				xf, err := x.finiteFloat()
@@ -866,6 +899,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				if err := thread.chargeIntLinear(x, y); err != nil {
+					return nil, err
+				}
 				return x.Sub(y), nil
 			case Float:
 				xf, err := x.finiteFloat()
@@ -892,7 +928,12 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				}
 				iter := y.Iterate()
 				defer iter.Done()
-				return x.Difference(iter)
+				m := thread.meter()
+				z, err := x.differenceM(&m, iter)
+				if err == nil {
+					err = m.flush()
+				}
+				return z, err
 			}
 		}
 
@@ -906,6 +947,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 					if err := thread.charge(n, n); err != nil {
 						return nil, excess(err, "excessive integer multiplication")
 					}
+				}
+				if err := thread.chargeIntQuadratic(x, y); err != nil {
+					return nil, err
 				}
 				return x.Mul(y), nil
 			case Float:
@@ -1011,6 +1055,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if y.Sign() == 0 {
 					return nil, fmt.Errorf("floored division by zero")
 				}
+				if err := thread.chargeIntQuadratic(x, y); err != nil {
+					return nil, err
+				}
 				return x.Div(y), nil
 			case Float:
 				xf, err := x.finiteFloat()
@@ -1048,6 +1095,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			case Int:
 				if y.Sign() == 0 {
 					return nil, fmt.Errorf("integer modulo by zero")
+				}
+				if err := thread.chargeIntQuadratic(x, y); err != nil {
+					return nil, err
 				}
 				return x.Mod(y), nil
 			case Float:
@@ -1089,6 +1139,37 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		return !z.Truth(), nil
 
 	case syntax.IN:
+		m := thread.meter()
+		switch y := y.(type) {
+		case *List:
+			found, err := hasElems(&m, y.elems, x)
+			return Bool(found), err
+		case Tuple:
+			found, err := hasElems(&m, y, x)
+			return Bool(found), err
+		case String:
+			if err := thread.chargeWork(workFast(len(y))); err != nil {
+				return nil, err
+			}
+		case Bytes:
+			if err := thread.chargeWork(workFast(len(y))); err != nil {
+				return nil, err
+			}
+		case *Set:
+			found, err := y.hasM(&m, x)
+			if err == nil {
+				err = m.flush()
+			}
+			return Bool(found), err
+		case *Dict:
+			// Ignore error from Get as we cannot distinguish true
+			// errors (value cycle, type error) from "key not found".
+			_, found, _ := y.getM(&m, x)
+			if err := m.flush(); err != nil {
+				return nil, err
+			}
+			return Bool(found), nil
+		}
 		switch y := y.(type) {
 		case Container: // List, Tuple, Set, String, Bytes, rangeValue etc.
 			found, err := y.Has(x)
@@ -1104,6 +1185,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		switch x := x.(type) {
 		case Int:
 			if y, ok := y.(Int); ok {
+				if err := thread.chargeIntLinear(x, y); err != nil {
+					return nil, err
+				}
 				return x.Or(y), nil
 			}
 
@@ -1112,7 +1196,15 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
 					return nil, excess(err, "excessive dict union (%d + %d entries)", x.Len(), y.Len())
 				}
-				return x.Union(y), nil
+				m := thread.meter()
+				z, err := x.unionM(&m, y)
+				if err == nil {
+					err = m.flush()
+				}
+				if err != nil {
+					return nil, err
+				}
+				return z, nil
 			}
 
 		case *Set: // union
@@ -1122,7 +1214,12 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				}
 				iter := Iterate(y)
 				defer iter.Done()
-				return x.Union(iter)
+				m := thread.meter()
+				z, err := x.unionM(&m, iter)
+				if err == nil {
+					err = m.flush()
+				}
+				return z, err
 			}
 		}
 
@@ -1130,6 +1227,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		switch x := x.(type) {
 		case Int:
 			if y, ok := y.(Int); ok {
+				if err := thread.chargeIntLinear(x, y); err != nil {
+					return nil, err
+				}
 				return x.And(y), nil
 			}
 		case *Set: // intersection
@@ -1139,7 +1239,12 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				}
 				iter := y.Iterate()
 				defer iter.Done()
-				return x.Intersection(iter)
+				m := thread.meter()
+				z, err := x.intersectionM(&m, iter)
+				if err == nil {
+					err = m.flush()
+				}
+				return z, err
 			}
 		}
 
@@ -1147,6 +1252,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		switch x := x.(type) {
 		case Int:
 			if y, ok := y.(Int); ok {
+				if err := thread.chargeIntLinear(x, y); err != nil {
+					return nil, err
+				}
 				return x.Xor(y), nil
 			}
 		case *Set: // symmetric difference
@@ -1156,7 +1264,12 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				}
 				iter := y.Iterate()
 				defer iter.Done()
-				return x.SymmetricDifference(iter)
+				m := thread.meter()
+				z, err := x.symmetricDifferenceM(&m, iter)
+				if err == nil {
+					err = m.flush()
+				}
+				return z, err
 			}
 		}
 
@@ -1173,8 +1286,14 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if y >= 512 {
 					return nil, fmt.Errorf("shift count too large: %v", y)
 				}
+				if err := thread.chargeIntLinear(x, x); err != nil {
+					return nil, err
+				}
 				return x.Lsh(uint(y)), nil
 			} else {
+				if err := thread.chargeIntLinear(x, x); err != nil {
+					return nil, err
+				}
 				return x.Rsh(uint(y)), nil
 			}
 		}
@@ -1335,13 +1454,26 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 	}()
 
 	builtin, isBuiltin := c.(*Builtin)
+	var workErr error
+	if isBuiltin && builtin.price != nil && builtin.price.work != nil {
+		// The work of the built-in, from the sizes of its operands, before it
+		// is done (see prices.go): a call that does not fit in the steps that
+		// are left is refused, not run.
+		workErr = thread.chargeWork(builtin.price.work(builtin.recv, args, kwargs))
+	}
 	isBuiltin = isBuiltin && !builtin.accounts
 	var allocBefore uint64
 	if isBuiltin {
 		allocBefore = thread.allocated
 	}
 
-	result, err := c.CallInternal(thread, args, kwargs)
+	var result Value
+	var err error
+	if workErr != nil {
+		err = workErr
+	} else {
+		result, err = c.CallInternal(thread, args, kwargs)
+	}
 
 	// Charge what the built-in returned and did not charge itself.
 	if isBuiltin && err == nil && result != nil {
@@ -1668,6 +1800,7 @@ func findParam(params []compile.Binding, name string) int {
 // (a %s of a shared subgraph can expand exponentially), then charged.
 func interpolate(thread *Thread, format string, x Value) (Value, error) {
 	limit := thread.stringLimit()
+	m := thread.meter()
 	buf := new(strings.Builder)
 	index := 0
 	nargs := 1
@@ -1736,13 +1869,16 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 		case 's', 'r':
 			if str, ok := AsString(arg); ok && c == 's' {
 				buf.WriteString(str)
-			} else if code := writeValueLimit(buf, arg, nil, limit); code != writeOK {
-				return nil, thread.formErr(code, limit, "%", "excessive string interpolation (over %d bytes)")
+			} else if code, werr := writeValueMeter(buf, arg, limit, &m); code != writeOK {
+				return nil, thread.formErr(code, werr, limit, "%", "excessive string interpolation (over %d bytes)")
 			}
 		case 'd', 'i', 'o', 'x', 'X':
 			i, err := NumberToInt(arg)
 			if err != nil {
 				return nil, fmt.Errorf("%%%c format requires integer: %v", c, err)
+			}
+			if err := thread.chargeIntToString(i, c == 'd' || c == 'i'); err != nil {
+				return nil, err
 			}
 			switch c {
 			case 'd', 'i':
@@ -1793,6 +1929,9 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 
 	if err := thread.chargeBytes(buf.Len()); err != nil {
 		return nil, excess(err, "excessive string interpolation (over %d bytes)", maxAlloc)
+	}
+	if err := m.flush(); err != nil {
+		return nil, err
 	}
 	return String(buf.String()), nil
 }

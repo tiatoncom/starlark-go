@@ -166,7 +166,11 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			ok, err2 := Compare(op, x, y)
+			m := thread.meter() // the work of the comparison, in steps
+			ok, err2 := compareM(&m, op, x, y, CompareLimit)
+			if err2 == nil {
+				err2 = m.flush()
+			}
 			if err2 != nil {
 				err = err2
 				break loop
@@ -266,7 +270,13 @@ loop:
 						err = excess(err2, "excessive dict update (%d + %d entries)", xdict.Len(), ydict.Len())
 						break loop
 					}
-					xdict.ht.addAll(&ydict.ht) // can't fail
+					m := thread.meter()
+					if err = xdict.ht.addAllM(&m, &ydict.ht); err != nil {
+						break loop
+					}
+					if err = m.flush(); err != nil {
+						break loop
+					}
 					z = xdict
 				}
 			}
@@ -461,7 +471,11 @@ loop:
 				// A new entry of a dict is charged (the first few are held
 				// by the inline bucket, which the base of the dict covers).
 				before := d.Len()
-				if err = d.SetKey(y, z); err != nil {
+				m := thread.meter()
+				if err = d.setKeyM(&m, y, z); err != nil {
+					break loop
+				}
+				if err = m.flush(); err != nil {
 					break loop
 				}
 				if err = thread.chargeNewEntry(d, before); err != nil {
@@ -475,7 +489,7 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			z, err2 := getIndex(x, y)
+			z, err2 := getIndex(thread, x, y)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -516,8 +530,12 @@ loop:
 			v := stack[sp-1]
 			sp -= 3
 			oldlen := dict.Len()
-			if err2 := dict.SetKey(k, v); err2 != nil {
+			m := thread.meter()
+			if err2 := dict.setKeyM(&m, k, v); err2 != nil {
 				err = err2
+				break loop
+			}
+			if err = m.flush(); err != nil {
 				break loop
 			}
 			if op == compile.SETDICTUNIQ && dict.Len() == oldlen {

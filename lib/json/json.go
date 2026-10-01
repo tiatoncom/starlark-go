@@ -108,11 +108,44 @@ var Module = &starlarkstruct.Module{
 	},
 }
 
+// A workMeter accumulates the work of one call of a function of this module,
+// in units (starlark.WorkPerStep of them make a step), and charges it to the
+// thread as it grows, so that a long call is stopped near the step limit. It is
+// the meter of the starlark package, for a function that is not in it.
+type workMeter struct {
+	th      *starlark.Thread
+	units   uint64
+	charged uint64
+}
+
+const flushWork = 4096
+
+func (m *workMeter) add(n uint64) error {
+	m.units += n
+	if m.units >= starlark.FreeWork && m.units-m.charged*starlark.WorkPerStep >= flushWork {
+		return m.flush()
+	}
+	return nil
+}
+
+func (m *workMeter) flush() error {
+	if m.units < starlark.FreeWork {
+		return nil
+	}
+	if steps := m.units / starlark.WorkPerStep; steps > m.charged {
+		n := steps - m.charged
+		m.charged = steps
+		return m.th.ChargeSteps(n)
+	}
+	return nil
+}
+
 func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var x starlark.Value
 	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &x); err != nil {
 		return nil, err
 	}
+	work := workMeter{th: thread} // one unit a node, a quarter a byte quoted
 
 	buf := new(bytes.Buffer)
 
@@ -167,7 +200,12 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return true
 	}
 
+	// The containers being written, to detect a cycle: a slice for the first
+	// levels and a set below them, so that the check is not linear in the
+	// depth (a deep value would take quadratic time).
 	path := make([]unsafe.Pointer, 0, 8)
+	var pathSet map[unsafe.Pointer]struct{}
+	const pathSetDepth = 32
 
 	var emit func(x starlark.Value, depth int) error
 	emit = func(x starlark.Value, depth int) error {
@@ -183,13 +221,36 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		// It is only necessary to push/pop the item when it might contain
 		// itself (i.e. the last three switch cases), but omitting it in the other
 		// cases did not show significant improvement on the benchmarks.
+		if err := work.add(1); err != nil {
+			stop = err
+			return err
+		}
 		if ptr := pointer(x); ptr != nil {
-			if pathContains(path, ptr) {
+			var cycle bool
+			if pathSet != nil {
+				_, cycle = pathSet[ptr]
+			} else {
+				cycle = pathContains(path, ptr)
+			}
+			if cycle {
 				return fmt.Errorf("cycle in JSON structure")
 			}
 
 			path = append(path, ptr)
-			defer func() { path = path[0 : len(path)-1] }()
+			if pathSet != nil {
+				pathSet[ptr] = struct{}{}
+			} else if len(path) == pathSetDepth {
+				pathSet = make(map[unsafe.Pointer]struct{}, 2*pathSetDepth)
+				for _, p := range path {
+					pathSet[p] = struct{}{}
+				}
+			}
+			defer func() {
+				if pathSet != nil {
+					delete(pathSet, path[len(path)-1])
+				}
+				path = path[0 : len(path)-1]
+			}()
 		}
 
 		switch x := x.(type) {
@@ -217,9 +278,20 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 		case starlark.Int:
 			if _, small := x.Int64(); !small {
-				// A big integer has at most BitLen/3+1 digits.
-				if tooBig(x.BigInt().BitLen()/3 + 2) {
+				bits := x.BigInt().BitLen()
+				if bits > starlark.MaxIntBits {
+					stop = fmt.Errorf("an integer of more than %d decimal digits is not converted to a string", starlark.MaxIntDigits)
 					return stop
+				}
+				// A big integer has at most BitLen/3+1 digits.
+				if tooBig(bits/3 + 2) {
+					return stop
+				}
+				// The conversion is quadratic in the digits.
+				d := uint64(bits/3 + 1)
+				if err := work.add(d * d / 4096); err != nil {
+					stop = err
+					return err
 				}
 			}
 			fmt.Fprint(buf, x)
@@ -332,6 +404,12 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	if err := thread.ChargeAlloc(uint64(buf.Len())); err != nil {
 		return nil, allocErr(b, err)
 	}
+	if err := work.add(uint64(buf.Len()) / 4); err != nil { // the quoting
+		return nil, err
+	}
+	if err := work.flush(); err != nil {
+		return nil, err
+	}
 	return starlark.String(buf.String()), nil
 }
 
@@ -401,6 +479,9 @@ func quotedLen(s string) int {
 func allocErr(b *starlark.Builtin, err error) error {
 	if _, ok := err.(*starlark.AllocBudgetError); ok {
 		return err
+	}
+	if strings.HasPrefix(err.Error(), "Starlark computation cancelled") {
+		return err // the step limit or the host: as it is
 	}
 	return fmt.Errorf("%s: %v", b.Name(), err)
 }
@@ -479,6 +560,10 @@ func encodeIndent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tu
 	if err := thread.ChargeAlloc(indentSize(string(str.(starlark.String)), prefix, indent)); err != nil {
 		return nil, allocErr(b, err)
 	}
+	// The scan and the indentation: ~2 ns a byte of the input.
+	if err := chargeUnits(thread, uint64(len(str.(starlark.String)))/4); err != nil {
+		return nil, err
+	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(str.(starlark.String)), prefix, indent); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
@@ -534,6 +619,10 @@ func indent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	if err := thread.ChargeAlloc(indentSize(str, prefix, indent)); err != nil {
 		return nil, allocErr(b, err)
 	}
+	// The scan and the indentation: ~2 ns a byte of the input.
+	if err := chargeUnits(thread, uint64(len(str))/4); err != nil {
+		return nil, err
+	}
 	buf := new(bytes.Buffer)
 	if err := json.Indent(buf, []byte(str), prefix, indent); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
@@ -580,6 +669,12 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	// The nesting of arrays and objects is bounded: parse is recursive, and
 	// a document nested 1.5 million deep would overflow the Go stack, which
 	// is fatal. Like a refused allocation, it is an error, not a syntax error.
+	meter := workMeter{th: thread} // one unit a value, a quarter a byte of a string
+	spend := func(n uint64) {
+		if err := meter.add(n); err != nil {
+			panic(refusal{err})
+		}
+	}
 	depth := 0
 	enter := func() {
 		depth++
@@ -617,6 +712,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	var parse func() starlark.Value
 	parse = func() starlark.Value {
 		b := next()
+		spend(1)
 		switch b {
 		case '"':
 			// string
@@ -654,6 +750,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				fail("%s", err)
 			}
 			charge(uint64(len(r)))
+			spend(uint64(len(r)) / 4)
 			return starlark.String(r)
 
 		case 'n':
@@ -724,7 +821,9 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					value := parse()
 					// one dict entry
 					charge(starlark.DictAllocBytes(dict.Len()+1) - starlark.DictAllocBytes(dict.Len()))
-					dict.SetKey(key, value) // can't fail
+					if err := dict.SetKeyWork(thread, key, value); err != nil { // (can't fail otherwise)
+						panic(refusal{err})
+					}
 					b = next()
 					if b != ',' {
 						if b != '}' {
@@ -769,20 +868,25 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					digits = num[1:]
 				}
 				if digits == "" || digits[0] == '0' && len(digits) > 1 && isdigit(digits[1]) {
-					fail("invalid number: %s", num)
+					fail("invalid number: %s", short(num))
 				}
 
 				// parse literal
+				if !float && len(digits) > starlark.MaxIntDigits {
+					// The conversion is quadratic in the digits.
+					fail("number has more than %d digits", starlark.MaxIntDigits)
+				}
+				spend(uint64(len(num)) * uint64(len(num)) / 4096)
 				if float {
 					x, err := strconv.ParseFloat(num, 64)
 					if err != nil {
-						fail("invalid number: %s", num)
+						fail("invalid number: %s", short(num))
 					}
 					return starlark.Float(x)
 				} else {
 					x, ok := new(big.Int).SetString(num, 10)
 					if !ok {
-						fail("invalid number: %s", num)
+						fail("invalid number: %s", short(num))
 					}
 					if x.BitLen() >= 32 { // a small integer is a word in the Value
 						charge(uint64(x.BitLen()+7) / 8)
@@ -815,9 +919,21 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	if skipSpace() {
 		fail("unexpected character %q after value", s[i])
 	}
+	if err := meter.flush(); err != nil {
+		return nil, err
+	}
 	return v, nil
 }
 
 func isdigit(b byte) bool {
 	return b >= '0' && b <= '9'
+}
+
+// chargeUnits charges units of work to the thread, as the starlark package
+// does for an operation of its own: nothing under starlark.FreeWork.
+func chargeUnits(th *starlark.Thread, units uint64) error {
+	if units < starlark.FreeWork {
+		return nil
+	}
+	return th.ChargeSteps(units / starlark.WorkPerStep)
 }

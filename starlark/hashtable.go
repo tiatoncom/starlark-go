@@ -74,14 +74,22 @@ func (ht *hashtable) freeze() {
 	}
 }
 
-func (ht *hashtable) insert(k, v Value) error {
+func (ht *hashtable) insert(k, v Value) error { return ht.insertM(nil, k, v) }
+
+// insertM is insert, charging the work of hashing the key and of walking the
+// chain of the bucket to m (see work.go): a table whose keys collide is a
+// linked list, and each insertion walks it.
+func (ht *hashtable) insertM(m *meter, k, v Value) error {
 	if err := ht.checkMutable("insert into"); err != nil {
 		return err
 	}
 	if ht.table == nil {
 		ht.init(1)
 	}
-	h, err := k.Hash()
+	if err := m.add(insertWork(ht.len)); err != nil { // the entry: allocation, links
+		return err
+	}
+	h, err := hashM(m, k)
 	if err != nil {
 		return err
 	}
@@ -95,6 +103,9 @@ retry:
 	// Inspect each bucket in the bucket list.
 	p := &ht.table[h&(uint32(len(ht.table)-1))]
 	for {
+		if err := m.add(1); err != nil { // one bucket of the chain
+			return err
+		}
 		for i := range p.entries {
 			e := &p.entries[i]
 			if e.hash != h {
@@ -104,7 +115,7 @@ retry:
 				}
 				continue
 			}
-			if eq, err := Equal(k, e.key); err != nil {
+			if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
 				return err // e.g. excessively recursive tuple
 			} else if !eq {
 				continue
@@ -123,6 +134,9 @@ retry:
 
 	// Does the number of elements exceed the buckets' load factor?
 	if overloaded(int(ht.len), len(ht.table)) {
+		if err := m.add(2 * uint64(ht.len)); err != nil { // the rehash of every entry
+			return err
+		}
 		ht.grow()
 		goto retry
 	}
@@ -174,7 +188,12 @@ func (ht *hashtable) grow() {
 }
 
 func (ht *hashtable) lookup(k Value) (v Value, found bool, err error) {
-	h, err := k.Hash()
+	return ht.lookupM(nil, k)
+}
+
+// lookupM is lookup, charging its work to m (see insertM).
+func (ht *hashtable) lookupM(m *meter, k Value) (v Value, found bool, err error) {
+	h, err := hashM(m, k)
 	if err != nil {
 		return nil, false, err // unhashable
 	}
@@ -187,10 +206,13 @@ func (ht *hashtable) lookup(k Value) (v Value, found bool, err error) {
 
 	// Inspect each bucket in the bucket list.
 	for p := &ht.table[h&(uint32(len(ht.table)-1))]; p != nil; p = p.next {
+		if err := m.add(1); err != nil { // one bucket of the chain
+			return nil, false, err
+		}
 		for i := range p.entries {
 			e := &p.entries[i]
 			if e.hash == h {
-				if eq, err := Equal(k, e.key); err != nil {
+				if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
 					return nil, false, err // e.g. excessively recursive tuple
 				} else if eq {
 					return e.value, true, nil // found
@@ -202,7 +224,10 @@ func (ht *hashtable) lookup(k Value) (v Value, found bool, err error) {
 }
 
 // count returns the number of distinct elements of iter that are elements of ht.
-func (ht *hashtable) count(iter Iterator) (int, error) {
+func (ht *hashtable) count(iter Iterator) (int, error) { return ht.countM(nil, iter) }
+
+// countM is count, charging its work to m (see insertM).
+func (ht *hashtable) countM(m *meter, iter Iterator) (int, error) {
 	if ht.table == nil {
 		return 0, nil // empty
 	}
@@ -218,8 +243,11 @@ func (ht *hashtable) count(iter Iterator) (int, error) {
 	for i := range bitsets {
 		bitsets[i].SetBits(storage[i : i+1 : i+1])
 	}
+	if err := m.add(uint64(len(ht.table))); err != nil { // the bitsets
+		return 0, err
+	}
 	for iter.Next(&k) && count != int(ht.len) {
-		h, err := k.Hash()
+		h, err := hashM(m, k)
 		if err != nil {
 			return 0, err // unhashable
 		}
@@ -231,10 +259,13 @@ func (ht *hashtable) count(iter Iterator) (int, error) {
 		bucketId := h & (uint32(len(ht.table) - 1))
 		i := 0
 		for p := &ht.table[bucketId]; p != nil; p = p.next {
+			if err := m.add(1); err != nil {
+				return 0, err
+			}
 			for j := range p.entries {
 				e := &p.entries[j]
 				if e.hash == h {
-					if eq, err := Equal(k, e.key); err != nil {
+					if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
 						return 0, err
 					} else if eq {
 						bitIndex := i<<3 + j
@@ -282,13 +313,18 @@ func (ht *hashtable) keys() []Value {
 }
 
 func (ht *hashtable) delete(k Value) (v Value, found bool, err error) {
+	return ht.deleteM(nil, k)
+}
+
+// deleteM is delete, charging its work to m (see insertM).
+func (ht *hashtable) deleteM(m *meter, k Value) (v Value, found bool, err error) {
 	if err := ht.checkMutable("delete from"); err != nil {
 		return nil, false, err
 	}
 	if ht.table == nil {
 		return None, false, nil // empty
 	}
-	h, err := k.Hash()
+	h, err := hashM(m, k)
 	if err != nil {
 		return nil, false, err // unhashable
 	}
@@ -298,10 +334,13 @@ func (ht *hashtable) delete(k Value) (v Value, found bool, err error) {
 
 	// Inspect each bucket in the bucket list.
 	for p := &ht.table[h&(uint32(len(ht.table)-1))]; p != nil; p = p.next {
+		if err := m.add(1); err != nil {
+			return nil, false, err
+		}
 		for i := range p.entries {
 			e := &p.entries[i]
 			if e.hash == h {
-				if eq, err := Equal(k, e.key); err != nil {
+				if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
 					return nil, false, err
 				} else if eq {
 					// Remove e from doubly-linked list.
@@ -353,9 +392,12 @@ func (ht *hashtable) clear() error {
 	return nil
 }
 
-func (ht *hashtable) addAll(other *hashtable) error {
+func (ht *hashtable) addAll(other *hashtable) error { return ht.addAllM(nil, other) }
+
+// addAllM is addAll, charging its work to m (see insertM).
+func (ht *hashtable) addAllM(m *meter, other *hashtable) error {
 	for e := other.head; e != nil; e = e.next {
-		if err := ht.insert(e.key, e.value); err != nil {
+		if err := ht.insertM(m, e.key, e.value); err != nil {
 			return err
 		}
 	}

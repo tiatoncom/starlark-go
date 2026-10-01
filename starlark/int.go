@@ -184,7 +184,14 @@ func (i Int) Hash() (uint32, error) {
 	iSmall, iBig := i.get()
 	var lo big.Word
 	if iBig != nil {
-		lo = iBig.Bits()[0]
+		// All the words take part, and both halves of each: ints that differ
+		// only above bit 32 (i << 32) must not all share a bucket, which makes
+		// a dict of them a linked list.
+		h := uint32(0)
+		for _, w := range iBig.Bits() {
+			h = h*0x9E3779B1 ^ uint32(w) ^ uint32(uint64(w)>>32)*0x85EBCA6B
+		}
+		return 12582917 * (h + 3), nil
 	} else {
 		lo = big.Word(iSmall)
 	}

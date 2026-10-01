@@ -129,6 +129,15 @@ const (
 	// method such as dict.items materializes: a list slot and a 2-tuple.
 	allocBytesPerItem = allocBytesPerValue + allocBaseTuple + 2*allocBytesPerValue
 
+	// allocBytesPerWork is the memory that takes one unit of work (~8 ns) to
+	// allocate and zero: measured 0.25-0.4 ns a byte for the large allocations
+	// (a list of a million slots takes ~6 ms to copy into new memory).
+	allocBytesPerWork = 32
+
+	// allocWorkFree is the size under which an allocation costs no work: a
+	// dict or set base (512), a list of a few dozen slots.
+	allocWorkFree = 1024
+
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
 	// charged (see above). It is asserted by TestAllocUnchargedGrowthPerStep.
@@ -248,6 +257,14 @@ func (thread *Thread) charge(size, bytes uint64) error {
 		return errExcessive
 	}
 	if thread != nil {
+		// Allocating and zeroing memory takes time, ~0.3 ns a byte: charge
+		// it in steps (see work.go). The first allocWorkFree bytes are free,
+		// so that a container's base does not cost a step.
+		if bytes > allocWorkFree {
+			if err := thread.chargeWork((bytes - allocWorkFree) / allocBytesPerWork); err != nil {
+				return err
+			}
+		}
 		thread.allocated = satAdd(thread.allocated, bytes)
 	}
 	return nil
@@ -332,7 +349,8 @@ func excess(err error, format string, args ...any) error {
 // returned unchanged, so that its text always begins with the fixed prefix
 // and the host can also recognize it by type through any wrapping.
 func prefixErr(prefix string, err error) error {
-	if _, ok := err.(*AllocBudgetError); ok {
+	switch err.(type) {
+	case *AllocBudgetError, *cancelledError:
 		return err
 	}
 	return fmt.Errorf("%s: %v", prefix, err)
@@ -442,13 +460,19 @@ func (thread *Thread) chargeNewSetEntry(s *Set, before int) error {
 	return nil
 }
 
-// formErr is the error for a string form that writeValueLimit reported as
+// formErr is the error for a string form that writeValueLimit (or writeValueMeter) reported as
 // other than complete: the budget error (or the ceiling error, with the
 // message limitMsg) if it reached the limit, and a nesting error if the value
 // is deeper than MaxValueDepth.
-func (thread *Thread) formErr(code, limit int, what, limitMsg string) error {
-	if code == writeDeep {
+func (thread *Thread) formErr(code int, werr error, limit int, what, limitMsg string) error {
+	if werr != nil {
+		return werr // the steps ran out
+	}
+	switch code {
+	case writeDeep:
 		return fmt.Errorf("%s: value is nested more than %d levels deep", what, MaxValueDepth)
+	case writeBigInt:
+		return fmt.Errorf("%s: an integer of more than %d decimal digits is not converted to a string", what, MaxIntDigits)
 	}
 	if strings.Contains(limitMsg, "%d") {
 		return thread.refuseBytes(limit, limitMsg, maxAlloc)

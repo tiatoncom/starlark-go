@@ -69,10 +69,10 @@ func TestJSON_ChargesExactly(t *testing.T) {
 		{"decode/dict", "x = '{\"a\":1,\"b\":2}'", "r = json.decode(x)", 512 + 2},                           // an entry per key, the key strings
 		{"decode/nested", "x = '[[1],[2,3]]'", "r = json.decode(x)", (48 + 2*16) + (48 + 16) + (48 + 2*16)}, // slots of the outer and inner lists
 		{"decode/dict of 10", "x = '{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9,\"j\":0}'", "r = json.decode(x)", 512 + 3*128 + 10},
-		{"decode/bigint", "x = '123456789012345678901234567890'", "r = json.decode(x)", 13},                 // 97 bits
-		{"decode/scalars are free", "x = 'true'", "r = json.decode(x)", 0},                                  // not a container
-		{"decode/invalid with default", "x = '[1,'", "r = json.decode(x, 5)", 48 + 16},                      // a syntax error: the default; charged as built
-		{"decode/invalid with default, partly built", "x = '[1,2,x'", "r = json.decode(x, 5)", 48 + 2*16},   // charged as it was built
+		{"decode/bigint", "x = '123456789012345678901234567890'", "r = json.decode(x)", 13},               // 97 bits
+		{"decode/scalars are free", "x = 'true'", "r = json.decode(x)", 0},                                // not a container
+		{"decode/invalid with default", "x = '[1,'", "r = json.decode(x, 5)", 48 + 16},                    // a syntax error: the default; charged as built
+		{"decode/invalid with default, partly built", "x = '[1,2,x'", "r = json.decode(x, 5)", 48 + 2*16}, // charged as it was built
 	} {
 		src := c.setup + "\nmark()\n" + c.op + "\nmark()\n"
 		for _, budget := range []uint64{0, 1 << 30} {
