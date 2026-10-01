@@ -1166,11 +1166,11 @@ func appendJSONString(dst []byte, s string) []byte {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
 		case r == utf8.RuneError && size == 1:
-			dst = append(dst, `�`...)
-		case r == ' ':
-			dst = append(dst, ` `...)
-		case r == ' ':
-			dst = append(dst, ` `...)
+			dst = append(dst, `\ufffd`...)
+		case r == '\u2028':
+			dst = append(dst, `\u2028`...)
+		case r == '\u2029':
+			dst = append(dst, `\u2029`...)
 		default:
 			dst = append(dst, s[i:i+size]...)
 		}
