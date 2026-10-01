@@ -1316,8 +1316,9 @@ type sortSlice struct {
 	keys   []Value // nil => values[i] is key
 	values []Value
 	err    error
-	m      meter // charged with the comparisons
-	stop   error // the error of m: the steps are used up
+	m      meter // charged with the comparisons and the swaps
+	stop   error // the error of m: the work is used up
+	odd    bool  // a swap is half a unit: the swaps are counted in pairs
 }
 
 func (s *sortSlice) Len() int { return len(s.values) }
@@ -1345,6 +1346,15 @@ func (s *sortSlice) Less(i, j int) bool {
 	return ok
 }
 func (s *sortSlice) Swap(i, j int) {
+	// A swap of two values (two slots, with the keys: four) takes half the time
+	// of a comparison of small integers: a unit for each two.
+	if s.stop == nil {
+		if s.odd = !s.odd; !s.odd {
+			if err := s.m.add(1); err != nil {
+				s.stop = err
+			}
+		}
+	}
 	if s.keys != nil {
 		s.keys[i], s.keys[j] = s.keys[j], s.keys[i]
 	}

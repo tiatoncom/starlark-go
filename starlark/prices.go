@@ -1,8 +1,6 @@
 package starlark
 
-import (
-	"math/bits"
-)
+import ()
 
 // The price of every built-in function and method of this package, and of the
 // operators, in units of work (work.go).
@@ -79,13 +77,6 @@ func strBytes(v Value) int {
 	return 0
 }
 
-func log2ceil(n int) uint64 {
-	if n <= 1 {
-		return 1
-	}
-	return uint64(bits.Len(uint(n - 1)))
-}
-
 // universePrices are the prices of the functions of Universe.
 var universePrices = map[string]price{
 	"abs":  work("words of a big integer", func(_ Value, a Tuple, _ []Tuple) uint64 { return bigWordsOf(a, 0) }),
@@ -123,13 +114,10 @@ var universePrices = map[string]price{
 	"repr":      inside("len of the result/4"),
 	"reversed":  work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
 	"set":       inside("one insert (8 units + hash + chain) per element"),
-	"sorted": work("n * ceil(log2 n) comparisons", func(_ Value, a Tuple, _ []Tuple) uint64 {
-		n := argLen(a, 0)
-		return uint64(n) * log2ceil(n)
-	}),
-	"str":   inside("len of the result/4"),
-	"tuple": work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
-	"type":  o1("the name of a type"),
+	"sorted":    inside("a unit for each comparison and each two swaps that the stable sort (sortstable.go) makes, and what the comparisons cost: ~1.4 n log2 n comparisons and ~4 n log2 n swaps on random data"),
+	"str":       inside("len of the result/4"),
+	"tuple":     work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return uint64(argLen(a, 0)) }),
+	"type":      o1("the name of a type"),
 	"zip": work("one unit per element of each column", func(_ Value, a Tuple, _ []Tuple) uint64 {
 		rows := 0
 		for i := range a {
