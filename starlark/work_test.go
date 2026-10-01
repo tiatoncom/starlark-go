@@ -298,3 +298,35 @@ func TestWork_Meter(t *testing.T) {
 		t.Errorf("stopped after %d units, limit 10000", added)
 	}
 }
+
+// The contract of the audit of the host: after a refusal the counters are the
+// limits, not more, and the steps are those of the program up to it. sorted of a
+// large list is refused at the limit, with the work exactly the limit.
+func TestWork_AfterARefusalTheCountersAreTheLimits(t *testing.T) {
+	const limit = 3_000_000
+	th := &Thread{}
+	th.SetMaxWork(limit)
+	th.SetMaxAllocBytes(1 << 30)
+	_, err := ExecFileOptions(workOpts, th, "t.star", "l = [(i * 7919) % 1000003 for i in range(400000)]\nr = sorted(l)\nr = sorted(l)\n", nil)
+	var we *WorkBudgetError
+	if !errors.As(err, &we) {
+		t.Fatalf("err = %v", err)
+	}
+	if th.Work() != limit {
+		t.Errorf("Work() = %d after the refusal, want the limit %d", th.Work(), limit)
+	}
+	if th.Steps >= limit {
+		t.Errorf("steps %d: the sort is not in them", th.Steps)
+	}
+	if th.AllocatedBytes() > 1<<30 {
+		t.Errorf("AllocatedBytes() = %d is over the budget", th.AllocatedBytes())
+	}
+	// The same with a budget of memory that is reached: AllocatedBytes is not over it.
+	th = &Thread{}
+	th.SetMaxAllocBytes(1 << 20)
+	_, err = ExecFileOptions(workOpts, th, "t.star", "l = list(range(100000))\nr = l + l\n", nil)
+	var be *AllocBudgetError
+	if !errors.As(err, &be) || th.AllocatedBytes() > 1<<20 {
+		t.Errorf("err = %v, allocated %d", err, th.AllocatedBytes())
+	}
+}

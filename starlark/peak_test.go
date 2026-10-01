@@ -126,3 +126,46 @@ func TestPeak_AnOperationAllocatesWhatItCharged(t *testing.T) {
 		}
 	}
 }
+
+// "Idiom, charged, allocated": what an idiom is charged is not more than twice
+// what the process allocated for it (garbage counts on both sides): the
+// operations on keys that are there already (an update with the keys of the
+// dict, a set of a list with many duplicates, an intersection that is the set
+// itself) are charged by the entries they add, and values that exist (what
+// d.get returns, a strip of nothing, a replace that changes nothing) are not
+// charged again.
+var chargedTable = []peakRow{
+	{"d |= e, the same keys", "d = {i: i for i in range(100000)}\ne = dict(d)", "d |= e"},
+	{"d.update(e), the same keys", "d = {i: i for i in range(100000)}\ne = dict(d)", "d.update(e)"},
+	{"d.update(pairs), the same keys", "d = {i: i for i in range(100000)}\np = list(d.items())", "d.update(p)"},
+	{"s.update(l), the same elements", "s = set(range(100000))\nl = list(range(100000))", "s.update(l)"},
+	{"set(l), 100 distinct of 300000", "l = [i % 100 for i in range(300000)]", "r = set(l)"},
+	{"s.intersection(l), all in", "s = set(range(100000))\nl = list(range(100000))", "r = s.intersection(l)"},
+	{"s & t, a set with itself", "s = set(range(100000))\nt = set(s)", "r = s & t"},
+	{"s | t, the same elements", "s = set(range(100000))\nt = set(s)", "r = s | t"},
+	{"d | e, the same keys", "d = {i: i for i in range(100000)}\ne = dict(d)", "r = d | e"},
+	{"s.symmetric_difference(l), the same", "s = set(range(100000))\nl = list(range(100000))", "r = s.symmetric_difference(l)"},
+	{"s.difference(l), all removed", "s = set(range(100000))\nl = list(range(100000))", "r = s.difference(l)"},
+	{"d.get x 1000 of a 10 KB value", "d = {'a': 'x' * 10000}", "for i in range(1000):\n    r = d.get('a')"},
+	{"s.strip() of nothing x 1000", "s = 'x' * 10000", "for i in range(1000):\n    r = s.strip()"},
+	{"s.replace(old, new, 0) x 1000", "s = 'x' * 10000", "for i in range(1000):\n    r = s.replace('x', 'y', 0)"},
+	{"s.lower() of lowercase x 1000", "s = 'x' * 10000", "for i in range(1000):\n    r = s.lower()"},
+	{"str(s) x 1000", "s = 'x' * 10000", "for i in range(1000):\n    r = str(s)"},
+	{"l.pop() x 100000", "l = list(range(100000))", "for i in range(100000):\n    l.pop()"},
+	{"min(l) / max(l) of lists", "l = [[i] for i in range(1000)]", "for i in range(100):\n    r = max(l)"},
+}
+
+func TestCharged_NotMoreThanTwiceWhatWasAllocated(t *testing.T) {
+	jsonModule := starlark.StringDict{"json": json.Module}
+	for _, row := range chargedTable {
+		charged, allocated, err := peakRun(t, jsonModule, row.setup, row.op)
+		if err != nil {
+			t.Errorf("%s: %v", row.name, err)
+			continue
+		}
+		t.Logf("CHARGED %-38s charged %9d  allocated %9d", row.name, charged, allocated)
+		if charged > 2*allocated+64<<10 {
+			t.Errorf("%s: charged %d bytes, the process allocated %d", row.name, charged, allocated)
+		}
+	}
+}
