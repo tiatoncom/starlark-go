@@ -111,3 +111,13 @@ func TestFixed_TheLookupInALargeTable(t *testing.T) {
 		t.Errorf("insertWork: %d at 2^20 and %d at 1000, want 45 and 1", insertWork(1<<20), insertWork(1000))
 	}
 }
+
+// A subset test of a large set by a small one makes a bitset for each bucket of
+// the table, whatever the length of the small one: the work is at least the
+// number of buckets (16384 for a set of 100000).
+func TestFixed_TheBitsetsOfASubsetTest(t *testing.T) {
+	setup := "s = set(range(100000))\nl = [1, 2, 3]"
+	if got := extraOf(t, setup, "r = s.issubset(l)"); got < 16000 {
+		t.Errorf("s.issubset(l): %d units beyond the steps, want at least the 16384 buckets of the table", got)
+	}
+}
