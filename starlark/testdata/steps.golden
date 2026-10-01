@@ -120,6 +120,16 @@ set(strs) (hash of long strings)	230
 set(bk) (hash of long bytes)	230
 set(tl) (hash of long tuples)	56257
 set(bigs) (hash of big integers)	9980
+print(l)	7600
+dk.pop(long key)	203
+dk.popitem() (long key)	202
+dk.setdefault(long key) (present)	203
+dk.setdefault(long key) (new)	205
+list(sx.elems()) (unknown length)	12507
+tuple(sx.elems())	9382
+reversed(sx.elems())	12507
+enumerate(sx.elems())	21882
+bytes(sx.elem_ords())	6452
 print(s)	3077
 fail(s)	1028
 small: d.items()	73
@@ -244,5 +254,15 @@ small: set(strs) (hash of long strings)	230
 small: set(bk) (hash of long bytes)	230
 small: set(tl) (hash of long tuples)	1132
 small: set(bigs) (hash of big integers)	9980
+small: print(l)	151
+small: dk.pop(long key)	203
+small: dk.popitem() (long key)	202
+small: dk.setdefault(long key) (present)	203
+small: dk.setdefault(long key) (new)	204
+small: list(sx.elems()) (unknown length)	257
+small: tuple(sx.elems())	194
+small: reversed(sx.elems())	257
+small: enumerate(sx.elems())	444
+small: bytes(sx.elem_ords())	134
 small: print(s)	27
 small: fail(s)	11

@@ -32,6 +32,7 @@ for i in range(N // 10):
     d[i] = i
 e = dict(d)
 lk = 'k' * 100000
+sx = 'ab' * (N // 2)
 dk = {lk: 1}
 s = 'ab' * (K // 2)
 w = 'a' * K
@@ -180,6 +181,16 @@ var stepsOps = []struct{ name, op string }{
 	{"set(bk) (hash of long bytes)", "r = set(bk)"},
 	{"set(tl) (hash of long tuples)", "r = set(tl)"},
 	{"set(bigs) (hash of big integers)", "r = set(bigs)"},
+	{"print(l)", "print(l)"},
+	{"dk.pop(long key)", "r = dk.pop(lk)"},
+	{"dk.popitem() (long key)", "r = dk.popitem()"},
+	{"dk.setdefault(long key) (present)", "r = dk.setdefault(lk)"},
+	{"dk.setdefault(long key) (new)", "r = d.setdefault(lk, 1)"},
+	{"list(sx.elems()) (unknown length)", "r = list(sx.elems())"},
+	{"tuple(sx.elems())", "r = tuple(sx.elems())"},
+	{"reversed(sx.elems())", "r = reversed(sx.elems())"},
+	{"enumerate(sx.elems())", "r = enumerate(sx.elems())"},
+	{"bytes(sx.elem_ords())", "r = bytes(sx.elem_ords())"},
 	{"print(s)", "print(s)"},
 	{"fail(s)", "fail(s)"},
 }
