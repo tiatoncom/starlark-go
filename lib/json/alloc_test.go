@@ -273,3 +273,33 @@ func itoa(n int) string {
 	}
 	return string(d)
 }
+
+// ---- time: the work of encode, decode and indent is charged in steps ----
+
+func TestJSON_WorkIsChargedInSteps(t *testing.T) {
+	// 20000 numbers: ~20000 nodes to write, quoted bytes, a list: well past the
+	// free window; v0.2.0 charged the 4 steps of the calls.
+	r := exec(t, 0, "x = [i for i in range(20000)]\ns = json.encode(x)\nmark()\ny = json.decode(s)\nmark()\nz = json.indent(s)\nmark()\n")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	base := exec(t, 0, "x = [i for i in range(20000)]\n")
+	if r.th.Steps-base.th.Steps < 2000 {
+		t.Errorf("encode, decode and indent of 20000 numbers cost %d steps beyond the list", r.th.Steps-base.th.Steps)
+	}
+	// And with a limit they are stopped: encode of a large value is refused,
+	// not run to the end.
+	th := &starlark.Thread{}
+	th.SetMaxExecutionSteps(30_000)
+	_, err := starlark.ExecFileOptions(&syntax.FileOptions{TopLevelControl: true, GlobalReassign: true}, th, "t.star",
+		"x = [i for i in range(20000)]\nfor i in range(100): s = json.encode(x)\n", starlark.StringDict{"json": json.Module})
+	if err == nil || !strings.Contains(err.Error(), "too many steps") {
+		t.Fatalf("err = %v (steps %d)", err, th.Steps)
+	}
+	// A small value is not charged: the steps of the calls are those of v0.2.0.
+	small := exec(t, 0, "s = json.encode([1, 2, {'a': 'b'}])\ny = json.decode(s)\nz = json.indent(s)\n")
+	smallBase := exec(t, 0, "s = '[1, 2, {\"a\": \"b\"}]'\n")
+	if small.th.Steps-smallBase.th.Steps > 20 {
+		t.Errorf("small json calls cost %d steps", small.th.Steps-smallBase.th.Steps)
+	}
+}
