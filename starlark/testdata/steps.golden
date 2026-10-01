@@ -99,15 +99,17 @@ s + s	4101
 s * 3	6149
 s == w	3084
 s < w	1031
+l[N // 2] in l (found)	3147
+t[N // 2] in t (found)	3147
 st - st	130125
 st ^ st	155125
 d |= e	10005
-long key in dict	397
-long key in set	205
-dk[long key]	397
-dk[long key] = 1	399
-d.get(long key)	398
-'%(key)s' % dk	787
+long key in dict	202
+long key in set	107
+dk[long key]	202
+dk[long key] = 1	204
+d.get(long key)	203
+'%(key)s' % dk	397
 set(strs) (hash of long strings)	230
 set(bk) (hash of long bytes)	230
 set(tl) (hash of long tuples)	56257
@@ -215,15 +217,17 @@ small: s + s	36
 small: s * 3	51
 small: s == w	34
 small: s < w	14
+small: l[N // 2] in l (found)	75
+small: t[N // 2] in t (found)	75
 small: st - st	2042
 small: st ^ st	2542
 small: d |= e	130
-small: long key in dict	397
-small: long key in set	205
-small: dk[long key]	397
-small: dk[long key] = 1	399
-small: d.get(long key)	398
-small: '%(key)s' % dk	787
+small: long key in dict	202
+small: long key in set	107
+small: dk[long key]	202
+small: dk[long key] = 1	204
+small: d.get(long key)	203
+small: '%(key)s' % dk	397
 small: set(strs) (hash of long strings)	230
 small: set(bk) (hash of long bytes)	230
 small: set(tl) (hash of long tuples)	1132

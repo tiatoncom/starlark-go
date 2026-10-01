@@ -31,7 +31,7 @@ d = {}
 for i in range(N // 10):
     d[i] = i
 e = dict(d)
-lk = 'k' * 200000
+lk = 'k' * 100000
 dk = {lk: 1}
 s = 'ab' * (K // 2)
 w = 'a' * K
@@ -159,6 +159,8 @@ var stepsOps = []struct{ name, op string }{
 	{"s * 3", "r = s * 3"},
 	{"s == w", "r = s == s[:-1] + 'b'"},
 	{"s < w", "r = s < w"},
+	{"l[N // 2] in l (found)", "r = l[N // 2] in l"},
+	{"t[N // 2] in t (found)", "r = t[N // 2] in t"},
 	{"st - st", "r = st - st"},
 	{"st ^ st", "r = st ^ st"},
 	{"d |= e", "d |= e"},
