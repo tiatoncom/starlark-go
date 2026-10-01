@@ -6,8 +6,8 @@ package starlark
 
 import (
 	"fmt"
-	"hash/maphash"
 	"math/big"
+	"math/bits"
 )
 
 // hashtable is used to represent Starlark dict and set values.
@@ -468,17 +468,57 @@ func (ht *hashtable) entries(yield func(k, v Value) bool) {
 	}
 }
 
-var seed = maphash.MakeSeed()
-
-// hashString computes the hash of s.
+// hashString computes the hash of s. It is a function of s alone: the same in
+// every process and on every machine (the number of steps a program costs
+// depends on the lengths of the chains of a hash table, and the steps are
+// recorded and decide a verdict, so no random seed may reach them). The
+// protection against keys that were chosen to collide is the charge of the
+// chain (see insertM), not the secrecy of the hash.
 func hashString(s string) uint32 {
 	if len(s) >= 12 {
-		// Call the Go runtime's optimized hash implementation,
-		// which uses the AES instructions on amd64 and arm64 machines.
-		h := maphash.String(seed, s)
+		h := wyhashString(s)
 		return uint32(h>>32) ^ uint32(h)
 	}
 	return softHashString(s)
+}
+
+const (
+	wyK0 = 0xa0761d6478bd642f
+	wyK1 = 0xe7037ed1a0b428db
+	wyK2 = 0x8ebc6af09c88c6e3
+)
+
+// wymix multiplies a and b to 128 bits and folds the two halves.
+func wymix(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	return hi ^ lo
+}
+
+func load64(s string, i int) uint64 {
+	_ = s[i+7]
+	return uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+		uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
+}
+
+// wyhashString is a 64-bit hash of s (len(s) >= 12) in the manner of wyhash,
+// with a fixed key: 8 bytes a multiplication, no table, no secret.
+func wyhashString(s string) uint64 {
+	n := len(s)
+	seed := wyK0 ^ uint64(n)*wyK2
+	i := 0
+	for n-i > 16 {
+		seed = wymix(load64(s, i)^wyK1, load64(s, i+8)^seed)
+		i += 16
+	}
+	// The last 16 bytes (overlapping the bytes above when n is not a
+	// multiple of 16; n >= 12 so for n < 16 the two loads overlap each other).
+	var a, b uint64
+	if n >= 16 {
+		a, b = load64(s, n-16), load64(s, n-8)
+	} else {
+		a, b = load64(s, 0), load64(s, n-8)
+	}
+	return wymix(a^wyK1, b^seed) ^ wymix(seed^wyK2, uint64(n)^wyK0)
 }
 
 // softHashString computes the 32-bit FNV-1a hash of s in software.
