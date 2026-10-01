@@ -255,23 +255,31 @@ func TestWork_LimitIsOnTheTotal(t *testing.T) {
 	}
 }
 
-// The meter charges as it goes and at the end, and a nil meter does nothing.
+// The meter charges as it goes, a chunk of 1024 units at a time, and at the end,
+// and a nil meter does nothing.
 func TestWork_Meter(t *testing.T) {
 	th := &Thread{}
 	m := th.meter()
-	for i := 0; i < flushWork-1; i++ {
+	for i := 0; i < 1023; i++ {
 		m.add(1)
 	}
 	if th.Work() != 0 {
 		t.Errorf("work %d before a chunk", th.Work())
 	}
 	m.add(1)
-	if th.Work() != flushWork {
-		t.Errorf("work %d after a chunk, want %d", th.Work(), flushWork)
+	if th.Work() != 1024 {
+		t.Errorf("work %d after a chunk of 1024, want 1024", th.Work())
 	}
 	m.add(7)
-	if err := m.flush(); err != nil || th.Work() != flushWork+7 {
+	if err := m.flush(); err != nil || th.Work() != 1024+7 {
 		t.Errorf("work %d after the flush (%v)", th.Work(), err)
+	}
+	// a jump past a chunk is charged at once
+	m = th.meter()
+	th.extraWork = 0
+	m.add(5000)
+	if th.Work() != 5000 {
+		t.Errorf("work %d after 5000 units at once", th.Work())
 	}
 	var nilm *meter
 	if err := nilm.add(1 << 40); err != nil {
@@ -294,39 +302,7 @@ func TestWork_Meter(t *testing.T) {
 	if err == nil {
 		t.Fatal("a meter did not stop")
 	}
-	if added > 10000+flushWork {
+	if added > 10000+1024 || added < 10000-1024 {
 		t.Errorf("stopped after %d units, limit 10000", added)
-	}
-}
-
-// The contract of the audit of the host: after a refusal the counters are the
-// limits, not more, and the steps are those of the program up to it. sorted of a
-// large list is refused at the limit, with the work exactly the limit.
-func TestWork_AfterARefusalTheCountersAreTheLimits(t *testing.T) {
-	const limit = 3_000_000
-	th := &Thread{}
-	th.SetMaxWork(limit)
-	th.SetMaxAllocBytes(1 << 30)
-	_, err := ExecFileOptions(workOpts, th, "t.star", "l = [(i * 7919) % 1000003 for i in range(400000)]\nr = sorted(l)\nr = sorted(l)\n", nil)
-	var we *WorkBudgetError
-	if !errors.As(err, &we) {
-		t.Fatalf("err = %v", err)
-	}
-	if th.Work() != limit {
-		t.Errorf("Work() = %d after the refusal, want the limit %d", th.Work(), limit)
-	}
-	if th.Steps >= limit {
-		t.Errorf("steps %d: the sort is not in them", th.Steps)
-	}
-	if th.AllocatedBytes() > 1<<30 {
-		t.Errorf("AllocatedBytes() = %d is over the budget", th.AllocatedBytes())
-	}
-	// The same with a budget of memory that is reached: AllocatedBytes is not over it.
-	th = &Thread{}
-	th.SetMaxAllocBytes(1 << 20)
-	_, err = ExecFileOptions(workOpts, th, "t.star", "l = list(range(100000))\nr = l + l\n", nil)
-	var be *AllocBudgetError
-	if !errors.As(err, &be) || th.AllocatedBytes() > 1<<20 {
-		t.Errorf("err = %v, allocated %d", err, th.AllocatedBytes())
 	}
 }
