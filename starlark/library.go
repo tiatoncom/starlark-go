@@ -627,12 +627,11 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		// The conversion is quadratic in the digits: refuse a string of more
 		// than MaxIntDigits (or the same number of bits in another base), and
 		// charge the work of the rest.
-		if digits := len(s); digits > 0 && b != 1 {
-			per := bits.Len(uint(max(b, 2) - 1))
-			if b == 0 {
-				per = 4 // the prefix decides: at most 4 bits a digit (hex)
-			}
-			if digits*per > 4*MaxIntDigits+8 { // (the sign and the prefix)
+		if digits, base := intDigits(s, b); digits > 0 {
+			// Decimal digits are limited to MaxIntDigits; another base to the
+			// same number of bits (a power of two base is linear to convert, but
+			// the integer it makes is as long).
+			if base == 10 && digits > MaxIntDigits || base != 10 && digits*bits.Len(uint(base-1)) > 4*MaxIntDigits {
 				return nil, fmt.Errorf("int: the string has more than %d digits: its conversion to an integer is not allowed", MaxIntDigits)
 			}
 			d := uint64(digits)
@@ -667,6 +666,36 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 }
 
 // parseInt defines the behavior of int(string, base=int). It returns nil on error.
+// intDigits returns the number of digits of the integer that int(s, base) would
+// parse, and its base: s without its sign and its base prefix.
+func intDigits(s string, base int) (int, int) {
+	if s != "" && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	if len(s) > 2 && s[0] == '0' {
+		prefix := 0
+		switch s[1] {
+		case 'o', 'O':
+			prefix = 8
+		case 'x', 'X':
+			prefix = 16
+		case 'b', 'B':
+			prefix = 2
+		}
+		if prefix != 0 && (base == 0 || base == prefix) {
+			s = s[2:]
+			base = prefix
+		}
+	}
+	if base == 0 {
+		base = 10
+	}
+	if base < 2 {
+		base = 2
+	}
+	return len(s), base
+}
+
 func parseInt(s string, base int) Value {
 	// remove sign
 	var neg bool
