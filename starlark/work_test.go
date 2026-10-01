@@ -1105,8 +1105,23 @@ func TestDict_SetKeyWork(t *testing.T) {
 	if err == nil {
 		t.Errorf("no refusal at a limit of 3 steps")
 	}
-	s := new(Set)
-	if err := s.InsertWork(&Thread{}, String("x")); err != nil {
+	// The same for a set, and for a key whose hash is under a chunk of work.
+	long := String(strings.Repeat("k", 100000))
+	th3 := &Thread{}
+	if err := new(Set).InsertWork(th3, long); err != nil {
+		t.Fatal(err)
+	}
+	if want := uint64(100000 / 64 / WorkPerStep); th3.Steps < want {
+		t.Errorf("Set.InsertWork of a 100000-byte key cost %d steps, want at least %d", th3.Steps, want)
+	}
+	th4 := &Thread{}
+	if err := new(Dict).SetKeyWork(th4, long, None); err != nil {
+		t.Fatal(err)
+	}
+	if want := uint64(100000 / 64 / WorkPerStep); th4.Steps < want {
+		t.Errorf("Dict.SetKeyWork of a 100000-byte key cost %d steps, want at least %d", th4.Steps, want)
+	}
+	if err := new(Set).InsertWork(nil, long); err != nil {
 		t.Fatal(err)
 	}
 }
