@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	starjson "go.starlark.net/lib/json"
 	"go.starlark.net/starlark"
 	"go.starlark.net/syntax"
 )
@@ -50,7 +51,7 @@ func runDiffProgram(src string) (out diffOutcome) {
 		out.Steps = th.Steps
 		out.Prints = strings.Join(prints, "\n")
 	}()
-	globals, err := starlark.ExecFileOptions(opts, th, "p.star", src, nil)
+	globals, err := starlark.ExecFileOptions(opts, th, "p.star", src, starlark.StringDict{"json": starjson.Module})
 	if err != nil {
 		out.Status = "error"
 		out.Err = err.Error()
@@ -304,6 +305,136 @@ func bigCorpus() []string {
 	return out
 }
 
+// reviewCorpus are the programs of the two reviews of the first version of this
+// fork, at sizes that v0.2.0 runs in a moment: the handlers of the engine, the
+// keys that made the steps depend on the process, the operands of every finding,
+// the depth of a comparison, and the quirks of v0.2.0 that must stay (an error
+// that is ignored, a result that is not an error).
+func reviewCorpus() []string {
+	var out []string
+	order := "orders = [{'id': i, 'cust': 'c%d' % (i % 37), 'sku': 'sku-%d' % (i % 211), 'qty': i % 7 + 1, 'amt': (i * 31) % 997, 'status': 'open' if i % 3 else 'closed'} for i in range(N)]\n"
+	handlers := []string{
+		order + "open_big = [o for o in orders if o['status'] == 'open' and o['amt'] > 100]\nby_cust = {}\nfor o in open_big:\n    by_cust[o['cust']] = by_cust.get(o['cust'], 0) + o['amt'] * o['qty']\nresult = [len(open_big), len(by_cust)]\n",
+		order + "lines = ['ID  CUSTOMER  SKU  QTY  AMOUNT']\nfor o in orders:\n    lines.append('%d  %s  %s  %d  %d' % (o['id'], o['cust'], o['sku'], o['qty'], o['amt']))\nreport = '\\n'.join(lines)\nresult = len(report)\n",
+		order + "report = 'ID  CUSTOMER  SKU  QTY  AMOUNT\\n'\nfor o in orders:\n    report += '%d  %s  %s  %d  %d\\n' % (o['id'], o['cust'], o['sku'], o['qty'], o['amt'])\nresult = len(report)\n",
+		order + "cnt = {}\nfor o in orders:\n    c = cnt.setdefault(o['cust'], {})\n    c[o['sku']] = c.get(o['sku'], 0) + o['qty']\ntop = sorted(cnt.items(), key=lambda kv: -len(kv[1]))[:5]\nresult = [(k, len(v)) for k, v in top]\n",
+		order + "s = json.encode({'orders': orders, 'status': 'open'})\nd = json.decode(s)\nfor o in d['orders']:\n    o['amt'] += 1\ns2 = json.encode(d)\nresult = [len(s), len(s2)]\n",
+		order + "srt = sorted(orders, key=lambda o: (o['cust'], -o['amt']))\nresult = [o['id'] for o in srt[:10]]\n",
+		order + "seen = set()\nstate = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6}\npatch = {'a': 2, 'b': 3, 'c': 4, 'd': 5, 'e': 6, 'f': 7}\nids = [o['id'] % 50 for o in orders]\nuniq = set(ids)\nfor o in orders:\n    seen.update([o['cust'], o['sku']])\n    state.update(patch)\n    state |= patch\nresult = [len(uniq), len(seen)]\n",
+	}
+	for _, n := range []int{1, 6, 20, 200, 2000} {
+		for _, h := range handlers {
+			out = append(out, fmt.Sprintf("N = %d\n%s", n, h))
+		}
+	}
+	// keys of 12 bytes and more: the steps depend on the hash of the strings
+	ids := func(n int) string {
+		return fmt.Sprintf("ids = ['order-' + str(i) + '-abcdef' for i in range(%d)]\n", n)
+	}
+	uuids := func(n int) string {
+		return fmt.Sprintf("ids = ['%%x-%%x-4%%x-a%%x-%%x' %% (i * 2654435761 %% 4294967296, i %% 65536, i %% 4096, i * 7 %% 4096, i * 1103515245 %% 281474976710656) for i in range(%d)]\n", n)
+	}
+	mails := func(n int) string {
+		return fmt.Sprintf("ids = ['user.%%d@example-company-%%d.org' %% (i, i %% 37) for i in range(%d)]\n", n)
+	}
+	for _, mk := range []func(int) string{ids, uuids, mails} {
+		for _, n := range []int{5, 30, 100, 1000} {
+			head := mk(n)
+			out = append(out,
+				head+"result = len(set(ids))\n",
+				head+"d = {}\nfor k in ids:\n    d[k] = 1\nresult = len(d)\n",
+				head+"d = dict(zip(ids, range(len(ids))))\ne = dict(d)\nresult = (d == e, len(d | e), len(dict(d)))\n",
+				head+"d = dict(zip(ids, range(len(ids))))\nresult = sum([1 for k in ids if k in d])\n",
+				head+"s = set(ids[:len(ids) // 2 + 3])\nt = set(ids[len(ids) // 2 - 3:])\nresult = (len(s | t), len(s & t), len(s - t), len(s ^ t), len(s.union(t)), len(s.intersection(t)), s <= t, s == t)\n",
+				head+"d = dict(zip(ids, range(len(ids))))\ne = dict(zip(reversed(ids), range(len(ids))))\nd.update(e)\nd |= e\nresult = (len(d), d == e)\n",
+				head+"t = {}\nfor i in range(len(ids)):\n    t[(ids[i], ids[i - 1])] = i\nresult = len(t)\n",
+				head+"result = len(sorted(ids)) + len(sorted(ids, reverse=True)) + len(sorted(ids, key=lambda s: s[-3:]))\n",
+			)
+		}
+	}
+	// the operands of the findings, at a size v0.2.0 runs at once
+	out = append(out,
+		"l = list(range(300))\nn = 0\nfor i in range(40):\n    if -1.5 in l:\n        n += 1\nresult = (n, max(l + [2.5]), sorted(l + [0.5])[:3], 1.5 in l, 3.0 in l)\n",
+		"x = 1 << 500\nfor i in range(5):\n    x = x * x\nresult = (x < 1.5, x > 1.5, x == 1.5, -x < 1.5, x < 1e300, x > float(1 << 1000), x == float(x >> 2000) if False else 0)\n",
+		"chars = 'é' * 299 + 'a'\na = 'a' * 300\nresult = (len(a.lstrip(chars)), len(a.rstrip(chars)), len((a + chars).strip(chars)), len(a.strip('ab')), len(a.strip()))\n",
+		"def f("+strings.Join(func() []string {
+			var p []string
+			for i := 0; i < 60; i++ {
+				p = append(p, fmt.Sprintf("p%d=%d", i, i))
+			}
+			return p
+		}(), ", ")+"): return p0 + p59\nn = 0\nfor i in range(50):\n    n += f()\nd = {}\nfor i in range(60):\n    d['p%d' % i] = i * 2\nresult = (n, f(**d), f(p59=1, p0=2))\n",
+		"def f(**kw): return len(kw)\nd = {'k%d' % i: i for i in range(300)}\nresult = (f(**d), ('{k99}{k5}'.format(**d)), ('{k299}' * 20).format(**d))\n",
+		"d = {i: i for i in range(2000)}\nd.clear()\nn = 0\nfor k in range(300):\n    d['a'] = k\n    n += len(d)\n    d.clear()\ns = set(range(500))\ns.clear()\nresult = (n, len(d), len(s))\n",
+		"l = list(range(1000))\nl.clear()\nl.append(1)\nresult = l\n",
+		"def a0(): return a1()\ndef a1(): return a2()\ndef a2(): return 7\nresult = a0()\n",
+		"def f(n):\n    return 1 if n == 0 else 1 + f(n - 1)\nresult = f(3)\n",
+		"def f(): return g()\ndef g(): return f()\nresult = f()\n",
+		"def f(x): return sorted([3, 1, 2], key=lambda y: g(y))\ndef g(y): return -y\nresult = f(1)\n",
+	)
+	// the depth of a comparison: v0.2.0 gives the error at exactly 10 levels
+	for _, leaf := range []string{"1", "'a'", "None", "1.5", "(1,)"} {
+		for k := 7; k <= 13; k++ {
+			mk := fmt.Sprintf("def nest(n, leaf):\n    x = leaf\n    for i in range(n):\n        x = [x]\n    return x\ndef tnest(n, leaf):\n    x = leaf\n    for i in range(n):\n        x = (x,)\n    return x\n")
+			out = append(out,
+				mk+fmt.Sprintf("result = nest(%d, %s) == nest(%d, %s)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = nest(%d, %s) != nest(%d, %s)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = nest(%d, %s) < nest(%d, %s)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = tnest(%d, %s) == tnest(%d, %s)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = ({tnest(%d, %s): 1} == {tnest(%d, %s): 1}, {tnest(%d, %s): 1} == {tnest(%d, %s): 2})\n", k, leaf, k, leaf, k, leaf, k, leaf),
+				mk+fmt.Sprintf("a = {tnest(%d, %s): 1}\nb = {tnest(%d, %s): 1}\nresult = (a == b, a != b)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = tnest(%d, %s) in [tnest(%d, %s)]\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("d = {tnest(%d, %s): 1}\nresult = tnest(%d, %s) in d\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("s = set([tnest(%d, %s)])\nt = set([tnest(%d, %s)])\nresult = (s == t, s <= t, s | t == s)\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = sorted([nest(%d, %s), nest(%d, %s)])\n", k, leaf, k, leaf),
+				mk+fmt.Sprintf("result = max([nest(%d, %s), nest(%d, %s)])\n", k, leaf, k, leaf),
+			)
+		}
+	}
+	// the quirks: an error that v0.2.0 ignores or does not make
+	out = append(out,
+		"result = set().symmetric_difference([[1]])\n",
+		"result = set().symmetric_difference([[1], 2, [3]])\n",
+		"result = set([1]).symmetric_difference([[1]])\n",
+		"result = set([1]).symmetric_difference([2, [1]])\n",
+		"result = set().union([[1]])\n",
+		"result = set().intersection([[1]])\n",
+		"result = set().difference([[1]])\n",
+		"result = set([1]).difference([[1]])\n",
+		"result = set().issubset([[1]])\n",
+		"result = set([1]).issuperset([[1]])\n",
+		"result = {} == {'a': 1}\n",
+		"result = {[1]: 1} if False else {1: 2} == {1: 2}\n",
+		"d = {(1, 2): 3}\nresult = {(1, 2): 3} == d\n",
+		"result = json.decode('[1, 2', default=7)\n",
+		"result = json.decode('{\"a\": 1', default=7)\n",
+		"result = json.decode('01', default=7)\n",
+		"result = json.decode('1' * 40, default=7)\n",
+		"result = json.encode({'a': [1, 2, {'b': None}], 'c': 'x'})\n",
+		"result = json.encode_indent([1, {'a': 2}], indent='  ')\n",
+		"result = json.indent('[1,{\"a\":2}]')\n",
+	)
+	// the text of an error with a value in it: whole, as in v0.2.0
+	for _, n := range []int{10, 90, 93, 94, 95, 96, 97, 100, 200, 250} {
+		out = append(out,
+			fmt.Sprintf("d = {}\nresult = d['%s']\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = int('%s')\n", strings.Repeat("z", n)),
+			fmt.Sprintf("result = float('%s')\n", strings.Repeat("z", n)),
+			fmt.Sprintf("x = 'a'\nresult = x.%s\n", strings.Repeat("n", n)),
+			fmt.Sprintf("def f(a): pass\nf(%s=1)\n", strings.Repeat("n", n)),
+			fmt.Sprintf("result = '{%s}'.format(1)\n", strings.Repeat("n", n)),
+			fmt.Sprintf("result = '%%(%s)s' %% {'a': 1}\n", strings.Repeat("n", n)),
+			fmt.Sprintf("result = {1: 2}.pop('%s')\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = [1].index('%s')\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = 'abc'.index('%s')\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = {1: 2}[('%s',)]\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = 1 + '%s'\n", strings.Repeat("k", n)),
+			fmt.Sprintf("result = '%s' + 1\n", strings.Repeat("k", n)),
+		)
+	}
+	return out
+}
+
 func uniq(a []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -317,8 +448,9 @@ func uniq(a []string) []string {
 }
 
 const (
-	goldenSmall = "testdata/diff_v020.golden"
-	goldenBig   = "testdata/diff_big_v020.golden"
+	goldenSmall  = "testdata/diff_v020.golden"
+	goldenBig    = "testdata/diff_big_v020.golden"
+	goldenReview = "testdata/diff_review_v020.golden"
 )
 
 func smallCorpus() []string {
@@ -369,6 +501,7 @@ func TestWriteDiffGolden(t *testing.T) {
 	}
 	writeGolden(t, dir+"/"+goldenSmall, smallCorpus())
 	writeGolden(t, dir+"/"+goldenBig, uniq(bigCorpus()))
+	writeGolden(t, dir+"/"+goldenReview, uniq(reviewCorpus()))
 }
 
 // Programs whose operands are small behave exactly as in v0.2.0: result, error
@@ -447,5 +580,38 @@ func TestDifferentialLargeOperands(t *testing.T) {
 			src = src[:90] + "..."
 		}
 		t.Logf("%-95s v0.2.0 %7d  now %9d", src, r.was, r.steps)
+	}
+}
+
+// The programs of the reviews: the same result, error text, prints and steps as
+// in v0.2.0. (The programs that this version refuses on purpose are not in the
+// corpus: see TestDifferentialDeclaredChanges.)
+func TestDifferentialReviewPrograms(t *testing.T) {
+	golden := readGolden(t, goldenReview)
+	if len(golden) < 650 {
+		t.Fatalf("the golden file has %d programs", len(golden))
+	}
+	var bad []string
+	for _, g := range golden {
+		if g.Status == "panic" {
+			continue
+		}
+		got := runDiffProgram(g.Src)
+		if got.Status != g.Status || got.Result != g.Result || got.Err != g.Err || got.Prints != g.Prints || got.Steps != g.Steps {
+			cut := func(s string) string {
+				if len(s) > 150 {
+					return s[:150] + "..."
+				}
+				return s
+			}
+			bad = append(bad, fmt.Sprintf("%q\n   v0.2.0: %s %q %q steps=%d\n   now:    %s %q %q steps=%d", cut(g.Src), g.Status, cut(g.Result), cut(g.Err), g.Steps, got.Status, cut(got.Result), cut(got.Err), got.Steps))
+		}
+	}
+	if len(bad) > 0 {
+		show := bad
+		if len(show) > 12 {
+			show = show[:12]
+		}
+		t.Fatalf("%d of %d programs differ from v0.2.0 (showing %d):\n%s", len(bad), len(golden), len(show), strings.Join(show, "\n"))
 	}
 }

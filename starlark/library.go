@@ -421,6 +421,7 @@ func fail(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	}
 	limit := thread.stringLimit()
 	buf := new(strings.Builder)
+	m := thread.meter()
 	buf.WriteString("fail: ")
 	for i, v := range args {
 		if i > 0 {
@@ -432,8 +433,16 @@ func fail(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		if s, ok := AsString(v); ok {
 			buf.WriteString(s)
 		} else {
-			writeValueLimit(buf, v, nil, limit)
+			// (the work of the form is charged: a message that is a list of a
+			// million elements is a million units)
+			out := sink{ext: buf, n: buf.Len()}
+			if _, werr := writeValueMeter(&out, v, limit, &m); werr != nil {
+				return nil, werr
+			}
 		}
+	}
+	if err := m.flush(); err != nil {
+		return nil, err
 	}
 
 	return nil, errors.New(buf.String())
