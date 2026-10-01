@@ -328,12 +328,8 @@ func dict(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, fmt.Errorf("dict: got %d arguments, want at most 1", len(args))
 	}
 	dict := new(Dict)
-	if len(args) == 0 {
-		if err := thread.chargeEntries(0); err != nil {
-			return nil, excess(err, "dict: excessive size")
-		}
-	}
-	// (with an argument, updateDict charges the dict with its first entries)
+	// With an argument, updateDict charges the dict with its first entries;
+	// dict() alone, which is an empty dict, is charged by Call.
 	if err := updateDict(thread, dict, args, kwargs, true); err != nil {
 		return nil, prefixErr("dict", err)
 	}

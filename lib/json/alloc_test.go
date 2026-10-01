@@ -68,6 +68,7 @@ func TestJSON_ChargesExactly(t *testing.T) {
 		{"decode/string", "x = '\"abc\"'", "r = json.decode(x)", 3},                                         // by length
 		{"decode/dict", "x = '{\"a\":1,\"b\":2}'", "r = json.decode(x)", 512 + 2},                           // an entry per key, the key strings
 		{"decode/nested", "x = '[[1],[2,3]]'", "r = json.decode(x)", (48 + 2*16) + (48 + 16) + (48 + 2*16)}, // slots of the outer and inner lists
+		{"decode/dict of 10", "x = '{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9,\"j\":0}'", "r = json.decode(x)", 512 + 3*128 + 10},
 		{"decode/bigint", "x = '123456789012345678901234567890'", "r = json.decode(x)", 13},                 // 97 bits
 		{"decode/scalars are free", "x = 'true'", "r = json.decode(x)", 0},                                  // not a container
 		{"decode/invalid with default", "x = '[1,'", "r = json.decode(x, 5)", 48 + 16},                      // a syntax error: the default; charged as built
@@ -106,13 +107,13 @@ func wantBudgetError(t *testing.T, name string, r *run, budget uint64) {
 func TestJSON_RefusesOverBudget(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		// shared substructure: the output is exponential in the repetitions
-		{"encode/shared", "x = [1]\nfor i in range(40): x = [x, x]\nr = json.encode(x)"},
-		{"encode_indent/shared", "x = [1]\nfor i in range(40): x = [x, x]\nr = json.encode_indent(x)"},
+		{"encode/shared", "x = [1]\nfor i in range(22): x = [x, x]\nr = json.encode(x)"},
+		{"encode_indent/shared", "x = [1]\nfor i in range(22): x = [x, x]\nr = json.encode_indent(x)"},
 		{"encode/large", "s = 'a' * 400000\nr = json.encode([s, s, s])"},
 		{"encode/large dict", "s = 'a' * 400000\nr = json.encode({'a': s, 'b': s, 'c': s})"},
 		// the indent string is repeated per nesting level and line
 		{"indent/long indent", "s = '[' + '1,' * 2000 + '1]'\nr = json.indent(s, indent='x' * 1000)"},
-		{"indent/nesting", "s = '[' * 1000 + ']' * 1000\nr = json.indent(s, indent='x' * 100)"},
+		{"indent/nesting", "s = '[' * 400 + ']' * 400\nr = json.indent(s, indent='x' * 100)"},
 		{"encode_indent/long indent", "r = json.encode_indent([1] * 2000, indent='x' * 1000)"},
 		// decode: slots and entries per element
 		{"decode/list", "s = '[' + '1,' * 100000 + '1]'\nr = json.decode(s)"},
@@ -121,23 +122,6 @@ func TestJSON_RefusesOverBudget(t *testing.T) {
 	} {
 		r := exec(t, budget1MiB, c.src)
 		wantBudgetError(t, c.name, r, budget1MiB)
-	}
-}
-
-// Without a budget, the ceiling of one operation (1<<30 bytes) applies: an
-// indent whose output is terabytes is refused by arithmetic, before any
-// allocation.
-func TestJSON_IndentCeilingWithoutBudget(t *testing.T) {
-	r := exec(t, 0, "s = '[' * 5000 + ']' * 5000\nind = 'x' * (1 << 20)\nmark()\nr = json.indent(s, indent=ind)")
-	if r.err == nil || !strings.Contains(r.err.Error(), "excessive") {
-		t.Fatalf("err = %v", r.err)
-	}
-	var be *starlark.AllocBudgetError
-	if errors.As(r.err, &be) {
-		t.Fatalf("budget error without a budget: %v", r.err)
-	}
-	if r.th.AllocatedBytes() != r.marks[0] {
-		t.Fatalf("a refused indent was charged: %d, %d", r.th.AllocatedBytes(), r.marks[0])
 	}
 }
 

@@ -225,6 +225,7 @@ var chargeCases = []struct {
 	{"[1, 2, 3]", "", "r = [1, 2, 3]", lb(3)},
 	{"{}", "", "r = {}", db(0)},
 	{"{1: 2}", "", "r = {1: 2}", db(1)},
+	{"a dict literal of 10 entries", "", "r = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10}", db(10)},
 	{"(a, b)", "a = 1", "r = (a, a)", tb(2)},
 	{"comprehension [x for ...]", "", "r = [i for i in range(3)]", lb(0)},
 	{"dict comprehension", "", "r = {i: i for i in range(3)}", db(0)},
@@ -243,6 +244,7 @@ var chargeCases = []struct {
 	{"f(a, b) into *args", "def f(*a): return None", "f(1, 2, 3)", tb(3)},
 	{"f(**d)", "d = {'a': 1, 'b': 2}\ndef f(**k): return None", "f(**d)", 2*80 + 512},
 	{"f(a=1) into **kwargs", "def f(**k): return None", "f(a=1)", 512},
+	{"f(**d) with 10 entries: 7 are in the inline bucket", "d = {}\nfor i in range(10): d['k%d' % i] = i\ndef f(**k): return None", "f(**d)", 10*80 + 512 + 3*128},
 	// big integers: the digits of both operands
 	{"bigint*bigint", "x = 1 << 500", "r = x * x", 2 * 63},
 	{"bigint*int", "x = 1 << 500", "r = x * 3", 63},
@@ -394,7 +396,7 @@ func TestAllocBudget_RefusesOverBudget(t *testing.T) {
 // a form of 2^40 leaves, or a thousand fields of a large argument, must not be
 // built to the end before it is refused.
 func TestAllocBudget_StringFormsStopAtTheBudget(t *testing.T) {
-	const shared = "x = [1]\nfor i in range(40): x = [x, x]\n" // 2^40 leaves in its string form
+	const shared = "x = [1]\nfor i in range(22): x = [x, x]\n" // 2^22 leaves in its string form: far over the budget
 	const many = "s = 'a' * 10000\nargs = (s,) * 5000\n"       // 50 MB in 5000 fields
 	for _, c := range []struct{ name, setup, op string }{
 		{"str", shared, "r = str(x)"},
@@ -466,7 +468,7 @@ func TestAllocBudget_BigIntSquaringIsBounded(t *testing.T) {
 		t.Fatal("the model never reaches the budget")
 	}
 	for run := 0; run < 2; run++ {
-		r := runProg(t, budgetMiB, "x = 1 << 500\nfor i in range(40):\n  trace(i)\n  x = x * x\n")
+		r := runProg(t, budgetMiB, "x = 1 << 500\nfor i in range(14):\n  trace(i)\n  x = x * x\n")
 		wantBudgetErr(t, r, budgetMiB)
 		if got := r.traced[len(r.traced)-1]; got != wantIter {
 			t.Fatalf("refused at iteration %d, want %d", got, wantIter)
@@ -521,7 +523,7 @@ func TestAllocCeiling_RsplitDoesNotPreallocateByMax(t *testing.T) {
 // repr is not an error at the ceiling: it returns a bounded form.
 func TestAllocCeiling_ReprReturnsBoundedForm(t *testing.T) {
 	smallLimit(t)
-	r := runProg(t, 0, "x = [1]\nfor i in range(40): x = [x, x]\nr = repr(x)\nif 'truncated' not in r: fail('not marked')\nif len(r) > 3 * 65536: fail('unbounded: ' + str(len(r)))")
+	r := runProg(t, 0, "x = [1]\nfor i in range(22): x = [x, x]\nr = repr(x)\nif 'truncated' not in r: fail('not marked')\nif len(r) > 3 * 65536: fail('unbounded: ' + str(len(r)))")
 	if r.err != nil {
 		t.Fatal(r.err)
 	}

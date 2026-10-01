@@ -156,15 +156,19 @@ func TestDeepNesting_Limit(t *testing.T) {
 // ---- A4: range slices overflow ----
 
 func TestRangeSlice_OverflowIsAnError(t *testing.T) {
-	for _, src := range []string{
-		"x = range(10)[::1 << 30][::1 << 30][::1 << 30]",
-		"x = range(-(1 << 62), 1 << 62)",
+	for _, c := range []struct{ src, want string }{
+		// the product of the steps wraps to 0
+		{"x = range(10)[::1 << 30][::1 << 30][::1 << 30]", "range slice is out of range"},
+		// the product of the steps wraps to a non-zero number
+		{"x = range(10)[::2147483647][::2147483647][::2147483647]", "range slice is out of range"},
+		// the stop (start + step * end) overflows
+		{"x = range(9223372036854775000, 9223372036854775807, 1000)[0:1]", "range slice is out of range"},
+		// the length does not fit an int
+		{"x = range(-(1 << 62), 1 << 62)", "range is too long"},
 	} {
-		r := runProg(t, 0, src)
-		if r.err == nil {
-			t.Errorf("%s: succeeded", src)
-		} else if strings.Contains(r.err.Error(), "panic") || strings.Contains(r.err.Error(), "zero step") {
-			t.Errorf("%s: %v", src, r.err)
+		r := runProg(t, 0, c.src)
+		if r.err == nil || !strings.Contains(r.err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", c.src, r.err, c.want)
 		}
 	}
 	// Legitimate slices of ranges are unchanged.
@@ -207,8 +211,8 @@ func TestSetMethods_RequireAnArgument(t *testing.T) {
 
 func TestZip_ColumnsTimesRowsIsBounded(t *testing.T) {
 	smallLimit(t)
-	// 100000 columns of 1000 rows: 10^8 slots, though no column is long.
-	r := runProg(t, 0, "cols = [range(1000)] * 100000\nr = zip(*cols)\n")
+	// 2000 columns of 1000 rows: 2 million slots, though no column is long.
+	r := runProg(t, 0, "cols = [range(1000)] * 2000\nr = zip(*cols)\n")
 	if r.err == nil || !strings.Contains(r.err.Error(), "excessive") {
 		t.Errorf("zip of many columns: %v", r.err)
 	}

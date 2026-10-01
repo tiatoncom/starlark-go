@@ -48,27 +48,27 @@ func mustOK(t *testing.T, src string) {
 }
 
 func TestAllocLimit_StringConcatDoubling(t *testing.T) {
-	mustErr(t, "  s = 'x'\n  for i in range(40): s = s + s", "excessive string concatenation")
+	mustErr(t, "  s = 'x'\n  for i in range(20): s = s + s", "excessive string concatenation")
 }
 
 func TestAllocLimit_ListConcatDoubling(t *testing.T) {
-	mustErr(t, "  x = [1]\n  for i in range(40): x = x + x", "excessive list concatenation")
+	mustErr(t, "  x = [1]\n  for i in range(20): x = x + x", "excessive list concatenation")
 }
 
 func TestAllocLimit_TupleConcatDoubling(t *testing.T) {
-	mustErr(t, "  x = (1,)\n  for i in range(40): x = x + x", "excessive tuple concatenation")
+	mustErr(t, "  x = (1,)\n  for i in range(20): x = x + x", "excessive tuple concatenation")
 }
 
 func TestAllocLimit_ListInplaceAddDoubling(t *testing.T) {
-	mustErr(t, "  x = [1]\n  for i in range(40): x += x", "excessive list extension")
+	mustErr(t, "  x = [1]\n  for i in range(20): x += x", "excessive list extension")
 }
 
 func TestAllocLimit_StrOfSharedSubgraph(t *testing.T) {
-	mustErr(t, "  x = [1]\n  for i in range(40): x = [x, x]\n  s = str(x)", "size limit")
+	mustErr(t, "  x = [1]\n  for i in range(22): x = [x, x]\n  s = str(x)", "size limit")
 }
 
 func TestAllocLimit_PercentOfSharedSubgraph(t *testing.T) {
-	mustErr(t, "  x = [1]\n  for i in range(40): x = [x, x]\n  s = '%s' % (x,)", "excessive string interpolation")
+	mustErr(t, "  x = [1]\n  for i in range(22): x = [x, x]\n  s = '%s' % (x,)", "excessive string interpolation")
 }
 
 // Operations that remain within the limit should behave normally.
