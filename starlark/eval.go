@@ -884,6 +884,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				if xs, ys, ok := smallPair(x, y); ok {
+					return thread.smallResult(xs + ys)
+				}
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
@@ -939,6 +942,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				if xs, ys, ok := smallPair(x, y); ok {
+					return thread.smallResult(xs - ys)
+				}
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
@@ -985,6 +991,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				if xs, ys, ok := smallPair(x, y); ok {
+					return thread.smallResult(xs * ys)
+				}
 				// A product of big integers is as long as both together.
 				if err := thread.intRoom(wordsMul(x, y)); err != nil {
 					return nil, excess(err, "excessive integer multiplication")
@@ -1096,6 +1105,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if y.Sign() == 0 {
 					return nil, fmt.Errorf("floored division by zero")
 				}
+				if _, _, ok := smallPair(x, y); ok {
+					return thread.intDone(x.Div(y)) // (2**31 // -1 is beyond int32)
+				}
 				if err := thread.chargeIntQuadratic(x, y); err != nil {
 					return nil, err
 				}
@@ -1139,6 +1151,9 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			case Int:
 				if y.Sign() == 0 {
 					return nil, fmt.Errorf("integer modulo by zero")
+				}
+				if _, _, ok := smallPair(x, y); ok {
+					return x.Mod(y), nil // (smaller than y: small)
 				}
 				if err := thread.chargeIntQuadratic(x, y); err != nil {
 					return nil, err
@@ -1350,20 +1365,26 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if y >= 512 {
 					return nil, fmt.Errorf("shift count too large: %v", y)
 				}
-				if err := thread.chargeIntLinear(x, x); err != nil {
+				w := bigWords(x)
+				if w == 0 { // a small integer: the result is at most 543 bits
+					return thread.intDone(x.Lsh(uint(y)))
+				}
+				if err := thread.chargeWork(w); err != nil {
 					return nil, err
 				}
-				if w := bigWords(x); w != 0 {
-					if err := thread.intRoom(w + uint64(y)/64 + 1); err != nil {
-						return nil, excess(err, "excessive integer shift")
-					}
+				if err := thread.intRoom(w + uint64(y)/64 + 1); err != nil {
+					return nil, excess(err, "excessive integer shift")
 				}
 				return thread.intDone(x.Lsh(uint(y)))
 			} else {
-				if err := thread.chargeIntLinear(x, x); err != nil {
+				w := bigWords(x)
+				if w == 0 {
+					return x.Rsh(uint(y)), nil // (a small integer: small)
+				}
+				if err := thread.chargeWork(w); err != nil {
 					return nil, err
 				}
-				if err := thread.intRoom(bigWords(x)); err != nil {
+				if err := thread.intRoom(w); err != nil {
 					return nil, excess(err, "excessive integer shift")
 				}
 				return thread.intDone(x.Rsh(uint(y)))

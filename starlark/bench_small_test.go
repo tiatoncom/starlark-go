@@ -90,3 +90,22 @@ func BenchmarkSmall_call(b *testing.B) {
 func BenchmarkSmall_call_kw(b *testing.B) {
 	benchProgram(b, "def g(a, b=2): return a", "    x = g(i, b=3)")
 }
+
+func BenchmarkSmall_int_arith(b *testing.B) {
+	benchProgram(b, "", "    x = (i * 31 + i) % 1000003")
+}
+func BenchmarkSmall_int_add(b *testing.B) {
+	benchProgram(b, "", "    x = i + 1")
+}
+func BenchmarkSmall_int_big32(b *testing.B) {
+	benchProgram(b, "", "    x = (1 << 40) + i")
+}
+func BenchmarkSmall_int_shift(b *testing.B) {
+	benchProgram(b, "", "    x = i << 3")
+}
+func BenchmarkSmall_cmp(b *testing.B) {
+	benchProgram(b, "x = 1", "    y = x < i")
+}
+func BenchmarkSmall_neg(b *testing.B) {
+	benchProgram(b, "x = 1", "    y = -i")
+}

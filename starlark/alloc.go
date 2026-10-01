@@ -652,6 +652,17 @@ func (thread *Thread) chargeListOf(n int, it Value) error {
 
 // unaryInt is -x or ~x of an integer, charged as the binary operations are.
 func (thread *Thread) unaryInt(op syntax.Token, x Int) (Value, error) {
+	if xs, xb := x.get(); xb == nil {
+		// a small integer: the result is small too, but for -(-2**31)
+		switch op {
+		case syntax.TILDE:
+			return MakeInt64(^xs), nil
+		case syntax.MINUS:
+			if xs != math.MinInt32 {
+				return MakeInt64(-xs), nil
+			}
+		}
+	}
 	if w := bigWords(x); w != 0 {
 		if err := thread.chargeWork(w); err != nil {
 			return nil, err
@@ -736,4 +747,33 @@ func (thread *Thread) finishGrowth(before int, m *meter, err error) error {
 func (thread *Thread) roomEntries(n int) error {
 	b := dictBytes(n)
 	return thread.checkRoom(b, b)
+}
+
+// smallPair returns the values of two integers if both are small (int32).
+func smallPair(x, y Int) (xs, ys int64, ok bool) {
+	xs, xb := x.get()
+	if xb != nil {
+		return 0, 0, false
+	}
+	ys, yb := y.get()
+	if yb != nil {
+		return 0, 0, false
+	}
+	return xs, ys, true
+}
+
+// smallResult is the integer r, the result of an operation on two small
+// integers (so that it is of at most 64 bits): the operation of the hot path
+// of the interpreter, which makes a big integer only when the result is
+// beyond int32, and then charges its box.
+func (thread *Thread) smallResult(r int64) (Value, error) {
+	if math.MinInt32 <= r && r <= math.MaxInt32 {
+		return makeSmallInt(r), nil
+	}
+	if thread != nil {
+		if err := thread.chargeBudget(intBytesOfWords(1)); err != nil {
+			return nil, err
+		}
+	}
+	return MakeInt64(r), nil
 }
