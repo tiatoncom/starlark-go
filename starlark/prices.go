@@ -44,7 +44,7 @@ import (
 //	split (per field)                    28-38 ns          4 units
 //	elems()/codepoints() list (per elem) 26 ns             4 units
 //	dict keys/items/values (per entry)   34 ns             3 units
-//	hash table insert (per entry)        30 (warm)-340 ns 1 + log2(n)/2 units (insertWork)
+//	hash table insert (per entry)        30 (warm)-340 ns 1 + log2(n) - 4 units, from 16 entries (insertWork)
 //	d == e (per entry)                   120 ns            lookup + compare
 //	allocation of memory (per byte)      0.25-0.4 ns       1 unit / 32 B
 //	int(str), str(int) (digits^2)        0.84 ns/1000      digits^2 / 4096

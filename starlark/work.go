@@ -209,10 +209,11 @@ func (thread *Thread) chargeIntQuadratic(x, y Int) error {
 // insertWork is the work of adding an entry to a hash table of n entries,
 // beyond hashing the key and walking the chain: the entry and its links, and
 // the cache misses of a large table, which grow with its size. A warm insert
-// into a table of a few entries takes ~30 ns, a cold one into a million 340 ns:
-// 1 unit and half a unit for each doubling (3 units for 15 entries, 11 for a
-// million).
-func insertWork(n uint32) uint64 { return 1 + uint64(bits.Len32(n))/2 }
+// into a table of a few entries takes ~30 ns, a cold one into a million 340 ns
+// (and more under load): 1 unit up to 15 entries, so that a small table costs
+// nothing beyond the free window, and one more unit for each doubling after
+// that (18 units for two million entries).
+func insertWork(n uint32) uint64 { return 1 + uint64(max(bits.Len32(n)-4, 0)) }
 
 // chargeIntToString checks and charges the conversion of the integer x to a
 // string: refused if it has more than MaxIntBits bits, and else charged the
