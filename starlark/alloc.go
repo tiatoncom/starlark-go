@@ -196,6 +196,10 @@ func (thread *Thread) SetMaxAllocBytes(max uint64) {
 
 // AllocatedBytes returns the number of bytes charged to this thread so far.
 // It is counted whether or not there is a budget. It saturates at MaxUint64.
+//
+// The counters of a Thread (this one, Steps, Work) are not atomic: they are read
+// and changed only by the goroutine that runs the thread (a built-in of the
+// host runs on it), or when no goroutine does.
 func (thread *Thread) AllocatedBytes() uint64 {
 	return thread.allocated
 }
@@ -220,6 +224,9 @@ func (thread *Thread) AllocatedBytes() uint64 {
 // A built-in that returns a string, bytes, list, tuple, dict or set need not
 // charge for the shallow size of the result: Call charges whatever the
 // built-in did not charge itself (see Call).
+//
+// ChargeAlloc must be called only from the goroutine that runs the thread (see
+// AllocatedBytes). A refusal is an error that the built-in returns as it is.
 func (thread *Thread) ChargeAlloc(n uint64) error {
 	if n == 0 {
 		return nil
@@ -237,6 +244,7 @@ func (thread *Thread) ChargeAlloc(n uint64) error {
 // be charged right now: the smaller of the per-operation ceiling and the
 // remaining budget. A built-in that builds its result incrementally can stop
 // as soon as the output exceeds it, and report the failure with ChargeAlloc.
+// Like ChargeAlloc, it is called only from the goroutine that runs the thread.
 func (thread *Thread) AllocHeadroom() uint64 {
 	return thread.room()
 }

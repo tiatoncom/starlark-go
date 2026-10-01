@@ -1,6 +1,6 @@
 package starlark
 
-// The steps of a program, and the bytes it is charged, are a function of the
+// The steps of a program, its work, and the bytes it is charged, are a function of the
 // program and its input, the same in every process: they are recorded in the
 // audit of the host and decide a verdict at the border of a budget. Nothing
 // the process picks (the seed of a hash, an address, the order of a Go map)
@@ -74,6 +74,25 @@ d.update(e)
 d |= e
 r = len(d)
 `},
+	{"uuids - set(ids), 100", `
+ids = ['%x-%x-4%x-a%x-%x' % (i * 2654435761 % 4294967296, i % 65536, i % 4096, i * 7 % 4096, i * 1103515245 % 281474976710656) for i in range(100)]
+r = len(set(ids))
+`},
+	{"uuids - set(ids), 1000", `
+ids = ['%x-%x-4%x-a%x-%x' % (i * 2654435761 % 4294967296, i % 65536, i % 4096, i * 7 % 4096, i * 1103515245 % 281474976710656) for i in range(1000)]
+r = len(set(ids))
+`},
+	{"e-mails - dict(zip), s|t, d==e, update", `
+ids = ['user.%d@example-company-%d.org' % (i, i % 37) for i in range(1000)]
+d = dict(zip(ids, range(1000)))
+e = dict(zip(reversed(ids), reversed(range(1000))))
+s = set(ids[:600])
+t = set(ids[400:])
+u = {}
+u.update(d)
+u.update(e)
+r = (len(d), d == e, len(s | t), len(s & t), len(s - t), len(s ^ t), len(u))
+`},
 	{"order of iteration", `
 d = {}
 for i in range(5000):
@@ -85,25 +104,25 @@ r = h
 `},
 }
 
-func runDeterminismProgram(src string) (steps, alloc uint64, result Value, err error) {
+func runDeterminismProgram(src string) (steps, work, alloc uint64, result Value, err error) {
 	th := &Thread{Name: "det"}
 	th.SetMaxAllocBytes(1 << 30)
 	g, err := ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, Set: true, TopLevelControl: true}, th, "t.star", src, nil)
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, 0, nil, err
 	}
-	return th.Steps, th.AllocatedBytes(), g["r"], nil
+	return th.Steps, th.Work(), th.AllocatedBytes(), g["r"], nil
 }
 
 func TestDeterminism_StepsAreTheSameInEveryProcess(t *testing.T) {
 	if os.Getenv("STARLARK_DET_CHILD") == "1" {
 		for _, p := range determinismPrograms {
-			steps, alloc, r, err := runDeterminismProgram(p.src)
+			steps, work, alloc, r, err := runDeterminismProgram(p.src)
 			if err != nil {
 				fmt.Printf("DET %s: error %v\n", p.name, err)
 				continue
 			}
-			fmt.Printf("DET %s: steps %d alloc %d result %v\n", p.name, steps, alloc, r)
+			fmt.Printf("DET %s: steps %d work %d alloc %d result %v\n", p.name, steps, work, alloc, r)
 		}
 		return
 	}
