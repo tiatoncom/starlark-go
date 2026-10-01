@@ -1029,3 +1029,26 @@ func TestAllocCharge_MappingOfUnknownLength(t *testing.T) {
 		wantBudgetErr(t, r, budgetMiB)
 	}
 }
+
+// A size that overflows uint64 is a refusal by the budget, not a wrapped-around
+// small number that passes it.
+func TestAllocBudget_OverflowingSizeIsRefusedByTheBudget(t *testing.T) {
+	for _, src := range []string{
+		"r = list(range(1 << 62))", // 16 * 2^62 wraps to 0
+		"r = set(range(1 << 62))",  // 96 * 2^62
+		"r = enumerate(range(1 << 62))",
+		"r = zip(range(1 << 62), range(1 << 62))",
+	} {
+		r := runProg(t, budgetMiB, src)
+		wantBudgetErr(t, r, budgetMiB)
+	}
+	if got := satMul(1<<62, 16); got != math.MaxUint64 {
+		t.Errorf("satMul(2^62, 16) = %d, want saturation", got)
+	}
+	if got := satMul(3, 5); got != 15 {
+		t.Errorf("satMul(3, 5) = %d", got)
+	}
+	if got := satAdd(math.MaxUint64-1, 5); got != math.MaxUint64 {
+		t.Errorf("satAdd = %d, want saturation", got)
+	}
+}
