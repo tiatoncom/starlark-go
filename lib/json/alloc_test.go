@@ -6,6 +6,10 @@ package json_test
 
 import (
 	"errors"
+	"os"
+	osexec "os/exec"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -20,9 +24,11 @@ const (
 )
 
 type run struct {
-	th    *starlark.Thread
-	err   error
-	marks []uint64
+	th      *starlark.Thread
+	err     error
+	marks   []uint64
+	memMark uint64 // runtime TotalAlloc at the first mark()
+	memEnd  uint64 // and when the program ended
 }
 
 func exec(t *testing.T, budget uint64, src string) *run {
@@ -33,11 +39,19 @@ func exec(t *testing.T, budget uint64, src string) *run {
 		"json": json.Module,
 		"mark": starlark.NewBuiltin("mark", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
 			r.marks = append(r.marks, th.AllocatedBytes())
+			if len(r.marks) == 1 {
+				var ms runtime.MemStats
+				runtime.ReadMemStats(&ms)
+				r.memMark = ms.TotalAlloc
+			}
 			return starlark.None, nil
 		}),
 	}
 	opts := &syntax.FileOptions{GlobalReassign: true, TopLevelControl: true}
 	_, r.err = starlark.ExecFileOptions(opts, r.th, "t.star", src, predeclared)
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	r.memEnd = ms.TotalAlloc
 	return r
 }
 
@@ -46,18 +60,18 @@ func TestJSON_ChargesExactly(t *testing.T) {
 		name, setup, op string
 		want            uint64
 	}{
-		{"encode", "x = [1, 2, 3]", "r = json.encode(x)", 7},                                           // [1,2,3]
-		{"encode/string", "x = 'abc'", "r = json.encode(x)", 5},                                        // "abc"
-		{"encode_indent", "x = [1, 2]", "r = json.encode_indent(x, indent=' ')", 5 + 10},               // encode + the indented form
-		{"indent", "x = '[1,2]'", "r = json.indent(x, indent=' ')", 10},                                // [\n 1,\n 2\n]
-		{"decode/list", "x = '[1,2,3]'", "r = json.decode(x)", 3 * 16},                                 // a slot per element
-		{"decode/string", "x = '\"abc\"'", "r = json.decode(x)", 3},                                    // by length
-		{"decode/dict", "x = '{\"a\":1,\"b\":2}'", "r = json.decode(x)", 2*96 + 2},                     // an entry per key, the key strings
-		{"decode/nested", "x = '[[1],[2,3]]'", "r = json.decode(x)", 2*16 + 1*16 + 2*16},               // slots of the outer and inner lists
-		{"decode/bigint", "x = '123456789012345678901234567890'", "r = json.decode(x)", 13},            // 97 bits
-		{"decode/scalars are free", "x = 'true'", "r = json.decode(x)", 0},                             // not a container
-		{"decode/invalid with default", "x = '[1,'", "r = json.decode(x, 5)", 16},                      // a syntax error: the default; charged as built
-		{"decode/invalid with default, partly built", "x = '[1,2,x'", "r = json.decode(x, 5)", 2 * 16}, // charged as it was built
+		{"encode", "x = [1, 2, 3]", "r = json.encode(x)", 7},                                                // [1,2,3]
+		{"encode/string", "x = 'abc'", "r = json.encode(x)", 5},                                             // "abc"
+		{"encode_indent", "x = [1, 2]", "r = json.encode_indent(x, indent=' ')", 5 + 10},                    // encode + the indented form
+		{"indent", "x = '[1,2]'", "r = json.indent(x, indent=' ')", 10},                                     // [\n 1,\n 2\n]
+		{"decode/list", "x = '[1,2,3]'", "r = json.decode(x)", 48 + 3*16},                                   // a slot per element
+		{"decode/string", "x = '\"abc\"'", "r = json.decode(x)", 3},                                         // by length
+		{"decode/dict", "x = '{\"a\":1,\"b\":2}'", "r = json.decode(x)", 512 + 2},                           // an entry per key, the key strings
+		{"decode/nested", "x = '[[1],[2,3]]'", "r = json.decode(x)", (48 + 2*16) + (48 + 16) + (48 + 2*16)}, // slots of the outer and inner lists
+		{"decode/bigint", "x = '123456789012345678901234567890'", "r = json.decode(x)", 13},                 // 97 bits
+		{"decode/scalars are free", "x = 'true'", "r = json.decode(x)", 0},                                  // not a container
+		{"decode/invalid with default", "x = '[1,'", "r = json.decode(x, 5)", 48 + 16},                      // a syntax error: the default; charged as built
+		{"decode/invalid with default, partly built", "x = '[1,2,x'", "r = json.decode(x, 5)", 48 + 2*16},   // charged as it was built
 	} {
 		src := c.setup + "\nmark()\n" + c.op + "\nmark()\n"
 		for _, budget := range []uint64{0, 1 << 30} {
@@ -145,4 +159,133 @@ if json.indent(s) != json.encode_indent(x, prefix="", indent="\t"): fail("indent
 	if r := exec(t, budget1MiB, src); r.err != nil {
 		t.Fatal(r.err)
 	}
+}
+
+// ---- deep nesting: a stack overflow is fatal, so it is tested in a child ----
+
+func TestJSON_DeepNesting_ChildProcess(t *testing.T) {
+	if os.Getenv("STARLARK_JSON_DEEP_CHILD") == "1" {
+		debug.SetMaxStack(32 << 20) // 200000 levels would need ~100 MiB
+		const depth = 200000
+		th := &starlark.Thread{}
+		deepList := func() starlark.Value {
+			v := starlark.NewList(nil)
+			for i := 0; i < depth; i++ {
+				v = starlark.NewList([]starlark.Value{v})
+			}
+			return v
+		}
+		deepTuple := func() starlark.Value {
+			var v starlark.Value = starlark.Tuple{}
+			for i := 0; i < depth; i++ {
+				v = starlark.Tuple{v}
+			}
+			return v
+		}
+		deepDict := func() starlark.Value {
+			var v starlark.Value = new(starlark.Dict)
+			for i := 0; i < depth; i++ {
+				d := new(starlark.Dict)
+				d.SetKey(starlark.String("k"), v)
+				v = d
+			}
+			return v
+		}
+		for name, v := range map[string]starlark.Value{"list": deepList(), "tuple": deepTuple(), "dict": deepDict()} {
+			_, err := starlark.Call(th, json.Module.Members["encode"], starlark.Tuple{v}, nil)
+			if err == nil || !strings.Contains(err.Error(), "nested more than") {
+				t.Errorf("encode of a deep %s: %v", name, err)
+			} else if len(err.Error()) > 1000 {
+				t.Errorf("encode of a deep %s: the error is %d bytes", name, len(err.Error()))
+			}
+		}
+		for _, doc := range []string{strings.Repeat("[", depth) + strings.Repeat("]", depth), strings.Repeat("{\"a\":", depth) + "1" + strings.Repeat("}", depth)} {
+			_, err := starlark.Call(th, json.Module.Members["decode"], starlark.Tuple{starlark.String(doc)}, nil)
+			if err == nil || !strings.Contains(err.Error(), "nested more than") {
+				t.Errorf("decode of a deep document: %v", err)
+			}
+			// ... also with a default: the nesting is not a syntax error.
+			_, err = starlark.Call(th, json.Module.Members["decode"], starlark.Tuple{starlark.String(doc), starlark.MakeInt(5)}, nil)
+			if err == nil {
+				t.Errorf("decode of a deep document with a default succeeded")
+			}
+		}
+		t.Log("DEEP-JSON-OK")
+		return
+	}
+	cmd := osexec.Command(os.Args[0], "-test.run=^TestJSON_DeepNesting_ChildProcess$", "-test.v")
+	cmd.Env = append(os.Environ(), "STARLARK_JSON_DEEP_CHILD=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "DEEP-JSON-OK") {
+		tail := string(out)
+		if len(tail) > 2000 {
+			tail = tail[:1000] + "\n...\n" + tail[len(tail)-1000:]
+		}
+		t.Fatalf("the child process failed: %v\n%s", err, tail)
+	}
+}
+
+func TestJSON_NestingAtTheLimit(t *testing.T) {
+	// MaxValueDepth levels encode and decode; one more is refused.
+	ok := strings.Repeat("[", starlark.MaxValueDepth) + strings.Repeat("]", starlark.MaxValueDepth)
+	r := exec(t, 0, "x = json.decode('"+ok+"')\ny = json.encode(x)\nif y != '"+ok+"': fail('round trip')\n")
+	if r.err != nil {
+		t.Errorf("at the limit: %v", r.err)
+	}
+	over := strings.Repeat("[", starlark.MaxValueDepth+1) + strings.Repeat("]", starlark.MaxValueDepth+1)
+	r = exec(t, 0, "x = json.decode('"+over+"')\n")
+	if r.err == nil || !strings.Contains(r.err.Error(), "nested more than") {
+		t.Errorf("past the limit: %v", r.err)
+	}
+}
+
+// ---- B4, B5: the peak is before the allocation ----
+
+func TestJSON_EncodeOfALargeStringIsRefusedBeforeItIsQuoted(t *testing.T) {
+	// 16 MiB of NUL quote to 96 MiB (\u0000 each); the budget is 32 MiB.
+	const budget = 32 << 20
+	r := exec(t, budget, "s = '\\x00' * (16 << 20)\nmark()\nr = json.encode(s)\n")
+	wantBudgetError(t, "encode", r, budget)
+	if spent := r.memEnd - r.memMark; spent > 1<<20 {
+		t.Errorf("the refused encode allocated %d bytes", spent)
+	}
+}
+
+func TestJSON_DecodeOfEmptyObjectsIsCharged(t *testing.T) {
+	// 400000 empty objects are 200 MB: {} is 512 bytes, not 16.
+	const budget = 8 << 20
+	r := exec(t, budget, "s = '[' + '{},' * 400000 + '{}]'\nmark()\nr = json.decode(s)\n")
+	wantBudgetError(t, "decode", r, budget)
+	if spent := r.memEnd - r.memMark; spent > 4*budget {
+		t.Errorf("the refused decode allocated %d bytes (budget %d)", spent, budget)
+	}
+	r = exec(t, budget, "s = '[' + '[],' * 400000 + '[]]'\nmark()\nr = json.decode(s)\n")
+	wantBudgetError(t, "decode of empty lists", r, budget)
+}
+
+func TestJSON_EncodeExactlyTheRemainingBudget(t *testing.T) {
+	// json.encode of n 'a's is n+2 bytes; the setup charges n.
+	for _, c := range []struct {
+		n  int
+		ok bool
+	}{{100, true}, {101, false}} {
+		r := exec(t, 202, "s = 'a' * "+itoa(c.n)+"\nr = json.encode(s)\n")
+		if c.ok && (r.err != nil || r.th.AllocatedBytes() != 202) {
+			t.Errorf("n=%d: err %v, charged %d, want exactly the budget 202", c.n, r.err, r.th.AllocatedBytes())
+		}
+		if !c.ok {
+			wantBudgetError(t, "encode past the budget", r, 202)
+		}
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var d []byte
+	for ; n > 0; n /= 10 {
+		d = append([]byte{byte('0' + n%10)}, d...)
+	}
+	return string(d)
 }

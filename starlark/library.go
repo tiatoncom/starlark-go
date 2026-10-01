@@ -26,6 +26,16 @@ import (
 	"go.starlark.net/syntax"
 )
 
+// accounted marks b as a built-in that charges the allocation budget itself,
+// or returns a value that already exists (the argument, an element, a
+// substring that shares memory), so that Call does not charge its result.
+// The set is closed: only the built-ins of this package are marked, and the
+// mark cannot be set from outside the package. See alloc.go.
+func accounted(b *Builtin) *Builtin {
+	b.accounts = true
+	return b
+}
+
 // Universe defines the set of universal built-ins, such as None, True, and len.
 //
 // The Go application may add or remove items from the
@@ -44,21 +54,21 @@ func init() {
 		"any":       NewBuiltin("any", any_),
 		"all":       NewBuiltin("all", all),
 		"bool":      NewBuiltin("bool", bool_),
-		"bytes":     NewBuiltin("bytes", bytes_),
+		"bytes":     accounted(NewBuiltin("bytes", bytes_)),
 		"chr":       NewBuiltin("chr", chr),
 		"dict":      NewBuiltin("dict", dict),
 		"dir":       NewBuiltin("dir", dir),
 		"enumerate": NewBuiltin("enumerate", enumerate),
 		"fail":      NewBuiltin("fail", fail),
 		"float":     NewBuiltin("float", float),
-		"getattr":   NewBuiltin("getattr", getattr),
+		"getattr":   accounted(NewBuiltin("getattr", getattr)),
 		"hasattr":   NewBuiltin("hasattr", hasattr),
 		"hash":      NewBuiltin("hash", hash),
 		"int":       NewBuiltin("int", int_),
 		"len":       NewBuiltin("len", len_),
 		"list":      NewBuiltin("list", list),
-		"max":       NewBuiltin("max", minmax),
-		"min":       NewBuiltin("min", minmax),
+		"max":       accounted(NewBuiltin("max", minmax)),
+		"min":       accounted(NewBuiltin("min", minmax)),
 		"ord":       NewBuiltin("ord", ord),
 		"print":     NewBuiltin("print", print),
 		"range":     NewBuiltin("range", range_),
@@ -66,9 +76,9 @@ func init() {
 		"reversed":  NewBuiltin("reversed", reversed),
 		"set":       NewBuiltin("set", set),
 		"sorted":    NewBuiltin("sorted", sorted),
-		"str":       NewBuiltin("str", str),
+		"str":       accounted(NewBuiltin("str", str)),
 		"tuple":     NewBuiltin("tuple", tuple),
-		"type":      NewBuiltin("type", type_),
+		"type":      accounted(NewBuiltin("type", type_)),
 		"zip":       NewBuiltin("zip", zip),
 	}
 }
@@ -82,12 +92,12 @@ var (
 
 	dictMethods = map[string]*Builtin{
 		"clear":      NewBuiltin("clear", dict_clear),
-		"get":        NewBuiltin("get", dict_get),
+		"get":        accounted(NewBuiltin("get", dict_get)),
 		"items":      NewBuiltin("items", dict_items),
 		"keys":       NewBuiltin("keys", dict_keys),
-		"pop":        NewBuiltin("pop", dict_pop),
+		"pop":        accounted(NewBuiltin("pop", dict_pop)),
 		"popitem":    NewBuiltin("popitem", dict_popitem),
-		"setdefault": NewBuiltin("setdefault", dict_setdefault),
+		"setdefault": accounted(NewBuiltin("setdefault", dict_setdefault)),
 		"update":     NewBuiltin("update", dict_update),
 		"values":     NewBuiltin("values", dict_values),
 	}
@@ -98,7 +108,7 @@ var (
 		"extend": NewBuiltin("extend", list_extend),
 		"index":  NewBuiltin("index", list_index),
 		"insert": NewBuiltin("insert", list_insert),
-		"pop":    NewBuiltin("pop", list_pop),
+		"pop":    accounted(NewBuiltin("pop", list_pop)),
 		"remove": NewBuiltin("remove", list_remove),
 	}
 
@@ -121,23 +131,23 @@ var (
 		"istitle":        NewBuiltin("istitle", string_istitle),
 		"isupper":        NewBuiltin("isupper", string_isupper),
 		"join":           NewBuiltin("join", string_join),
-		"lower":          NewBuiltin("lower", string_lower),
-		"lstrip":         NewBuiltin("lstrip", string_strip), // sic
+		"lower":          accounted(NewBuiltin("lower", string_lower)),
+		"lstrip":         accounted(NewBuiltin("lstrip", string_strip)), // sic
 		"partition":      NewBuiltin("partition", string_partition),
-		"removeprefix":   NewBuiltin("removeprefix", string_removefix),
-		"removesuffix":   NewBuiltin("removesuffix", string_removefix),
-		"replace":        NewBuiltin("replace", string_replace),
+		"removeprefix":   accounted(NewBuiltin("removeprefix", string_removefix)),
+		"removesuffix":   accounted(NewBuiltin("removesuffix", string_removefix)),
+		"replace":        accounted(NewBuiltin("replace", string_replace)),
 		"rfind":          NewBuiltin("rfind", string_rfind),
 		"rindex":         NewBuiltin("rindex", string_rindex),
-		"rpartition":     NewBuiltin("rpartition", string_partition), // sic
-		"rsplit":         NewBuiltin("rsplit", string_split),         // sic
-		"rstrip":         NewBuiltin("rstrip", string_strip),         // sic
+		"rpartition":     NewBuiltin("rpartition", string_partition),    // sic
+		"rsplit":         NewBuiltin("rsplit", string_split),            // sic
+		"rstrip":         accounted(NewBuiltin("rstrip", string_strip)), // sic
 		"split":          NewBuiltin("split", string_split),
 		"splitlines":     NewBuiltin("splitlines", string_splitlines),
 		"startswith":     NewBuiltin("startswith", string_startswith),
-		"strip":          NewBuiltin("strip", string_strip),
+		"strip":          accounted(NewBuiltin("strip", string_strip)),
 		"title":          NewBuiltin("title", string_title),
-		"upper":          NewBuiltin("upper", string_upper),
+		"upper":          accounted(NewBuiltin("upper", string_upper)),
 	}
 
 	setMethods = map[string]*Builtin{
@@ -148,7 +158,7 @@ var (
 		"intersection":         NewBuiltin("intersection", set_intersection),
 		"issubset":             NewBuiltin("issubset", set_issubset),
 		"issuperset":           NewBuiltin("issuperset", set_issuperset),
-		"pop":                  NewBuiltin("pop", set_pop),
+		"pop":                  accounted(NewBuiltin("pop", set_pop)),
 		"remove":               NewBuiltin("remove", set_remove),
 		"symmetric_difference": NewBuiltin("symmetric_difference", set_symmetric_difference),
 		"union":                NewBuiltin("union", set_union),
@@ -249,8 +259,13 @@ func bytes_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	case Bytes:
 		return x, nil
 	case String:
-		// Invalid encodings are replaced by that of U+FFFD.
-		// (Call charges the result: a valid string is returned as is.)
+		// Invalid encodings are replaced by that of U+FFFD. A valid string is
+		// returned as it is, which allocates nothing.
+		if n := utf8TranscodedLen(string(x)); n != len(x) {
+			if err := thread.chargeBytes(n); err != nil {
+				return nil, excess(err, "bytes: excessive size (%d bytes)", n)
+			}
+		}
 		return Bytes(utf8Transcode(string(x))), nil
 	case Iterable:
 		// iterable of numeric byte values
@@ -313,7 +328,13 @@ func dict(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, fmt.Errorf("dict: got %d arguments, want at most 1", len(args))
 	}
 	dict := new(Dict)
-	if err := updateDict(thread, dict, args, kwargs); err != nil {
+	if len(args) == 0 {
+		if err := thread.chargeEntries(0); err != nil {
+			return nil, excess(err, "dict: excessive size")
+		}
+	}
+	// (with an argument, updateDict charges the dict with its first entries)
+	if err := updateDict(thread, dict, args, kwargs, true); err != nil {
 		return nil, prefixErr("dict", err)
 	}
 	return dict, nil
@@ -356,7 +377,7 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 
 	if n := Len(iterable); n >= 0 {
 		// common case: known length
-		if err := thread.charge(uint64(n), satMul(uint64(n), allocBytesPerItem)); err != nil {
+		if err := thread.chargeItems(n); err != nil {
 			return nil, excess(err, "enumerate: excessive size (%d elements)", n)
 		}
 		pairs = make([]Value, 0, n)
@@ -369,7 +390,10 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 			pairs = append(pairs, pair)
 		}
 	} else {
-		// non-sequence (unknown length)
+		// non-sequence (unknown length): the list now, each pair as it comes
+		if err := thread.chargeValues(0); err != nil {
+			return nil, excess(err, "enumerate: excessive size")
+		}
 		for i := 0; iter.Next(&x); i++ {
 			if err := thread.chargeOne(len(pairs), allocBytesPerItem); err != nil {
 				return nil, excess(err, "enumerate: excessive size (over %d elements)", maxAlloc)
@@ -458,7 +482,7 @@ func float(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 			return nil, fmt.Errorf("floating-point number too large")
 		}
 		if err != nil {
-			return nil, fmt.Errorf("invalid float literal: %s", s)
+			return nil, fmt.Errorf("invalid float literal: %s", errStr(s))
 		}
 		return Float(f), nil
 	default:
@@ -497,7 +521,7 @@ func getattr(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, err
 	if dflt != nil {
 		return dflt, nil
 	}
-	return nil, fmt.Errorf("getattr: %s has no .%s field or method", object.Type(), name)
+	return nil, fmt.Errorf("getattr: %s has no .%s field or method", object.Type(), errStr(name))
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#hasattr
@@ -588,7 +612,7 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		}
 		res := parseInt(s, b)
 		if res == nil {
-			return nil, fmt.Errorf("int: invalid literal with base %d: %s", b, s)
+			return nil, fmt.Errorf("int: invalid literal with base %d: %s", b, errStr(s))
 		}
 		return res, nil
 	}
@@ -702,20 +726,25 @@ func list(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, err
 	}
 	var elems []Value
+	n := 0
+	if iterable != nil {
+		n = Len(iterable)
+	}
+	// The list itself, and its elements if their number is known (else per
+	// element, below).
+	if err := thread.chargeListOf(n, iterable); err != nil {
+		return nil, excess(err, "list: excessive size (%d elements)", n)
+	}
 	if iterable != nil {
 		iter := iterable.Iterate()
 		defer iter.Done()
-		n := Len(iterable)
 		if n > 0 {
-			if err := thread.chargeValues(n); err != nil {
-				return nil, excess(err, "list: excessive size (%d elements)", n)
-			}
 			elems = make([]Value, 0, n) // preallocate if length known
 		}
 		var x Value
 		for iter.Next(&x) {
 			if n < 0 {
-				if err := thread.chargeOne(len(elems), allocBytesPerValue); err != nil {
+				if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {
 					return nil, excess(err, "list: excessive size (over %d elements)", maxAlloc)
 				}
 			}
@@ -845,8 +874,8 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 				return nil, thread.refuseBytes(buf.Len()+len(b), "print: excessive output size")
 			}
 			buf.WriteString(string(b))
-		} else {
-			writeValueLimit(buf, v, nil, limit)
+		} else if code := writeValueLimit(buf, v, nil, limit); code != writeOK {
+			return nil, thread.formErr(code, limit, "print", "print: excessive output size")
 		}
 	}
 	if err := thread.chargeBytes(buf.Len()); err != nil {
@@ -879,7 +908,11 @@ func range_(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		return nil, nameErr(b, "step argument must not be zero")
 	}
 
-	return rangeValue{start: start, stop: stop, step: step, len: rangeLen(start, stop, step)}, nil
+	n, ok := rangeLenChecked(start, stop, step)
+	if !ok {
+		return nil, nameErr(b, "range is too long")
+	}
+	return rangeValue{start: start, stop: stop, step: step, len: n}, nil
 }
 
 // A rangeValue is a comparable, immutable, indexable sequence of integers
@@ -900,33 +933,91 @@ func (r rangeValue) Index(i int) Value { return MakeInt(r.start + i*r.step) }
 func (r rangeValue) Iterate() Iterator { return &rangeIterator{r, 0} }
 
 // rangeLen calculates the length of a range with the provided start, stop, and step.
-// caller must ensure that step is non-zero.
+// caller must ensure that step is non-zero and that the length fits an int
+// (see rangeLenChecked).
 func rangeLen(start, stop, step int) int {
+	n, ok := rangeLenChecked(start, stop, step)
+	if !ok {
+		panic("rangeLen: length overflows")
+	}
+	return n
+}
+
+// rangeLenChecked is rangeLen with the arithmetic done in uint64, where the
+// difference of two ints cannot overflow, and reports whether the length fits
+// an int. caller must ensure that step is non-zero.
+func rangeLenChecked(start, stop, step int) (int, bool) {
+	var span, by uint64
 	switch {
 	case step > 0:
-		if stop > start {
-			return (stop-1-start)/step + 1
+		if stop <= start {
+			return 0, true
 		}
+		span, by = uint64(stop)-uint64(start), uint64(step)
 	case step < 0:
-		if start > stop {
-			return (start-1-stop)/-step + 1
+		if start <= stop {
+			return 0, true
 		}
+		span, by = uint64(start)-uint64(stop), -uint64(step)
 	default:
 		panic("rangeLen: zero step")
 	}
-	return 0
+	n := (span-1)/by + 1
+	if n > math.MaxInt {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func (r rangeValue) Slice(start, end, step int) Value {
-	newStart := r.start + r.step*start
-	newStop := r.start + r.step*end
-	newStep := r.step * step
-	return rangeValue{
-		start: newStart,
-		stop:  newStop,
-		step:  newStep,
-		len:   rangeLen(newStart, newStop, newStep),
+	v, err := r.slice(start, end, step)
+	if err != nil {
+		return rangeValue{start: 0, stop: 0, step: 1, len: 0} // (see slice: callers that can fail use it)
 	}
+	return v
+}
+
+// slice is Slice for a caller that can report an error: the start, stop and
+// step of the result are products and sums of ints, which can overflow.
+func (r rangeValue) slice(start, end, step int) (Value, error) {
+	errOverflow := fmt.Errorf("range slice is out of range")
+	a, ok1 := mulInt(r.step, start)
+	b, ok2 := mulInt(r.step, end)
+	newStep, ok3 := mulInt(r.step, step)
+	if !ok1 || !ok2 || !ok3 || newStep == 0 {
+		return nil, errOverflow
+	}
+	newStart, ok4 := addInt(r.start, a)
+	newStop, ok5 := addInt(r.start, b)
+	if !ok4 || !ok5 {
+		return nil, errOverflow
+	}
+	n, ok := rangeLenChecked(newStart, newStop, newStep)
+	if !ok {
+		return nil, errOverflow
+	}
+	return rangeValue{start: newStart, stop: newStop, step: newStep, len: n}, nil
+}
+
+// mulInt and addInt return the product and sum of two ints, and whether they
+// are exact.
+func mulInt(a, b int) (int, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	c := a * b
+	if c/b != a || (a == math.MinInt && b == -1) || (b == math.MinInt && a == -1) {
+		return 0, false
+	}
+	return c, true
+}
+
+func addInt(a, b int) (int, bool) {
+	c := a + b
+	if (c > a) != (b > 0) {
+		return 0, false
+	}
+	return c, true
 }
 
 func (r rangeValue) Freeze() {} // immutable
@@ -1010,10 +1101,15 @@ func repr(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	}
 	limit := thread.stringLimit()
 	buf := new(strings.Builder)
-	writeValueLimit(buf, x, nil, limit)
-	// The form is bounded by the limit, as in str; but where str reports an
-	// error, repr returns the bounded form (see writeValue). Call charges
-	// its bytes to the budget, and refuses a form that outgrew it.
+	switch code := writeValueLimit(buf, x, nil, limit); {
+	case code == writeDeep:
+		return nil, thread.formErr(code, limit, "repr", "")
+	case code == writeLimit && limit < maxAlloc:
+		// The budget is what the form outgrew.
+		return nil, thread.formErr(code, limit, "repr", "repr: excessive result size")
+	}
+	// At the ceiling, where str reports an error, repr returns the bounded
+	// form (see writeValue). Call charges its bytes to the budget.
 	return String(buf.String()), nil
 }
 
@@ -1027,16 +1123,16 @@ func reversed(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, er
 	defer iter.Done()
 	var elems []Value
 	known := Len(args[0])
+	if err := thread.chargeListOf(known, iterable); err != nil {
+		return nil, excess(err, "reversed: excessive size (%d elements)", known)
+	}
 	if known >= 0 {
-		if err := thread.chargeValues(known); err != nil {
-			return nil, excess(err, "reversed: excessive size (%d elements)", known)
-		}
 		elems = make([]Value, 0, known) // preallocate if length known
 	}
 	var x Value
 	for iter.Next(&x) {
 		if known < 0 {
-			if err := thread.chargeOne(len(elems), allocBytesPerValue); err != nil {
+			if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {
 				return nil, excess(err, "reversed: excessive size (over %d elements)", maxAlloc)
 			}
 		}
@@ -1055,17 +1151,24 @@ func set(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	if err := UnpackPositionalArgs("set", args, kwargs, 0, &iterable); err != nil {
 		return nil, err
 	}
+	// The set and, if their number is known, its elements (duplicates are
+	// charged: the size is an upper bound); else each element as it comes.
+	n := 0
+	if iterable != nil {
+		n = Len(iterable)
+	}
+	if n >= 0 {
+		b := satAdd(allocBaseDict, satMul(uint64(n), allocBytesPerEntry))
+		if err := thread.charge(b, b); err != nil {
+			return nil, excess(err, "set: excessive size (%d elements)", n)
+		}
+	} else if err := thread.chargeEntries(0); err != nil {
+		return nil, excess(err, "set: excessive size")
+	}
 	set := new(Set)
 	if iterable != nil {
 		iter := iterable.Iterate()
 		defer iter.Done()
-		// Duplicates are charged: the size is an upper bound.
-		n := Len(iterable)
-		if n > 0 {
-			if err := thread.chargeEntries(n); err != nil {
-				return nil, excess(err, "set: excessive size (%d elements)", n)
-			}
-		}
 		var x Value
 		for iter.Next(&x) {
 			if n < 0 {
@@ -1099,16 +1202,16 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	defer iter.Done()
 	var values []Value
 	n := Len(iterable)
+	if err := thread.chargeListOf(n, iterable); err != nil {
+		return nil, excess(err, "sorted: excessive size (%d elements)", n)
+	}
 	if n > 0 {
-		if err := thread.chargeValues(n); err != nil {
-			return nil, excess(err, "sorted: excessive size (%d elements)", n)
-		}
 		values = make(Tuple, 0, n) // preallocate if length is known
 	}
 	var x Value
 	for iter.Next(&x) {
 		if n < 0 {
-			if err := thread.chargeOne(len(values), allocBytesPerValue); err != nil {
+			if err := thread.chargeOne(len(values), allocBytesPerNewValue); err != nil {
 				return nil, excess(err, "sorted: excessive size (over %d elements)", maxAlloc)
 			}
 		}
@@ -1177,20 +1280,40 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	case String:
 		return x, nil
 	case Bytes:
-		// Invalid encodings are replaced by that of U+FFFD.
-		// (Call charges the result: a valid string is returned as is.)
+		// Invalid encodings are replaced by that of U+FFFD. A valid string is
+		// returned as it is, which allocates nothing.
+		if n := utf8TranscodedLen(string(x)); n != len(x) {
+			if err := thread.chargeBytes(n); err != nil {
+				return nil, excess(err, "str: bytes value exceeds the size limit")
+			}
+		}
 		return String(utf8Transcode(string(x))), nil
 	default:
 		// Report an error if a value's string form exceeds the size bound
 		// (writeValue stops at the limit, so only a bounded form reaches it).
+		limit := thread.stringLimit()
 		buf := new(strings.Builder)
-		writeValueLimit(buf, x, nil, thread.stringLimit())
+		if code := writeValueLimit(buf, x, nil, limit); code != writeOK {
+			return nil, thread.formErr(code, limit, "str", "str: value's string form exceeds the size limit")
+		}
 		out := buf.String()
 		if err := thread.chargeBytes(len(out)); err != nil {
 			return nil, excess(err, "str: value's string form exceeds the size limit")
 		}
 		return String(out), nil
 	}
+}
+
+// utf8TranscodedLen returns len(utf8Transcode(s)) without building it.
+func utf8TranscodedLen(s string) int {
+	if utf8.ValidString(s) {
+		return len(s)
+	}
+	n := 0
+	for _, r := range s {
+		n += utf8.RuneLen(r)
+	}
+	return n
 }
 
 // utf8Transcode returns the UTF-8-to-UTF-8 transcoding of s.
@@ -1220,16 +1343,24 @@ func tuple(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 	defer iter.Done()
 	var elems Tuple
 	n := Len(iterable)
+	// The elements if their number is known; else the header now and the
+	// elements one by one, below.
+	var cerr error
+	if n >= 0 {
+		cerr = thread.chargeTuple(n)
+	} else {
+		cerr = thread.charge(allocBaseTuple, allocBaseTuple)
+	}
+	if cerr != nil {
+		return nil, excess(cerr, "tuple: excessive size (%d elements)", n)
+	}
 	if n > 0 {
-		if err := thread.chargeValues(n); err != nil {
-			return nil, excess(err, "tuple: excessive size (%d elements)", n)
-		}
 		elems = make(Tuple, 0, n) // preallocate if length is known
 	}
 	var x Value
 	for iter.Next(&x) {
 		if n < 0 {
-			if err := thread.chargeOne(len(elems), allocBytesPerValue); err != nil {
+			if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {
 				return nil, excess(err, "tuple: excessive size (over %d elements)", maxAlloc)
 			}
 		}
@@ -1275,12 +1406,15 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		}
 	}
 	var result []Value
-	// A row is a slot of the result and a tuple of cols values.
-	rowBytes := allocBytesPerValue * (1 + uint64(cols))
+	// A row is a slot of the result and a tuple of cols values: the size is
+	// rows * cols values (and rows slots), whatever rows alone is, so a
+	// zip of many ranges is refused before anything is made.
+	rowBytes := zipRowBytes(cols)
 	if rows >= 0 {
 		// length known
-		if err := thread.charge(uint64(rows), satMul(uint64(rows), rowBytes)); err != nil {
-			return nil, excess(err, "zip: excessive size (%d rows)", rows)
+		b := satAdd(allocBaseList, satMul(uint64(rows), rowBytes))
+		if err := thread.charge(b, b); err != nil {
+			return nil, excess(err, "zip: excessive size (%d rows of %d)", rows, cols)
 		}
 		result = make([]Value, rows)
 		array := make(Tuple, cols*rows) // allocate a single backing array
@@ -1293,7 +1427,10 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 			result[i] = tuple
 		}
 	} else {
-		// length not known
+		// length not known: the list now, and each row as it is made
+		if err := thread.chargeValues(0); err != nil {
+			return nil, excess(err, "zip: excessive size")
+		}
 	outer:
 		for {
 			tuple := make(Tuple, cols)
@@ -1302,7 +1439,7 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 					break outer
 				}
 			}
-			if err := thread.charge(uint64(len(result))+1, rowBytes); err != nil {
+			if err := thread.charge(satMul(uint64(len(result))+1, rowBytes), rowBytes); err != nil {
 				return nil, excess(err, "zip: excessive size (over %d rows)", maxAlloc)
 			}
 			result = append(result, tuple)
@@ -1343,7 +1480,7 @@ func dict_items(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 		return nil, err
 	}
 	recv := b.Receiver().(*Dict)
-	if err := thread.charge(uint64(recv.Len()), satMul(uint64(recv.Len()), allocBytesPerItem)); err != nil {
+	if err := thread.chargeItems(recv.Len()); err != nil {
 		return nil, excess(err, "items: excessive size (%d entries)", recv.Len())
 	}
 	items := recv.Items()
@@ -1400,21 +1537,27 @@ func dict_popitem(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, err
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#dict·setdefault
-func dict_setdefault(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+func dict_setdefault(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var key, dflt Value = nil, None
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &key, &dflt); err != nil {
 		return nil, err
 	}
 	dict := b.Receiver().(*Dict)
-	if v, ok, err := dict.Get(key); err != nil {
+	v, ok, err := dict.Get(key)
+	if err != nil {
 		return nil, nameErr(b, err)
-	} else if ok {
-		return v, nil
-	} else if err := dict.SetKey(key, dflt); err != nil {
-		return nil, nameErr(b, err)
-	} else {
-		return dflt, nil
 	}
+	if ok {
+		return v, nil
+	}
+	before := dict.Len()
+	if err := dict.SetKey(key, dflt); err != nil {
+		return nil, nameErr(b, err)
+	}
+	if err := thread.chargeNewEntry(dict, before); err != nil {
+		return nil, err
+	}
+	return dflt, nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#dict·update
@@ -1422,7 +1565,7 @@ func dict_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 	if len(args) > 1 {
 		return nil, fmt.Errorf("update: got %d arguments, want at most 1", len(args))
 	}
-	if err := updateDict(thread, b.Receiver().(*Dict), args, kwargs); err != nil {
+	if err := updateDict(thread, b.Receiver().(*Dict), args, kwargs, false); err != nil {
 		return nil, prefixErr("update", err)
 	}
 	return None, nil
@@ -1435,7 +1578,7 @@ func dict_values(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 	}
 	// The values are collected through Items: a slot and a pair per entry.
 	recv := b.Receiver().(*Dict)
-	if err := thread.charge(uint64(recv.Len()), satMul(uint64(recv.Len()), allocBytesPerItem)); err != nil {
+	if err := thread.chargeItems(recv.Len()); err != nil {
 		return nil, excess(err, "values: excessive size (%d entries)", recv.Len())
 	}
 	items := recv.Items()
@@ -1920,21 +2063,21 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 				// Starlark does not support Python's x.y or a[i] syntaxes,
 				// or nested use of {...}.
 				if strings.Contains(name, ".") {
-					return nil, fmt.Errorf("format: attribute syntax x.y is not supported in replacement fields: %s", name)
+					return nil, fmt.Errorf("format: attribute syntax x.y is not supported in replacement fields: %s", errStr(name))
 				}
 				if strings.Contains(name, "[") {
-					return nil, fmt.Errorf("format: element syntax a[i] is not supported in replacement fields: %s", name)
+					return nil, fmt.Errorf("format: element syntax a[i] is not supported in replacement fields: %s", errStr(name))
 				}
 				if strings.Contains(name, "{") {
 					return nil, fmt.Errorf("format: nested replacement fields not supported")
 				}
-				return nil, fmt.Errorf("format: keyword %s not found", name)
+				return nil, fmt.Errorf("format: keyword %s not found", errStr(name))
 			}
 		}
 
 		if spec != "" {
 			// Starlark does not support Python's format_spec features.
-			return nil, fmt.Errorf("format spec features not supported in replacement fields: %s", spec)
+			return nil, fmt.Errorf("format spec features not supported in replacement fields: %s", errStr(spec))
 		}
 
 		switch conv {
@@ -1944,13 +2087,15 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 					return nil, thread.refuseBytes(buf.Len()+len(str), "format: excessive result size")
 				}
 				buf.WriteString(str)
-			} else {
-				writeValueLimit(buf, arg, nil, limit)
+			} else if code := writeValueLimit(buf, arg, nil, limit); code != writeOK {
+				return nil, thread.formErr(code, limit, "format", "format: excessive result size")
 			}
 		case "r":
-			writeValueLimit(buf, arg, nil, limit)
+			if code := writeValueLimit(buf, arg, nil, limit); code != writeOK {
+				return nil, thread.formErr(code, limit, "format", "format: excessive result size")
+			}
 		default:
-			return nil, fmt.Errorf("format: unknown conversion %q", conv)
+			return nil, fmt.Errorf("format: unknown conversion %q", errStr(conv))
 		}
 	}
 	if err := thread.chargeBytes(buf.Len()); err != nil {
@@ -2031,6 +2176,10 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 			if err := check(i, x); err != nil {
 				return nil, err
 			}
+			// The elements are collected before they are joined.
+			if err := thread.chargeOne(len(elems), allocBytesPerValue); err != nil {
+				return nil, excess(err, "join: excessive size (over %d elements)", maxAlloc)
+			}
 			elems = append(elems, x)
 		}
 	}
@@ -2047,14 +2196,28 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 	return String(buf.String()), nil
 }
 
+// changesCase reports whether ToLower (from, to = 'A', 'Z') or ToUpper
+// ('a', 'z') of s may return a new string: s has a letter to convert, or a
+// byte outside ASCII, which is converted by the Unicode tables.
+func changesCase(s string, from, to byte) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c >= utf8.RuneSelf || from <= c && c <= to {
+			return true
+		}
+	}
+	return false
+}
+
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·lower
 func string_lower(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
 	s := string(b.Receiver().(String))
-	if err := thread.chargeBytes(len(s)); err != nil {
-		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+	if changesCase(s, 'A', 'Z') { // else the same string is returned
+		if err := thread.chargeBytes(len(s)); err != nil {
+			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+		}
 	}
 	return String(strings.ToLower(s)), nil
 }
@@ -2116,8 +2279,11 @@ func string_replace(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Val
 	// quadratic when both are large. Compute the size before replacing.
 	// (strings.Count counts the empty string as len(recv)+1 runes.)
 	m := strings.Count(recv, old)
-	if count > 0 && count < m {
-		m = count
+	if count >= 0 && count < m {
+		m = count // (count == 0: nothing is replaced)
+	}
+	if m == 0 || old == new {
+		return String(recv), nil // the same string: nothing is allocated
 	}
 	size := uint64(len(recv))
 	if len(new) >= len(old) {
@@ -2253,8 +2419,10 @@ func string_upper(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		return nil, err
 	}
 	s := string(b.Receiver().(String))
-	if err := thread.chargeBytes(len(s)); err != nil {
-		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+	if changesCase(s, 'a', 'z') { // else the same string is returned
+		if err := thread.chargeBytes(len(s)); err != nil {
+			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+		}
 	}
 	return String(strings.ToUpper(s)), nil
 }
@@ -2271,8 +2439,8 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 
 	var res []string
 
-	// The result is a list of up to len(recv) strings, 16 bytes each by
-	// the formula (or more): count the fields first, then check.
+	// The result is a list of up to len(recv) new strings: count the fields
+	// first, then check.
 	// (rsplit on a separator splits the whole string and then joins the
 	// leading fields, so it allocates all of them whatever maxsplit is.)
 	var fields int
@@ -2283,10 +2451,10 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		fields = strings.Count(recv, sep) + 1
 		clamp = b.Name() == "split"
 	}
-	if clamp && maxsplit >= 0 && maxsplit+1 < fields {
+	if clamp && maxsplit >= 0 && maxsplit < fields-1 { // (not maxsplit+1: it overflows)
 		fields = maxsplit + 1
 	}
-	if err := thread.chargeValues(fields); err != nil {
+	if err := thread.chargeNewValues(fields); err != nil {
 		return nil, excess(err, "%s: excessive size (%d elements)", b.Name(), fields)
 	}
 
@@ -2409,7 +2577,7 @@ func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 	if s := string(b.Receiver().(String)); s != "" {
 		// One line per newline, and one more: count before splitting.
 		n := strings.Count(s, "\n") + 1
-		if err := thread.chargeValues(n); err != nil {
+		if err := thread.chargeNewValues(n); err != nil {
 			return nil, excess(err, "splitlines: excessive size (%d elements)", n)
 		}
 		// TODO(adonovan): handle CRLF correctly.
@@ -2430,7 +2598,7 @@ func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·add.
-func set_add(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+func set_add(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var elem Value
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &elem); err != nil {
 		return nil, err
@@ -2446,9 +2614,13 @@ func set_add(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	} else if found {
 		return None, nil
 	}
+	before := recv.Len()
 	err := recv.Insert(elem)
 	if err != nil {
 		return nil, nameErr(b, err)
+	}
+	if err := thread.chargeNewSetEntry(recv, before); err != nil {
+		return nil, err
 	}
 	return None, nil
 }
@@ -2470,7 +2642,7 @@ func set_clear(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 func set_difference(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	// TODO: support multiple others: s.difference(*others)
 	var other Iterable
-	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &other); err != nil {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &other); err != nil {
 		return nil, err
 	}
 	// The result is a copy of the receiver less some elements.
@@ -2490,7 +2662,7 @@ func set_difference(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Val
 func set_intersection(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	// TODO: support multiple others: s.difference(*others)
 	var other Iterable
-	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &other); err != nil {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &other); err != nil {
 		return nil, err
 	}
 	// The result has at most as many elements as the receiver, and as
@@ -2514,7 +2686,7 @@ func set_intersection(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (V
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set_issubset.
 func set_issubset(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var other Iterable
-	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &other); err != nil {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &other); err != nil {
 		return nil, err
 	}
 	iter := other.Iterate()
@@ -2529,7 +2701,7 @@ func set_issubset(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, err
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set_issuperset.
 func set_issuperset(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var other Iterable
-	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &other); err != nil {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &other); err != nil {
 		return nil, err
 	}
 	iter := other.Iterate()
@@ -2598,7 +2770,7 @@ func set_remove(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·symmetric_difference.
 func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var other Iterable
-	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &other); err != nil {
+	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &other); err != nil {
 		return nil, err
 	}
 	// The result has at most the elements of both operands (when the
@@ -2609,7 +2781,15 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 	}
 	iter := other.Iterate()
 	defer iter.Done()
+	var ci *chargedIter
+	if Len(other) < 0 {
+		ci = &chargedIter{Iterator: iter, thread: thread, have: b.Receiver().(*Set).Len(), unit: allocBytesPerEntry}
+		iter = ci
+	}
 	diff, err := b.Receiver().(*Set).SymmetricDifference(iter)
+	if ci != nil && ci.err != nil {
+		return nil, ci.err
+	}
 	if err != nil {
 		return nil, nameErr(b, err)
 	}
@@ -2624,7 +2804,7 @@ func set_union(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 		return nil, excess(err, "union: excessive size (%d elements)", n)
 	}
 	receiverSet := b.Receiver().(*Set).clone()
-	if err := setUpdate(receiverSet, args, kwargs); err != nil {
+	if err := setUpdate(thread, receiverSet, args, kwargs); err != nil {
 		return nil, nameErr(b, err)
 	}
 	return receiverSet, nil
@@ -2634,12 +2814,13 @@ func set_union(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 func set_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	// The arguments are copied into the receiver in one step: charge their
 	// elements (an upper bound: duplicates are charged).
+	recv := b.Receiver().(*Set)
 	if n := setUpdateLen(args); n > 0 {
-		if err := thread.chargeEntries(n); err != nil {
+		if err := thread.charge(dictBytes(recv.Len()+n), satMul(uint64(n), allocBytesPerEntry)); err != nil {
 			return nil, excess(err, "update: excessive size (%d elements)", n)
 		}
 	}
-	if err := setUpdate(b.Receiver().(*Set), args, kwargs); err != nil {
+	if err := setUpdate(thread, recv, args, kwargs); err != nil {
 		return nil, nameErr(b, err)
 	}
 	return None, nil
@@ -2683,20 +2864,26 @@ func string_find_impl(b *Builtin, args Tuple, kwargs []Tuple, allowError, last b
 //
 // The entries of the argument are charged to thread, as an upper bound
 // (duplicate keys are charged): the argument is copied in one step.
-func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error {
+func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh bool) error {
+	// base is charged with the first entries of a dict that dict() makes
+	// (and not charged for dict.update, where the dict exists).
+	base := uint64(0)
+	if fresh {
+		base = allocBaseDict
+	}
 	if len(updates) == 1 {
 		switch updates := updates[0].(type) {
 		case IterableMapping:
 			// Iterate over dict's key/value pairs, not just keys.
 			n := Len(updates)
 			if n >= 0 {
-				if err := thread.chargeEntries(n); err != nil {
+				if err := thread.charge(dictBytes(dict.Len()+n), satAdd(base, satMul(uint64(n), allocBytesPerEntry))); err != nil {
 					return excess(err, "excessive size (%d entries)", n)
 				}
 			}
 			items := updates.Items()
 			if n < 0 {
-				if err := thread.chargeEntries(len(items)); err != nil {
+				if err := thread.charge(dictBytes(dict.Len()+len(items)), satAdd(base, satMul(uint64(len(items)), allocBytesPerEntry))); err != nil {
 					return excess(err, "excessive size (%d entries)", len(items))
 				}
 			}
@@ -2714,8 +2901,13 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error
 			defer iter.Done()
 			n := Len(updates)
 			if n >= 0 {
-				if err := thread.chargeEntries(n); err != nil {
+				if err := thread.charge(dictBytes(dict.Len()+n), satAdd(base, satMul(uint64(n), allocBytesPerEntry))); err != nil {
 					return excess(err, "excessive size (%d entries)", n)
+				}
+			}
+			if n < 0 && fresh {
+				if err := thread.chargeEntries(0); err != nil {
+					return excess(err, "excessive size")
 				}
 			}
 			var pair Value
@@ -2761,7 +2953,7 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error
 		for _, kv := range kwargs {
 			k := kv[0].(String)
 			if keys[k] {
-				return fmt.Errorf("duplicate keyword arg: %v", k)
+				return fmt.Errorf("duplicate keyword arg: %s", errValue(k))
 			}
 			keys[k] = true
 		}
@@ -2780,7 +2972,7 @@ func setUpdateLen(args Tuple) int {
 	return n
 }
 
-func setUpdate(s *Set, args Tuple, kwargs []Tuple) error {
+func setUpdate(thread *Thread, s *Set, args Tuple, kwargs []Tuple) error {
 	if len(kwargs) > 0 {
 		return errors.New("does not accept keyword arguments")
 	}
@@ -2793,7 +2985,16 @@ func setUpdate(s *Set, args Tuple, kwargs []Tuple) error {
 		if err := func() error {
 			iter := iterable.Iterate()
 			defer iter.Done()
-			return s.InsertAll(iter)
+			if Len(arg) >= 0 {
+				return s.InsertAll(iter) // charged by the caller
+			}
+			// Unknown length: charge each element as it comes.
+			ci := &chargedIter{Iterator: iter, thread: thread, have: s.Len(), unit: allocBytesPerEntry}
+			err := s.InsertAll(ci)
+			if ci.err != nil {
+				return ci.err
+			}
+			return err
 		}(); err != nil {
 			return err
 		}

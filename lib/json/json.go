@@ -88,9 +88,16 @@ import (
 // soon as its result would exceed the budget or the limit of one operation:
 // encode of a value with shared substructure (x = [x, x] repeated) has an
 // output exponential in the number of repetitions, and indent with a long
-// indent string has an output of depth times that string per line. A decoded
-// string is charged by its length, a list by 16 bytes per element, a dict by
-// 96 bytes per entry, a big integer by its digits.
+// indent string has an output of depth times that string per line. The size
+// of a string or number is computed before it is written. A decoded string is
+// charged by its length, a list and a dict by the formulas of
+// starlark.ListAllocBytes and DictAllocBytes (an empty one is not free), a big
+// integer by its digits.
+//
+// Nesting: encode and decode refuse a value nested more than
+// starlark.MaxValueDepth levels, with an error that is not turned into
+// decode's default value: the recursion would overflow the Go stack, which is
+// fatal.
 var Module = &starlarkstruct.Module{
 	Name: "json",
 	Members: starlark.StringDict{
@@ -126,24 +133,50 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return true
 	}
 
+	// tooBig reports whether n more bytes would outgrow the headroom (and
+	// records the refusal in stop). The size of a leaf is computed before it
+	// is written: a string of 16 MiB of "\x00" quotes to 96 MiB.
+	tooBig := func(n int) bool {
+		if uint64(buf.Len())+uint64(n) <= headroom {
+			return false
+		}
+		stop = thread.ChargeAlloc(uint64(buf.Len()) + uint64(n))
+		if stop == nil {
+			stop = errors.New("excessive size")
+		}
+		return true
+	}
+
 	var quoteSpace [128]byte
-	quote := func(s string) {
+	quote := func(s string) bool {
 		// Non-trivial escaping is handled by Go's encoding/json.
 		if isPrintableASCII(s) {
+			if tooBig(quotedLenASCII(s)) {
+				return false
+			}
 			buf.Write(strconv.AppendQuote(quoteSpace[:0], s))
 		} else {
+			if tooBig(quotedLen(s)) {
+				return false
+			}
 			// TODO(adonovan): opt: RFC 8259 mandates UTF-8 for JSON.
 			// Can we avoid this call?
 			data, _ := json.Marshal(s)
 			buf.Write(data)
 		}
+		return true
 	}
 
 	path := make([]unsafe.Pointer, 0, 8)
 
-	var emit func(x starlark.Value) error
-	emit = func(x starlark.Value) error {
+	var emit func(x starlark.Value, depth int) error
+	emit = func(x starlark.Value, depth int) error {
 		if overflowed() {
+			return stop
+		}
+		if depth > starlark.MaxValueDepth {
+			// A value this deep would overflow the Go stack, which is fatal.
+			stop = fmt.Errorf("value is nested more than %d levels deep", starlark.MaxValueDepth)
 			return stop
 		}
 
@@ -167,6 +200,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			if err != nil {
 				return err
 			}
+			if tooBig(len(data)) {
+				return stop
+			}
 			buf.Write(data)
 
 		case starlark.NoneType:
@@ -180,6 +216,12 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			}
 
 		case starlark.Int:
+			if _, small := x.Int64(); !small {
+				// A big integer has at most BitLen/3+1 digits.
+				if tooBig(x.BigInt().BitLen()/3 + 2) {
+					return stop
+				}
+			}
 			fmt.Fprint(buf, x)
 
 		case starlark.Float:
@@ -190,7 +232,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			buf.WriteString(x.String())
 
 		case starlark.String:
-			quote(string(x))
+			if !quote(string(x)) {
+				return stop
+			}
 
 		case starlark.IterableMapping:
 			// e.g. dict (must have string keys)
@@ -209,10 +253,15 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					buf.WriteByte(',')
 				}
 				k, _ := starlark.AsString(item[0])
-				quote(k)
+				if !quote(k) {
+					return stop
+				}
 				buf.WriteByte(':')
-				if err := emit(item[1]); err != nil {
-					return fmt.Errorf("in %s key %s: %v", x.Type(), item[0], err)
+				if err := emit(item[1], depth+1); err != nil {
+					if stop != nil {
+						return stop // not wrapped: the message would grow with the depth
+					}
+					return fmt.Errorf("in %s key %s: %v", x.Type(), starlark.String(short(k)).String(), err)
 				}
 			}
 			buf.WriteByte('}')
@@ -227,7 +276,10 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				if i > 0 {
 					buf.WriteByte(',')
 				}
-				if err := emit(elem); err != nil {
+				if err := emit(elem, depth+1); err != nil {
+					if stop != nil {
+						return stop
+					}
 					return fmt.Errorf("at %s index %d: %v", x.Type(), i, err)
 				}
 			}
@@ -252,10 +304,15 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				if i > 0 {
 					buf.WriteByte(',')
 				}
-				quote(name)
+				if !quote(name) {
+					return stop
+				}
 				buf.WriteByte(':')
-				if err := emit(v); err != nil {
-					return fmt.Errorf("in field .%s: %v", name, err)
+				if err := emit(v, depth+1); err != nil {
+					if stop != nil {
+						return stop
+					}
+					return fmt.Errorf("in field .%s: %v", short(name), err)
 				}
 			}
 			buf.WriteByte('}')
@@ -266,7 +323,7 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return nil
 	}
 
-	if err := emit(x); err != nil {
+	if err := emit(x, 0); err != nil {
 		if stop != nil {
 			return nil, allocErr(b, stop)
 		}
@@ -276,6 +333,66 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return nil, allocErr(b, err)
 	}
 	return starlark.String(buf.String()), nil
+}
+
+// short cuts a string that is embedded in an error message.
+func short(s string) string {
+	const max = 96
+	if len(s) <= max {
+		return s
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...<" + strconv.Itoa(len(s)) + " bytes>"
+}
+
+// quotedLenASCII is len(strconv.AppendQuote(nil, s)) for a string of
+// printable ASCII: the quotes, and a backslash before " and \.
+func quotedLenASCII(s string) int {
+	n := len(s) + 2
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"', '\\':
+			n++
+		case 0x7f:
+			n += 3 // strconv.Quote writes \x7f
+		}
+	}
+	return n
+}
+
+// quotedLen is len(json.Marshal(s)): what encoding/json writes for a string
+// (with HTML escaping, which Marshal applies).
+func quotedLen(s string) int {
+	n := 2
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			switch {
+			case b == '"' || b == '\\' || b == '\b' || b == '\f' || b == '\n' || b == '\r' || b == '\t':
+				n += 2
+			case b < 0x20 || b == '<' || b == '>' || b == '&':
+				n += 6
+			default:
+				n++
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			n += 6 // \ufffd
+		case r == '\u2028' || r == '\u2029':
+			n += 6
+		default:
+			n += size
+		}
+		i += size
+	}
+	return n
 }
 
 // allocErr returns the error of a refused allocation of the built-in b: a
@@ -460,6 +577,16 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			panic(refusal{allocErr(b, err)})
 		}
 	}
+	// The nesting of arrays and objects is bounded: parse is recursive, and
+	// a document nested 1.5 million deep would overflow the Go stack, which
+	// is fatal. Like a refused allocation, it is an error, not a syntax error.
+	depth := 0
+	enter := func() {
+		depth++
+		if depth > starlark.MaxValueDepth {
+			panic(refusal{fmt.Errorf("%s: value is nested more than %d levels deep", b.Name(), starlark.MaxValueDepth)})
+		}
+	}
 
 	i := 0
 
@@ -552,11 +679,14 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			var elems []starlark.Value
 
 			i++ // '['
+			enter()
+			charge(starlark.ListAllocBytes(0)) // the list, even if it is empty
 			b = next()
 			if b != ']' {
 				for {
 					elem := parse()
-					charge(16) // one list slot
+					// one list slot
+					charge(starlark.ListAllocBytes(len(elems)+1) - starlark.ListAllocBytes(len(elems)))
 					elems = append(elems, elem)
 					b = next()
 					if b != ',' {
@@ -569,6 +699,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				}
 			}
 			i++ // ']'
+			depth--
 			return starlark.NewList(elems)
 
 		case '{':
@@ -576,6 +707,8 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			dict := new(starlark.Dict)
 
 			i++ // '{'
+			enter()
+			charge(starlark.DictAllocBytes(0)) // the dict, even if it is empty
 			b = next()
 			if b != '}' {
 				for {
@@ -589,7 +722,8 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					}
 					i++ // ':'
 					value := parse()
-					charge(96)              // one dict entry
+					// one dict entry
+					charge(starlark.DictAllocBytes(dict.Len()+1) - starlark.DictAllocBytes(dict.Len()))
 					dict.SetKey(key, value) // can't fail
 					b = next()
 					if b != ',' {
@@ -602,6 +736,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				}
 			}
 			i++ // '}'
+			depth--
 			return dict
 
 		default:

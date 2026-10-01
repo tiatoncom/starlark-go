@@ -830,6 +830,13 @@ type Builtin struct {
 	name string
 	fn   func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	recv Value // for bound methods (e.g. "".startswith)
+
+	// accounts is set for built-ins of this package that charge the
+	// allocation budget themselves, or return a value that already exists
+	// (the argument, an element, a substring that shares memory): Call does
+	// not charge their result. It is not exported, so a built-in of the host
+	// is never exempt: Call charges what it returns. See alloc.go.
+	accounts bool
 }
 
 func (b *Builtin) Name() string { return b.name }
@@ -872,7 +879,7 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 //
 //	"abc".index("a")
 func (b *Builtin) BindReceiver(recv Value) *Builtin {
-	return &Builtin{name: b.name, fn: b.fn, recv: recv}
+	return &Builtin{name: b.name, fn: b.fn, recv: recv, accounts: b.accounts}
 }
 
 // A *Dict represents a Starlark dictionary.
@@ -901,7 +908,7 @@ func (d *Dict) Iterate() Iterator                               { return d.ht.it
 func (d *Dict) SetKey(k, v Value) error                         { return d.ht.insert(k, v) }
 func (d *Dict) String() string                                  { return toString(d) }
 func (d *Dict) Type() string                                    { return "dict" }
-func (d *Dict) Freeze()                                         { d.ht.freeze() }
+func (d *Dict) Freeze()                                         { freezeTree(d) }
 func (d *Dict) Truth() Bool                                     { return d.Len() > 0 }
 func (d *Dict) Hash() (uint32, error)                           { return 0, fmt.Errorf("unhashable type: dict") }
 
@@ -959,14 +966,7 @@ type List struct {
 // Callers should not subsequently modify elems.
 func NewList(elems []Value) *List { return &List{elems: elems} }
 
-func (l *List) Freeze() {
-	if !l.frozen {
-		l.frozen = true
-		for _, elem := range l.elems {
-			elem.Freeze()
-		}
-	}
-}
+func (l *List) Freeze() { freezeTree(l) }
 
 // checkMutable reports an error if the list should not be mutated.
 // verb+" list" should describe the operation.
@@ -1122,11 +1122,7 @@ func (t Tuple) Slice(start, end, step int) Value {
 
 func (t Tuple) Iterate() Iterator { return &tupleIterator{elems: t} }
 
-func (t Tuple) Freeze() {
-	for _, elem := range t {
-		elem.Freeze()
-	}
-}
+func (t Tuple) Freeze()        { freezeTree(t) }
 func (t Tuple) String() string { return toString(t) }
 func (t Tuple) Type() string   { return "tuple" }
 func (t Tuple) Truth() Bool    { return len(t) > 0 }
@@ -1147,11 +1143,24 @@ func (t Tuple) Has(y Value) (bool, error) {
 	return false, nil
 }
 
-func (t Tuple) Hash() (uint32, error) {
+func (t Tuple) Hash() (uint32, error) { return t.hash(0) }
+
+// hash is Hash at the given nesting depth: a tuple nested deeper than
+// MaxValueDepth is refused (the recursion would overflow the Go stack).
+func (t Tuple) hash(depth int) (uint32, error) {
+	if depth > MaxValueDepth {
+		return 0, fmt.Errorf("tuple is nested more than %d levels deep", MaxValueDepth)
+	}
 	// Use same algorithm as Python.
 	var x, mult uint32 = 0x345678, 1000003
 	for _, elem := range t {
-		y, err := elem.Hash()
+		var y uint32
+		var err error
+		if et, ok := elem.(Tuple); ok {
+			y, err = et.hash(depth + 1)
+		} else {
+			y, err = elem.Hash()
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -1198,7 +1207,7 @@ func (s *Set) Len() int                               { return int(s.ht.len) }
 func (s *Set) Iterate() Iterator                      { return s.ht.iterate() }
 func (s *Set) String() string                         { return toString(s) }
 func (s *Set) Type() string                           { return "set" }
-func (s *Set) Freeze()                                { s.ht.freeze() }
+func (s *Set) Freeze()                                { freezeTree(s) }
 func (s *Set) Hash() (uint32, error)                  { return 0, fmt.Errorf("unhashable type: set") }
 func (s *Set) Truth() Bool                            { return s.Len() > 0 }
 
@@ -1366,8 +1375,96 @@ func (s *Set) SymmetricDifference(other Iterator) (Value, error) {
 	return diff, nil
 }
 
+// freezeTree freezes root and everything reachable from it through lists,
+// tuples, dicts and sets. It uses an explicit stack of the containers being
+// walked, not recursion: a value nested 1.4 million deep (t = (t,) in a loop)
+// would overflow the Go stack, which is fatal. The stack holds one frame per
+// level, and allocates nothing for a flat container. Other values (a host
+// type, a function, a cell) are frozen by their own Freeze method.
+func freezeTree(root Value) {
+	type frame struct {
+		elems []Value // the rest of a list or tuple, or
+		e     *entry  // the next entry of a dict or set,
+		val   bool    // whose value is the next to visit
+	}
+	var stack []frame
+	visit := func(v Value) {
+		switch v := v.(type) {
+		case nil, NoneType, Bool, Int, Float, String, Bytes:
+			// immutable
+		case *List:
+			if !v.frozen {
+				v.frozen = true
+				if len(v.elems) > 0 {
+					stack = append(stack, frame{elems: v.elems})
+				}
+			}
+		case Tuple:
+			if len(v) > 0 {
+				stack = append(stack, frame{elems: v})
+			}
+		case *Dict:
+			if !v.ht.frozen {
+				v.ht.frozen = true
+				if v.ht.head != nil {
+					stack = append(stack, frame{e: v.ht.head})
+				}
+			}
+		case *Set:
+			if !v.ht.frozen {
+				v.ht.frozen = true
+				if v.ht.head != nil {
+					stack = append(stack, frame{e: v.ht.head})
+				}
+			}
+		default:
+			v.Freeze()
+		}
+	}
+	visit(root)
+	for len(stack) > 0 {
+		top := &stack[len(stack)-1]
+		var next Value
+		switch {
+		case top.e == nil && len(top.elems) == 0:
+			stack = stack[:len(stack)-1]
+			continue
+		case top.e != nil:
+			if !top.val {
+				next = top.e.key
+				top.val = true
+			} else {
+				next = top.e.value
+				top.val = false
+				top.e = top.e.next
+			}
+		default:
+			next = top.elems[0]
+			top.elems = top.elems[1:]
+		}
+		visit(next) // may grow stack: top is not used after
+	}
+}
+
 // writeValueOverflowMark ends a string form that hit the size bound.
 const writeValueOverflowMark = "...<truncated at size limit>"
+
+// writeValueDeepMark replaces a value nested deeper than MaxValueDepth.
+const writeValueDeepMark = "...<nested too deeply>"
+
+// MaxValueDepth is the deepest nesting of containers that the recursive
+// operations of this package (the string form, Hash, Freeze, json) descend
+// into. Go's stack is 1 GiB and these functions take ~700 bytes a level, so a
+// value nested 1.4 million deep (t = (t,) in a loop: 6 steps a level, well
+// within the step limit) is a "stack overflow", which is fatal and cannot be
+// recovered. At 10000 levels (7 MiB of stack) no legitimate value is
+// refused: a proto message, a JSON document or a state tree is a few dozen
+// levels deep, and the engine's own limit on state depth is far lower.
+const MaxValueDepth = 10000
+
+// A leaf that does not fit in what remains of the limit is cut at this many
+// bytes in an error message (see errValue).
+const errValueLimit = 96
 
 // toString returns the string form of value v.
 // It may be more efficient than v.String() for larger values.
@@ -1377,6 +1474,38 @@ func toString(v Value) string {
 	return buf.String()
 }
 
+// errValue returns the string form of v for an error message: at most about
+// errValueLimit bytes, cut and marked if it is longer. The text of an error
+// that embeds a value of the script (a dict key, a string that fails to
+// parse) must not be as large as the value, which can be megabytes.
+func errValue(v Value) string {
+	buf := new(strings.Builder)
+	w := valueWriter{out: buf, limit: errValueLimit, cut: true}
+	w.write(v, nil, 0)
+	return buf.String()
+}
+
+// errStr returns s cut to errValueLimit bytes and marked, for an error
+// message that embeds a string of the script (a name, a literal that fails
+// to parse).
+func errStr(s string) string {
+	if len(s) <= errValueLimit {
+		return s
+	}
+	cut := errValueLimit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "...<" + strconv.Itoa(len(s)) + " bytes>"
+}
+
+// The results of writeValueLimit.
+const (
+	writeOK    = iota // the whole form was written
+	writeLimit        // the form reached the limit, or a leaf would have
+	writeDeep         // the value is nested deeper than MaxValueDepth
+)
+
 // writeValue writes x to out.
 //
 // path is used to detect cycles.
@@ -1384,112 +1513,182 @@ func toString(v Value) string {
 // (These are the only potentially cyclic structures.)
 // Callers should generally pass nil for path.
 // It is safe to re-use the same path slice for multiple calls.
+//
+// The form is bounded by maxAlloc (and by MaxValueDepth): where it is cut it
+// ends with a mark, since this function reports no error (it implements the
+// String method of values).
 func writeValue(out *strings.Builder, x Value, path []Value) {
 	writeValueLimit(out, x, path, maxAlloc)
 }
 
-// writeValueLimit is writeValue with an explicit size limit: it stops
-// descending once out holds limit bytes or more, so only a bounded form
-// reaches that length. A caller that can report errors treats an output of
-// limit or more bytes as too large; limit is at most maxAlloc, and a thread's
-// stringLimit when the form is to be charged to its budget.
-func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) {
-	// A shared (non-cyclic) subgraph can expand exponentially in the
-	// string form. Stop at the size limit; callers that can report errors
-	// detect the marked output.
-	if out.Len() >= limit {
-		if !strings.Contains(out.String()[out.Len()-min(out.Len(), 64):], writeValueOverflowMark) {
-			out.WriteString(writeValueOverflowMark)
+// writeValueLimit is writeValue with an explicit size limit. It stops
+// descending once out holds limit bytes or more, and does not write a leaf
+// (a string, bytes or big int) that would take it there, so that the form is
+// never built larger than limit. A caller that can report errors treats a
+// result other than writeOK as too large (writeLimit), or too deep.
+// limit is at most maxAlloc, and a thread's stringLimit when the form is to
+// be charged to its budget.
+func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) int {
+	w := valueWriter{out: out, limit: limit}
+	w.write(x, path, 0)
+	return w.result
+}
+
+type valueWriter struct {
+	out    *strings.Builder
+	limit  int
+	cut    bool // cut a leaf that does not fit, instead of refusing it
+	result int
+}
+
+// fits reports whether n more bytes keep the form below the limit.
+func (w *valueWriter) fits(n int) bool { return w.out.Len()+n < w.limit }
+
+// full records that the limit was reached and marks the form (once).
+func (w *valueWriter) full() {
+	if w.result == writeOK {
+		w.result = writeLimit
+	}
+	if !strings.Contains(w.out.String()[w.out.Len()-min(w.out.Len(), 64):], writeValueOverflowMark) {
+		w.out.WriteString(writeValueOverflowMark)
+	}
+}
+
+// leaf writes the string form s of a leaf of known length n if it fits.
+func (w *valueWriter) leaf(n int, form func() string, cut func(room int) string) {
+	switch {
+	case w.fits(n):
+		w.out.WriteString(form())
+	case w.cut:
+		if room := w.limit - w.out.Len(); room > 0 {
+			w.out.WriteString(cut(room))
 		}
+		w.full()
+	default:
+		w.full()
+	}
+}
+
+func (w *valueWriter) write(x Value, path []Value, depth int) {
+	if w.out.Len() >= w.limit {
+		w.full()
+		return
+	}
+	if depth > MaxValueDepth {
+		w.result = writeDeep
+		w.out.WriteString(writeValueDeepMark)
 		return
 	}
 	switch x := x.(type) {
 	case nil:
-		out.WriteString("<nil>") // indicates a bug
+		w.out.WriteString("<nil>") // indicates a bug
 
 	// These four cases are duplicates of T.String(), for efficiency.
 	case NoneType:
-		out.WriteString("None")
+		w.out.WriteString("None")
 
 	case Int:
-		out.WriteString(x.String())
+		if _, big := x.get(); big != nil {
+			// The decimal form has at most BitLen/3+1 digits.
+			n := big.BitLen()/3 + 2
+			w.leaf(n, x.String, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
+		} else {
+			w.out.WriteString(x.String())
+		}
 
 	case Bool:
 		if x {
-			out.WriteString("True")
+			w.out.WriteString("True")
 		} else {
-			out.WriteString("False")
+			w.out.WriteString("False")
 		}
 
 	case String:
-		out.WriteString(syntax.Quote(string(x), false))
+		w.leaf(syntax.QuoteLen(string(x), false), func() string { return syntax.Quote(string(x), false) },
+			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), false) })
+
+	case Bytes:
+		w.leaf(syntax.QuoteLen(string(x), true), x.String,
+			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), true) })
 
 	case *List:
-		out.WriteByte('[')
+		w.out.WriteByte('[')
 		if pathContains(path, x) {
-			out.WriteString("...") // list contains itself
+			w.out.WriteString("...") // list contains itself
 		} else {
 			for i, elem := range x.elems {
 				if i > 0 {
-					out.WriteString(", ")
+					w.out.WriteString(", ")
 				}
-				writeValueLimit(out, elem, append(path, x), limit)
+				w.write(elem, append(path, x), depth+1)
+				if w.result != writeOK {
+					return
+				}
 			}
 		}
-		out.WriteByte(']')
+		w.out.WriteByte(']')
 
 	case Tuple:
-		out.WriteByte('(')
+		w.out.WriteByte('(')
 		for i, elem := range x {
 			if i > 0 {
-				out.WriteString(", ")
+				w.out.WriteString(", ")
 			}
-			writeValueLimit(out, elem, path, limit)
+			w.write(elem, path, depth+1)
+			if w.result != writeOK {
+				return
+			}
 		}
 		if len(x) == 1 {
-			out.WriteByte(',')
+			w.out.WriteByte(',')
 		}
-		out.WriteByte(')')
+		w.out.WriteByte(')')
 
 	case *Function:
-		fmt.Fprintf(out, "<function %s>", x.Name())
+		fmt.Fprintf(w.out, "<function %s>", x.Name())
 
 	case *Builtin:
 		if x.recv != nil {
-			fmt.Fprintf(out, "<built-in method %s of %s value>", x.Name(), x.recv.Type())
+			fmt.Fprintf(w.out, "<built-in method %s of %s value>", x.Name(), x.recv.Type())
 		} else {
-			fmt.Fprintf(out, "<built-in function %s>", x.Name())
+			fmt.Fprintf(w.out, "<built-in function %s>", x.Name())
 		}
 
 	case *Dict:
-		out.WriteByte('{')
+		w.out.WriteByte('{')
 		if pathContains(path, x) {
-			out.WriteString("...") // dict contains itself
+			w.out.WriteString("...") // dict contains itself
 		} else {
 			sep := ""
 			for e := x.ht.head; e != nil; e = e.next {
 				k, v := e.key, e.value
-				out.WriteString(sep)
-				writeValueLimit(out, k, path, limit)
-				out.WriteString(": ")
-				writeValueLimit(out, v, append(path, x), limit) // cycle check
+				w.out.WriteString(sep)
+				w.write(k, path, depth+1)
+				w.out.WriteString(": ")
+				w.write(v, append(path, x), depth+1) // cycle check
+				if w.result != writeOK {
+					return
+				}
 				sep = ", "
 			}
 		}
-		out.WriteByte('}')
+		w.out.WriteByte('}')
 
 	case *Set:
-		out.WriteString("set([")
+		w.out.WriteString("set([")
 		for e := x.ht.head; e != nil; e = e.next {
 			if e != x.ht.head {
-				out.WriteString(", ")
+				w.out.WriteString(", ")
 			}
-			writeValueLimit(out, e.key, path, limit)
+			w.write(e.key, path, depth+1)
+			if w.result != writeOK {
+				return
+			}
 		}
-		out.WriteString("])")
+		w.out.WriteString("])")
 
 	default:
-		out.WriteString(x.String())
+		w.out.WriteString(x.String())
 	}
 }
 

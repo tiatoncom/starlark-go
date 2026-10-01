@@ -307,3 +307,37 @@ func Quote(s string, b bool) string {
 	buf = append(buf, '"')
 	return string(buf)
 }
+
+// QuoteLen returns len(Quote(s, b)) without building the quoted string: the
+// length of the string form of a string or bytes value, which a caller that
+// bounds the size of a string form checks before it writes the form.
+func QuoteLen(s string, b bool) int {
+	n := 2 // the quotes
+	if b {
+		n++ // the b prefix
+	}
+	for width := 0; len(s) > 0; s = s[width:] {
+		r := rune(s[0])
+		width = 1
+		if r >= utf8.RuneSelf {
+			r, width = utf8.DecodeRuneInString(s)
+		}
+		switch {
+		case width == 1 && r == utf8.RuneError:
+			n += 4 // \xXX
+		case r == '"' || r == '\\':
+			n += 2
+		case strconv.IsPrint(r):
+			n += utf8.RuneLen(r)
+		case r == '\a' || r == '\b' || r == '\f' || r == '\n' || r == '\r' || r == '\t' || r == '\v':
+			n += 2
+		case r < ' ' || r == 0x7f:
+			n += 4 // \xXX
+		case r < 0x10000:
+			n += 6 // \uXXXX
+		default:
+			n += 10 // \UXXXXXXXX
+		}
+	}
+	return n
+}

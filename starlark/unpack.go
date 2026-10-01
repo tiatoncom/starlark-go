@@ -134,7 +134,7 @@ kwloop:
 				// found it
 				if defined.set(i) {
 					return fmt.Errorf("%s: got multiple values for keyword argument %s",
-						fnname, name)
+						fnname, errValue(name))
 				}
 
 				if skipNone {
@@ -150,13 +150,13 @@ kwloop:
 				continue kwloop
 			}
 		}
-		err := fmt.Errorf("%s: unexpected keyword argument %s", fnname, name)
+		err := fmt.Errorf("%s: unexpected keyword argument %s", fnname, errValue(name))
 		names := make([]string, 0, nparams)
 		for i := 0; i < nparams; i += 2 {
 			param, _ := paramName(pairs[i])
 			names = append(names, param)
 		}
-		if n := spell.Nearest(string(name), names); n != "" {
+		if n := spell.Nearest(errStr(string(name)), names); n != "" {
 			err = fmt.Errorf("%s (did you mean %s?)", err.Error(), n)
 		}
 		return err

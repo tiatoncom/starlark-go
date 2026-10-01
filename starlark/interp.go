@@ -65,7 +65,7 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	stack := space[nlocals:]          // operand stack
 
 	// Digest arguments and set parameters.
-	err := setArgs(locals, fn, args, kwargs)
+	err := setArgs(thread, locals, fn, args, kwargs)
 	if err != nil {
 		return nil, thread.evalError(err)
 	}
@@ -260,6 +260,12 @@ loop:
 					if err = xdict.ht.checkMutable("apply |= to"); err != nil {
 						break loop
 					}
+					// The entries of y are copied in one step: charge them
+					// (an upper bound: keys already in x are charged too).
+					if err2 := thread.charge(dictBytes(xdict.Len()+ydict.Len()), satMul(uint64(ydict.Len()), allocBytesPerEntry)); err2 != nil {
+						err = excess(err2, "excessive dict update (%d + %d entries)", xdict.Len(), ydict.Len())
+						break loop
+					}
 					xdict.ht.addAll(&ydict.ht) // can't fail
 					z = xdict
 				}
@@ -329,14 +335,14 @@ loop:
 				}
 				// The items are copied: charge before materializing them.
 				if n := Len(kwargs); n >= 0 {
-					if err2 := thread.charge(uint64(n), satMul(uint64(n), allocBytesPerItem)); err2 != nil {
+					if err2 := thread.charge(satMul(uint64(n), allocBytesPerItem), satMul(uint64(n), allocBytesPerItem)); err2 != nil {
 						err = excess(err2, "excessive ** argument (%d items)", n)
 						break loop
 					}
 				}
 				items := dict.Items()
 				if Len(kwargs) < 0 {
-					if err2 := thread.charge(uint64(len(items)), satMul(uint64(len(items)), allocBytesPerItem)); err2 != nil {
+					if err2 := thread.charge(satMul(uint64(len(items)), allocBytesPerItem), satMul(uint64(len(items)), allocBytesPerItem)); err2 != nil {
 						err = excess(err2, "excessive ** argument (%d items)", len(items))
 						break loop
 					}
@@ -377,7 +383,7 @@ loop:
 				// The elements are copied: charge before growing.
 				n := Len(args)
 				if n >= 0 {
-					if err2 := thread.charge(uint64(len(positional))+uint64(n), satMul(uint64(n), allocBytesPerValue)); err2 != nil {
+					if err2 := thread.charge(tupleBytes(len(positional)+n), satMul(uint64(n), allocBytesPerValue)); err2 != nil {
 						iter.Done()
 						err = excess(err2, "excessive * argument (%d elements)", n)
 						break loop
@@ -386,7 +392,7 @@ loop:
 				var elem Value
 				for iter.Next(&elem) {
 					if n < 0 {
-						if err2 := thread.charge(uint64(len(positional))+1, allocBytesPerValue); err2 != nil {
+						if err2 := thread.chargeOne(len(positional), allocBytesPerNewValue); err2 != nil {
 							iter.Done()
 							err = excess(err2, "excessive * argument (over %d elements)", maxAlloc)
 							break loop
@@ -451,8 +457,17 @@ loop:
 			y := stack[sp-2]
 			x := stack[sp-3]
 			sp -= 3
-			err = setIndex(x, y, z)
-			if err != nil {
+			if d, ok := x.(*Dict); ok {
+				// A new entry of a dict is charged (the first few are held
+				// by the inline bucket, which the base of the dict covers).
+				before := d.Len()
+				if err = d.SetKey(y, z); err != nil {
+					break loop
+				}
+				if err = thread.chargeNewEntry(d, before); err != nil {
+					break loop
+				}
+			} else if err = setIndex(x, y, z); err != nil {
 				break loop
 			}
 
@@ -489,6 +504,9 @@ loop:
 			}
 
 		case compile.MAKEDICT:
+			if err = thread.chargeEntries(0); err != nil {
+				break loop
+			}
 			stack[sp] = new(Dict)
 			sp++
 
@@ -503,7 +521,10 @@ loop:
 				break loop
 			}
 			if op == compile.SETDICTUNIQ && dict.Len() == oldlen {
-				err = fmt.Errorf("duplicate key: %v", k)
+				err = fmt.Errorf("duplicate key: %s", errValue(k))
+				break loop
+			}
+			if err = thread.chargeNewEntry(dict, oldlen); err != nil {
 				break loop
 			}
 
@@ -565,6 +586,9 @@ loop:
 
 		case compile.MAKETUPLE:
 			n := int(arg)
+			if err = thread.chargeTuple(n); err != nil {
+				break loop
+			}
 			tuple := make(Tuple, n)
 			sp -= n
 			copy(tuple, stack[sp:])
@@ -573,6 +597,9 @@ loop:
 
 		case compile.MAKELIST:
 			n := int(arg)
+			if err = thread.chargeValues(n); err != nil {
+				break loop
+			}
 			elems := make([]Value, n)
 			sp -= n
 			copy(elems, stack[sp:])
@@ -580,6 +607,9 @@ loop:
 			sp++
 
 		case compile.MAKEFUNC:
+			if err = thread.charge(allocBaseFunction, allocBaseFunction); err != nil {
+				break loop
+			}
 			funcode := f.Prog.Functions[arg]
 			tuple := stack[sp-1].(Tuple)
 			n := len(tuple) - len(funcode.FreeVars)

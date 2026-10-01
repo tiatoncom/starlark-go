@@ -362,7 +362,7 @@ func AsInt32(x Value) (int, error) {
 	}
 	iSmall, iBig := i.get()
 	if iBig != nil {
-		return 0, fmt.Errorf("%s out of range", i)
+		return 0, fmt.Errorf("%s out of range", errValue(i))
 	}
 	return int(iSmall), nil
 }
@@ -382,7 +382,7 @@ func AsInt(x Value, ptr any) error {
 	case *int, *int8, *int16, *int32, *int64:
 		i, ok := xint.Int64()
 		if !ok || bits < 64 && !(-1<<(bits-1) <= i && i < 1<<(bits-1)) {
-			return fmt.Errorf("%s out of range (want value in signed %d-bit range)", xint, bits)
+			return fmt.Errorf("%s out of range (want value in signed %d-bit range)", errValue(xint), bits)
 		}
 		switch ptr := ptr.(type) {
 		case *int:
@@ -400,7 +400,7 @@ func AsInt(x Value, ptr any) error {
 	case *uint, *uint8, *uint16, *uint32, *uint64, *uintptr:
 		i, ok := xint.Uint64()
 		if !ok || bits < 64 && i >= 1<<bits {
-			return fmt.Errorf("%s out of range (want value in unsigned %d-bit range)", xint, bits)
+			return fmt.Errorf("%s out of range (want value in unsigned %d-bit range)", errValue(xint), bits)
 		}
 		switch ptr := ptr.(type) {
 		case *uint:

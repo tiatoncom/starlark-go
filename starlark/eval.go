@@ -631,7 +631,7 @@ func makeExprFunc(opts *syntax.FileOptions, expr syntax.Expr, env StringDict) (*
 func listExtend(thread *Thread, x *List, y Iterable) error {
 	if n := Len(y); n >= 0 {
 		// Known length (fast path for list += list): check before growing.
-		if err := thread.charge(uint64(len(x.elems))+uint64(n), satMul(uint64(n), allocBytesPerValue)); err != nil {
+		if err := thread.charge(listBytes(len(x.elems)+n), satMul(uint64(n), allocBytesPerValue)); err != nil {
 			return excess(err, "excessive list extension (%d + %d elements)", len(x.elems), n)
 		}
 		if ylist, ok := y.(*List); ok {
@@ -648,7 +648,7 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 	var z Value
 	for iter.Next(&z) {
 		if !known {
-			if err := thread.charge(uint64(len(x.elems))+1, allocBytesPerValue); err != nil {
+			if err := thread.chargeOne(len(x.elems), allocBytesPerNewValue); err != nil {
 				return excess(err, "excessive list extension (over %d elements)", maxAlloc)
 			}
 		}
@@ -661,7 +661,7 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 func getAttr(x Value, name string) (Value, error) {
 	hasAttr, ok := x.(HasAttrs)
 	if !ok {
-		return nil, fmt.Errorf("%s has no .%s field or method", x.Type(), name)
+		return nil, fmt.Errorf("%s has no .%s field or method", x.Type(), errStr(name))
 	}
 
 	var errmsg string
@@ -671,7 +671,7 @@ func getAttr(x Value, name string) (Value, error) {
 			return v, nil // success
 		}
 		// (nil, nil) => generic error
-		errmsg = fmt.Sprintf("%s has no .%s field or method", x.Type(), name)
+		errmsg = fmt.Sprintf("%s has no .%s field or method", x.Type(), errStr(name))
 	} else if nsa, ok := err.(NoSuchAttrError); ok {
 		errmsg = string(nsa)
 	} else {
@@ -679,7 +679,7 @@ func getAttr(x Value, name string) (Value, error) {
 	}
 
 	// add spelling hint
-	if n := spell.Nearest(name, hasAttr.AttrNames()); n != "" {
+	if n := spell.Nearest(errStr(name), hasAttr.AttrNames()); n != "" {
 		errmsg = fmt.Sprintf("%s (did you mean .%s?)", errmsg, n)
 	}
 
@@ -692,7 +692,7 @@ func setField(x Value, name string, y Value) error {
 		err := x.SetField(name, y)
 		if _, ok := err.(NoSuchAttrError); ok {
 			// No such field: check spelling.
-			if n := spell.Nearest(name, x.AttrNames()); n != "" {
+			if n := spell.Nearest(errStr(name), x.AttrNames()); n != "" {
 				err = fmt.Errorf("%s (did you mean .%s?)", err, n)
 			}
 		}
@@ -711,7 +711,7 @@ func getIndex(x, y Value) (Value, error) {
 			return nil, err
 		}
 		if !found {
-			return nil, fmt.Errorf("key %v not in %s", y, x.Type())
+			return nil, fmt.Errorf("key %s not in %s", errValue(y), x.Type())
 		}
 		return z, nil
 
@@ -851,7 +851,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Tuple:
 			if y, ok := y.(Tuple); ok {
 				// Bound concatenation like repeat (maxAlloc).
-				if err := thread.chargeValues(len(x) + len(y)); err != nil {
+				if err := thread.chargeTuple(len(x) + len(y)); err != nil {
 					return nil, excess(err, "excessive tuple concatenation (%d + %d elements)", len(x), len(y))
 				}
 				z := make(Tuple, 0, len(x)+len(y))
@@ -919,13 +919,13 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			case Bytes:
 				return bytesRepeat(thread, y, x)
 			case *List:
-				elems, err := tupleRepeat(thread, Tuple(y.elems), x)
+				elems, err := tupleRepeat(thread, Tuple(y.elems), x, true)
 				if err != nil {
 					return nil, err
 				}
 				return NewList(elems), nil
 			case Tuple:
-				return tupleRepeat(thread, y, x)
+				return tupleRepeat(thread, y, x, false)
 			}
 		case Float:
 			switch y := y.(type) {
@@ -948,7 +948,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *List:
 			if y, ok := y.(Int); ok {
-				elems, err := tupleRepeat(thread, Tuple(x.elems), y)
+				elems, err := tupleRepeat(thread, Tuple(x.elems), y, true)
 				if err != nil {
 					return nil, err
 				}
@@ -956,7 +956,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case Tuple:
 			if y, ok := y.(Int); ok {
-				return tupleRepeat(thread, x, y)
+				return tupleRepeat(thread, x, y, false)
 			}
 
 		}
@@ -1213,7 +1213,7 @@ unknown:
 // bytes. It is a variable so package tests can lower the limit.
 var maxAlloc = 1 << 30
 
-func tupleRepeat(thread *Thread, elems Tuple, n Int) (Tuple, error) {
+func tupleRepeat(thread *Thread, elems Tuple, n Int, list bool) (Tuple, error) {
 	if len(elems) == 0 {
 		return nil, nil
 	}
@@ -1229,9 +1229,16 @@ func tupleRepeat(thread *Thread, elems Tuple, n Int) (Tuple, error) {
 	if of != 0 { // overflow
 		sz = math.MaxUint
 	}
-	if err := thread.chargeValues(int(min(sz, math.MaxInt))); err != nil {
+	count := int(min(sz, math.MaxInt))
+	var cerr error
+	if list {
+		cerr = thread.chargeValues(count)
+	} else {
+		cerr = thread.chargeTuple(count)
+	}
+	if cerr != nil {
 		// Don't print sz.
-		return nil, excess(err, "excessive repeat (%d * %d elements)", len(elems), i)
+		return nil, excess(cerr, "excessive repeat (%d * %d elements)", len(elems), i)
 	}
 	res := make([]Value, sz)
 	// copy elems into res, doubling each time
@@ -1260,6 +1267,9 @@ func stringRepeat(thread *Thread, s String, n Int) (String, error) {
 		return "", nil
 	}
 	// Inv: i > 0, len > 0
+	if i == 1 {
+		return s, nil // the same string: nothing is allocated
+	}
 	of, sz := bits.Mul(uint(len(s)), uint(i))
 	if of != 0 { // overflow
 		sz = math.MaxUint
@@ -1324,7 +1334,8 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 		thread.stack = thread.stack[:len(thread.stack)-1] // pop
 	}()
 
-	_, isBuiltin := c.(*Builtin)
+	builtin, isBuiltin := c.(*Builtin)
+	isBuiltin = isBuiltin && !builtin.accounts
 	var allocBefore uint64
 	if isBuiltin {
 		allocBefore = thread.allocated
@@ -1422,14 +1433,16 @@ func slice(thread *Thread, x, lo, hi, step_ Value) (Value, error) {
 	// array of known length. (A string, bytes or tuple slice with step 1
 	// shares the operand's memory; a range slice is lazy.) Check the size
 	// before the copy is made.
-	switch x.(type) {
+	switch x := x.(type) {
+	case rangeValue:
+		return x.slice(start, end, step) // lazy: nothing to charge
 	case *List:
 		if err := thread.chargeValues(sliceLen(start, end, step)); err != nil {
 			return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
 		}
 	case Tuple:
 		if step != 1 {
-			if err := thread.chargeValues(sliceLen(start, end, step)); err != nil {
+			if err := thread.chargeTuple(sliceLen(start, end, step)); err != nil {
 				return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
 			}
 		}
@@ -1498,7 +1511,7 @@ func asIndex(v Value, len int, result *int) error {
 
 // setArgs sets the values of the formal parameters of function fn in
 // based on the actual parameter values in args and kwargs.
-func setArgs(locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
+func setArgs(thread *Thread, locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
 
 	// This is the general schema of a function:
 	//
@@ -1538,6 +1551,9 @@ func setArgs(locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
 	var kwdict *Dict
 	if fn.HasKwargs() {
 		nparams--
+		if err := thread.chargeEntries(0); err != nil {
+			return err
+		}
 		kwdict = new(Dict)
 		locals[nparams] = kwdict
 	}
@@ -1569,6 +1585,10 @@ func setArgs(locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
 
 	// Bind surplus positional arguments to *args parameter.
 	if fn.HasVarargs() {
+		// The surplus arguments are copied into a new tuple.
+		if err := thread.chargeTuple(len(args) - n); err != nil {
+			return err
+		}
 		tuple := make(Tuple, len(args)-n)
 		for i := n; i < len(args); i++ {
 			tuple[i-n] = args[i]
@@ -1582,18 +1602,21 @@ func setArgs(locals []Value, fn *Function, args Tuple, kwargs []Tuple) error {
 		k, v := pair[0].(String), pair[1]
 		if i := findParam(paramIdents, string(k)); i >= 0 {
 			if locals[i] != nil {
-				return fmt.Errorf("function %s got multiple values for parameter %s", fn.Name(), k)
+				return fmt.Errorf("function %s got multiple values for parameter %s", fn.Name(), errValue(k))
 			}
 			locals[i] = v
 			continue
 		}
 		if kwdict == nil {
-			return fmt.Errorf("function %s got an unexpected keyword argument %s", fn.Name(), k)
+			return fmt.Errorf("function %s got an unexpected keyword argument %s", fn.Name(), errValue(k))
 		}
 		oldlen := kwdict.Len()
 		kwdict.SetKey(k, v)
+		if err := thread.chargeNewEntry(kwdict, oldlen); err != nil {
+			return err
+		}
 		if kwdict.Len() == oldlen {
-			return fmt.Errorf("function %s got multiple values for parameter %s", fn.Name(), k)
+			return fmt.Errorf("function %s got multiple values for parameter %s", fn.Name(), errValue(k))
 		}
 	}
 
@@ -1684,7 +1707,7 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 			} else if v, found, _ := dict.Get(String(key)); found {
 				arg = v
 			} else {
-				return nil, fmt.Errorf("key not found: %s", key)
+				return nil, fmt.Errorf("key not found: %s", errStr(key))
 			}
 			format = format[j+1:]
 		} else {
@@ -1713,8 +1736,8 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 		case 's', 'r':
 			if str, ok := AsString(arg); ok && c == 's' {
 				buf.WriteString(str)
-			} else {
-				writeValueLimit(buf, arg, nil, limit)
+			} else if code := writeValueLimit(buf, arg, nil, limit); code != writeOK {
+				return nil, thread.formErr(code, limit, "%", "excessive string interpolation (over %d bytes)")
 			}
 		case 'd', 'i', 'o', 'x', 'X':
 			i, err := NumberToInt(arg)
@@ -1743,7 +1766,7 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 				// chr(int)
 				r, err := AsInt32(arg)
 				if err != nil || r < 0 || r > unicode.MaxRune {
-					return nil, fmt.Errorf("%%c format requires a valid Unicode code point, got %s", arg)
+					return nil, fmt.Errorf("%%c format requires a valid Unicode code point, got %s", errValue(arg))
 				}
 				buf.WriteRune(rune(r))
 			case String:
