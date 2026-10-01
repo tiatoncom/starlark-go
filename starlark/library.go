@@ -1294,14 +1294,14 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		// length not known
 	outer:
 		for {
-			if err := thread.charge(uint64(len(result))+1, rowBytes); err != nil {
-				return nil, excess(err, "zip: excessive size (over %d rows)", maxAlloc)
-			}
 			tuple := make(Tuple, cols)
 			for i, iter := range iters {
 				if !iter.Next(&tuple[i]) {
 					break outer
 				}
+			}
+			if err := thread.charge(uint64(len(result))+1, rowBytes); err != nil {
+				return nil, excess(err, "zip: excessive size (over %d rows)", maxAlloc)
 			}
 			result = append(result, tuple)
 		}

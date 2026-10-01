@@ -36,6 +36,12 @@ type progRun struct {
 // trace(i), which records an integer.
 func runProg(t *testing.T, budget uint64, src string) *progRun {
 	t.Helper()
+	return runProgWith(t, budget, src, nil)
+}
+
+// runProgWith is runProg with more predeclared names.
+func runProgWith(t *testing.T, budget uint64, src string, extra StringDict) *progRun {
+	t.Helper()
 	r := &progRun{th: &Thread{Name: "t"}}
 	r.th.Print = func(*Thread, string) { r.printed++ }
 	r.th.SetMaxAllocBytes(budget)
@@ -52,6 +58,9 @@ func runProg(t *testing.T, budget uint64, src string) *progRun {
 			r.traced = append(r.traced, i)
 			return None, nil
 		}),
+	}
+	for k, v := range extra {
+		predeclared[k] = v
 	}
 	opts := &syntax.FileOptions{GlobalReassign: true, Set: true, While: true, TopLevelControl: true}
 	_, r.err = ExecFileOptions(opts, r.th, "t.star", src, predeclared)
@@ -774,5 +783,113 @@ func TestAllocBudget_ProgramWithinBudgetRunsAsWithout(t *testing.T) {
 		if r := runProg(t, budget, src); r.err != nil {
 			t.Fatalf("budget %d: %v", budget, r.err)
 		}
+	}
+}
+
+// ---- iterables of unknown length ----
+
+// A lazyIter is an Iterable without a Len: it yields n values (n < 0: without
+// end). The operations that preallocate from Len cannot know the size of their
+// result and are charged as the elements are produced.
+type lazyIter struct {
+	n     int
+	pairs bool // yield (i, i) instead of i
+	bytes bool // yield i % 256: values fit in a byte
+}
+
+func (l lazyIter) String() string        { return "lazy" }
+func (l lazyIter) Type() string          { return "lazy" }
+func (l lazyIter) Freeze()               {}
+func (l lazyIter) Truth() Bool           { return True }
+func (l lazyIter) Hash() (uint32, error) { return 0, errors.New("unhashable") }
+func (l lazyIter) Iterate() Iterator     { return &lazyIterator{l, 0} }
+
+type lazyIterator struct {
+	l lazyIter
+	i int
+}
+
+func (it *lazyIterator) Next(p *Value) bool {
+	if it.l.n >= 0 && it.i >= it.l.n {
+		return false
+	}
+	if it.l.pairs {
+		*p = Tuple{MakeInt(it.i), MakeInt(it.i)}
+	} else {
+		if it.l.bytes {
+			*p = MakeInt(it.i % 256)
+		} else {
+			*p = MakeInt(it.i)
+		}
+	}
+	it.i++
+	return true
+}
+func (*lazyIterator) Done() {}
+
+func lazyBuiltins() StringDict {
+	mk := func(pairs, bytes bool) *Builtin {
+		return NewBuiltin("lazy", func(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+			var n int
+			if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &n); err != nil {
+				return nil, err
+			}
+			return lazyIter{n, pairs, bytes}, nil
+		})
+	}
+	return StringDict{"lazy": mk(false, false), "lazy_pairs": mk(true, false), "lazy_bytes": mk(false, true)}
+}
+
+func TestAllocCharge_UnknownLengthExact(t *testing.T) {
+	for _, c := range []struct {
+		name, setup, op string
+		want            uint64
+	}{
+		{"list", "", "r = list(lazy(3))", 3 * 16},
+		{"tuple", "", "r = tuple(lazy(3))", 3 * 16},
+		{"set", "", "r = set(lazy(3))", 3 * 96},
+		{"sorted", "", "r = sorted(lazy(3))", 3 * 16},
+		{"reversed", "", "r = reversed(lazy(3))", 3 * 16},
+		{"enumerate", "", "r = enumerate(lazy(3))", 3 * 48},
+		{"zip", "", "r = zip(lazy(3), lazy(3))", 3 * 48},
+		{"bytes", "", "r = bytes(lazy(3))", 3},
+		{"dict", "", "r = dict(lazy_pairs(3))", 3 * 96},
+		{"list.extend", "x = [1]", "x.extend(lazy(3))", 3 * 16},
+		{"list+=", "x = [1]", "x += lazy(3)", 3 * 16},
+		{"f(*x)", "def f(*a): return None", "f(*lazy(3))", 3 * 16},
+		{"string.elems", "s = 'abc'", "r = list(s.elems())", 3 * 16},
+	} {
+		r := runProgWith(t, 0, c.setup+"\nmark()\n"+c.op+"\nmark()\n", lazyBuiltins())
+		if r.err != nil {
+			t.Errorf("%s: %v", c.name, r.err)
+			continue
+		}
+		if got := r.marks[1] - r.marks[0]; got != c.want {
+			t.Errorf("%s: charged %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// An endless iterable is stopped by the budget, or by the ceiling without one.
+func TestAllocBudget_EndlessIterableIsStopped(t *testing.T) {
+	for _, op := range []string{
+		"list(lazy(-1))", "tuple(lazy(-1))", "set(lazy(-1))", "sorted(lazy(-1))", "reversed(lazy(-1))",
+		"enumerate(lazy(-1))", "zip(lazy(-1), lazy(-1))", "bytes(lazy_bytes(-1))", "dict(lazy_pairs(-1))",
+		"[1].extend(lazy(-1))", "[1] + list(lazy(-1))", "(lambda *a: None)(*lazy(-1))",
+	} {
+		t.Run(op, func(t *testing.T) {
+			src := "mark()\nr = " + op + "\n"
+			r := runProgWith(t, budgetMiB, src, lazyBuiltins())
+			wantBudgetErr(t, r, budgetMiB)
+			if r.th.AllocatedBytes() == 0 {
+				t.Errorf("nothing was charged before the refusal")
+			}
+			smallLimit(t) // restored at the end of the subtest
+			r = runProgWith(t, 0, src, lazyBuiltins())
+			var be *AllocBudgetError
+			if r.err == nil || errors.As(r.err, &be) || !strings.Contains(r.err.Error(), "excessive") {
+				t.Errorf("without a budget: err = %v", r.err)
+			}
+		})
 	}
 }
