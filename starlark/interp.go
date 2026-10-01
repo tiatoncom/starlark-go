@@ -213,7 +213,13 @@ loop:
 				unop = syntax.Token(op-compile.UPLUS) + syntax.PLUS
 			}
 			x := stack[sp-1]
-			y, err2 := Unary(unop, x)
+			var y Value
+			var err2 error
+			if xi, ok := x.(Int); ok && unop != syntax.PLUS {
+				y, err2 = thread.unaryInt(unop, xi)
+			} else {
+				y, err2 = Unary(unop, x)
+			}
 			if err2 != nil {
 				err = err2
 				break loop
@@ -398,6 +404,13 @@ loop:
 						err = excess(err2, "excessive * argument (%d elements)", n)
 						break loop
 					}
+				}
+				if n > 0 {
+					// room for all of them at once: appending one by one
+					// allocates five times the size at the end
+					grown := make(Tuple, len(positional), len(positional)+n)
+					copy(grown, positional)
+					positional = grown
 				}
 				var elem Value
 				for iter.Next(&elem) {

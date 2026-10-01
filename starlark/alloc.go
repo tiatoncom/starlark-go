@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/bits"
 	"strings"
+
+	"go.starlark.net/syntax"
 )
 
 // This file implements the allocation accounting of a Thread.
@@ -49,16 +51,17 @@ import (
 //	                (the base holds the inline bucket: 7 entries before the
 //	                table grows)
 //	Function        allocBaseFunction                 (a def or lambda value)
-//	Int (big)       (bit length + 7) / 8              (the product of two big ints)
+//	Int (big)       allocBaseInt + 8 * words          (every operation that makes a big integer)
 //
 // A list of NEW values (the strings of split, the values an iterator of
 // unknown length produces) is charged allocBytesPerNewValue per element: the
 // slot and the header of the value.
 //
 // What is NOT charged, and why. Growth in place by one element at a time,
-// when it is not a dict or set entry: list.append, list.insert, and the boxes
-// of big integers. Each costs the interpreter several steps (loop, load, call,
-// store) for ~16-50 bytes, which is bounded by the step limit: measured
+// when it is not a dict or set entry: list.append and list.insert (the slot of
+// 16 bytes; the value stored in it was charged when it was made, a big integer
+// included). Each costs the interpreter several steps (loop, load, call,
+// store) for 16 bytes, which is bounded by the step limit: measured
 // (TestAllocUnchargedGrowthPerStep) the worst retained-but-uncharged growth
 // is allocUnchargedBytesPerStep bytes per step, so a program that runs S steps
 // without any amplifier retains at most allocUnchargedBytesPerStep * S bytes
@@ -416,11 +419,85 @@ func sliceLen(start, end, step int) int {
 	return (start - end - step - 1) / -step
 }
 
-// bigIntBytes returns the size of the digits of x if it is a big integer,
-// and 0 for a small one.
+// A big integer (one that does not fit in 32 bits) is a big.Int, 32 bytes, and
+// a slice of words whose capacity is 4 words more than its length (math/big
+// allocates so) and is rounded up to a size class of the allocator (at most
+// an eighth): allocBaseInt bytes and allocBytesPerWord for each word of the
+// digits cover both. A list of integers of 33 bits retains 51 bytes an integer
+// besides its slot, one of 4000 bits 612, one of 64000 bits 9 KiB
+// (TestAllocFormulaCalibration).
+const (
+	allocBaseInt      = 64
+	allocBytesPerWord = 9
+)
+
+// intBytesOfWords is the size charged for a big integer of w words.
+func intBytesOfWords(w uint64) uint64 { return satAdd(allocBaseInt, satMul(allocBytesPerWord, w)) }
+
+// bigIntBytes returns the size charged for x if it is a big integer (one that
+// does not fit in 32 bits), and 0 for a small one.
 func bigIntBytes(x Int) uint64 {
 	if _, big := x.get(); big != nil {
-		return uint64(big.BitLen()+7) / 8
+		return intBytesOfWords(uint64(len(big.Bits())))
+	}
+	return 0
+}
+
+// checkRoom refuses what charge(size, bytes) would refuse, and charges
+// nothing: the check of an operation whose result is charged when it exists
+// (its size is known only then), made with an upper bound before the result is
+// allocated.
+func (thread *Thread) checkRoom(size, bytes uint64) error {
+	if thread != nil && thread.maxAllocBytes != 0 {
+		if err := thread.overBudget(bytes); err != nil {
+			return err
+		}
+	}
+	if size >= uint64(maxAlloc) {
+		return errExcessive
+	}
+	return nil
+}
+
+// intRoom refuses, before it is made, a big integer of at most w words that
+// would not fit in the budget or under the ceiling. w = 0 (both operands
+// small) is not checked: its result is under 80 bytes.
+func (thread *Thread) intRoom(w uint64) error {
+	if w == 0 {
+		return nil
+	}
+	b := intBytesOfWords(w)
+	return thread.checkRoom(b, b)
+}
+
+// intDone charges the integer z that an operation made, if it is a big one,
+// and returns it as the value of the operation. An operation that makes a big
+// integer charges it: a list that holds a million of them holds a million
+// boxes of their own size, which the steps that made them do not bound (the
+// words of the longer operand are charged as time, not as memory).
+func (thread *Thread) intDone(z Int) (Value, error) {
+	if thread != nil {
+		if _, big := z.get(); big != nil {
+			if err := thread.chargeBudget(intBytesOfWords(uint64(len(big.Bits())))); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return z, nil
+}
+
+// Upper bounds of the words of the result of an operation on integers, for
+// intRoom (0: both operands are small, nothing to check).
+func wordsAdd(x, y Int) uint64 {
+	if w := max(bigWords(x), bigWords(y)); w != 0 {
+		return w + 1
+	}
+	return 0
+}
+
+func wordsMul(x, y Int) uint64 {
+	if wx, wy := bigWords(x), bigWords(y); wx != 0 || wy != 0 {
+		return max(wx, 1) + max(wy, 1)
 	}
 	return 0
 }
@@ -554,4 +631,21 @@ func elemUnit(it Value) uint64 {
 func (thread *Thread) chargeListOf(n int, it Value) error {
 	b := satAdd(allocBaseList, satMul(uint64(max(n, 0)), elemUnit(it)))
 	return thread.charge(b, b)
+}
+
+// unaryInt is -x or ~x of an integer, charged as the binary operations are.
+func (thread *Thread) unaryInt(op syntax.Token, x Int) (Value, error) {
+	if w := bigWords(x); w != 0 {
+		if err := thread.chargeWork(w); err != nil {
+			return nil, err
+		}
+		if err := thread.intRoom(w + 1); err != nil {
+			return nil, excess(err, "excessive integer operation")
+		}
+	}
+	z, err := x.Unary(op)
+	if err != nil {
+		return nil, err
+	}
+	return thread.intDone(z.(Int))
 }

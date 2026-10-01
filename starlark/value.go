@@ -69,7 +69,9 @@ package starlark // import "go.starlark.net/starlark"
 // This file defines the data types of Starlark and their basic operations.
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"reflect"
@@ -437,7 +439,7 @@ func (f Float) String() string {
 	return buf.String()
 }
 
-func (f Float) format(buf *strings.Builder, conv byte) {
+func (f Float) format(buf io.StringWriter, conv byte) {
 	ff := float64(f)
 	if !isFinite(ff) {
 		if math.IsInf(ff, +1) {
@@ -467,6 +469,25 @@ func (f Float) format(buf *strings.Builder, conv byte) {
 
 	// %[eEfF] use 6-digit precision
 	buf.WriteString(strconv.FormatFloat(ff, conv, 6, 64))
+}
+
+// appendFloatG appends f.String() to dst, without allocating if dst has room.
+func appendFloatG(dst []byte, f Float) []byte {
+	ff := float64(f)
+	if !isFinite(ff) {
+		if math.IsInf(ff, +1) {
+			return append(dst, "+inf"...)
+		} else if math.IsInf(ff, -1) {
+			return append(dst, "-inf"...)
+		}
+		return append(dst, "nan"...)
+	}
+	n := len(dst)
+	dst = strconv.AppendFloat(dst, ff, 'g', -1, 64)
+	if bytes.IndexByte(dst[n:], 'e') < 0 && bytes.IndexByte(dst[n:], '.') < 0 {
+		dst = append(dst, ".0"...)
+	}
+	return dst
 }
 
 func (f Float) Type() string { return "float" }
@@ -586,12 +607,15 @@ func (s String) Slice(start, end, step int) Value {
 		return s[start:end]
 	}
 
+	// The result is made once, of its exact size: no growth, and no copy to
+	// make a string of the bytes.
 	sign := signum(step)
-	var str []byte
+	var str strings.Builder
+	str.Grow(sliceLen(start, end, step))
 	for i := start; signum(end-i) == sign; i += step {
-		str = append(str, s[i])
+		str.WriteByte(s[i])
 	}
-	return String(str)
+	return String(str.String())
 }
 
 func (s String) Attr(name string) (Value, error) { return builtinAttr(s, name, stringMethods) }
@@ -1035,7 +1059,7 @@ func (l *List) Slice(start, end, step int) Value {
 	}
 
 	sign := signum(step)
-	var list []Value
+	list := make([]Value, 0, sliceLen(start, end, step))
 	for i := start; signum(end-i) == sign; i += step {
 		list = append(list, l.elems[i])
 	}
@@ -1154,7 +1178,7 @@ func (t Tuple) Slice(start, end, step int) Value {
 	}
 
 	sign := signum(step)
-	var tuple Tuple
+	tuple := make(Tuple, 0, sliceLen(start, end, step))
 	for i := start; signum(end-i) == sign; i += step {
 		tuple = append(tuple, t[i])
 	}
@@ -1575,9 +1599,10 @@ const errValueLimit = 96
 // toString returns the string form of value v.
 // It may be more efficient than v.String() for larger values.
 func toString(v Value) string {
-	buf := new(strings.Builder)
-	writeValue(buf, v, nil)
-	return buf.String()
+	var out sink
+	w := valueWriter{out: &out, limit: maxAlloc}
+	w.write(v, 0)
+	return out.String()
 }
 
 // errValue returns the string form of v for an error message: at most about
@@ -1585,10 +1610,10 @@ func toString(v Value) string {
 // that embeds a value of the script (a dict key, a string that fails to
 // parse) must not be as large as the value, which can be megabytes.
 func errValue(v Value) string {
-	buf := new(strings.Builder)
-	w := valueWriter{out: buf, limit: errValueLimit, cut: true}
+	var out sink
+	w := valueWriter{out: &out, limit: errValueLimit, cut: true}
 	w.write(v, 0)
-	return buf.String()
+	return out.String()
 }
 
 // errStr returns s cut to errValueLimit bytes and marked, for an error
@@ -1637,7 +1662,8 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 // limit is at most maxAlloc, and a thread's stringLimit when the form is to
 // be charged to its budget.
 func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) int {
-	w := valueWriter{out: out, limit: limit}
+	s := sink{ext: out, n: out.Len()}
+	w := valueWriter{out: &s, limit: limit}
 	w.write(x, 0)
 	return w.result
 }
@@ -1646,14 +1672,14 @@ func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) int
 // leaf by its bytes, a container by its elements, a big integer by its digits
 // squared). The error is that of a thread whose steps are used up; the form is
 // then incomplete.
-func writeValueMeter(out *strings.Builder, x Value, limit int, m *meter) (int, error) {
+func writeValueMeter(out *sink, x Value, limit int, m *meter) (int, error) {
 	w := valueWriter{out: out, limit: limit, m: m}
 	w.write(x, 0)
 	return w.result, w.err
 }
 
 type valueWriter struct {
-	out    *strings.Builder
+	out    *sink
 	limit  int
 	cut    bool // cut a leaf that does not fit, instead of refusing it
 	result int
@@ -1719,17 +1745,27 @@ func (w *valueWriter) full() {
 	if w.result == writeOK {
 		w.result = writeLimit
 	}
-	if !strings.Contains(w.out.String()[w.out.Len()-min(w.out.Len(), 64):], writeValueOverflowMark) {
-		w.out.WriteString(writeValueOverflowMark)
+	if !w.out.recentMark(writeValueOverflowMark) {
+		w.out.writeMark(writeValueOverflowMark)
 	}
 }
 
 // leaf writes the string form s of a leaf of known length n if it fits.
-func (w *valueWriter) leaf(n int, form func() string, cut func(room int) string) {
+//
+// exact says that n is the length of what emit writes, so that a pass that
+// only counts need not write it.
+func (w *valueWriter) leaf(n int, exact bool, emit func(), cut func(room int) string) {
 	switch {
 	case w.fits(n):
 		w.work(workSlow(n))
-		w.out.WriteString(form())
+		if exact {
+			w.out.room(n)
+			if w.out.counting {
+				w.out.n += n
+				return
+			}
+		}
+		emit()
 	case w.cut:
 		if room := w.limit - w.out.Len(); room > 0 {
 			w.out.WriteString(cut(room))
@@ -1773,10 +1809,16 @@ func (w *valueWriter) write(x Value, depth int) {
 			w.work(d * d / 4096)
 			// The decimal form has at most BitLen/3+1 digits.
 			n := big.BitLen()/3 + 2
-			w.leaf(n, x.String, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
+			w.leaf(n, false, func() { w.out.WriteString(x.String()) }, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
 		} else {
-			w.out.WriteString(x.String())
+			var tmp [24]byte
+			iSmall, _ := x.get()
+			w.out.Write(strconv.AppendInt(tmp[:0], iSmall, 10))
 		}
+
+	case Float:
+		var tmp [40]byte
+		w.out.Write(appendFloatG(tmp[:0], x))
 
 	case Bool:
 		if x {
@@ -1786,11 +1828,11 @@ func (w *valueWriter) write(x Value, depth int) {
 		}
 
 	case String:
-		w.leaf(syntax.QuoteLen(string(x), false), func() string { return syntax.Quote(string(x), false) },
+		w.leaf(syntax.QuoteLen(string(x), false), true, func() { w.out.writeQuoted(string(x), false) },
 			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), false) })
 
 	case Bytes:
-		w.leaf(syntax.QuoteLen(string(x), true), x.String,
+		w.leaf(syntax.QuoteLen(string(x), true), true, func() { w.out.writeQuoted(string(x), true) },
 			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), true) })
 
 	case *List:
@@ -2029,11 +2071,12 @@ func (b Bytes) Slice(start, end, step int) Value {
 	}
 
 	sign := signum(step)
-	var str []byte
+	var str strings.Builder
+	str.Grow(sliceLen(start, end, step))
 	for i := start; signum(end-i) == sign; i += step {
-		str = append(str, b[i])
+		str.WriteByte(b[i])
 	}
-	return Bytes(str)
+	return Bytes(str.String())
 }
 
 func (x Bytes) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error) {

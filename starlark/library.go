@@ -190,7 +190,10 @@ func abs(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		if x.Sign() >= 0 {
 			return x, nil
 		}
-		return zero.Sub(x), nil
+		if err := thread.intRoom(bigWords(x)); err != nil {
+			return nil, excess(err, "excessive integer negation")
+		}
+		return thread.intDone(zero.Sub(x))
 	default:
 		return nil, fmt.Errorf("got %s, want int or float", x.Type())
 	}
@@ -633,7 +636,7 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		if res == nil {
 			return nil, fmt.Errorf("int: invalid literal with base %d: %s", b, errStr(s))
 		}
-		return res, nil
+		return thread.intDone(res.(Int))
 	}
 
 	if base != nil {
@@ -652,7 +655,10 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	if err != nil {
 		return nil, fmt.Errorf("int: %s", err)
 	}
-	return i, nil
+	if _, isInt := x.(Int); isInt {
+		return i, nil // the value itself, not a new one
+	}
+	return thread.intDone(i) // a float made a new integer
 }
 
 // parseInt defines the behavior of int(string, base=int). It returns nil on error.
@@ -916,34 +922,30 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 		return nil, err
 	}
 	limit := thread.stringLimit()
-	m := thread.meter()
-	buf := new(strings.Builder)
-	for i, v := range args {
-		if i > 0 {
-			buf.WriteString(sep)
-		}
-		if s, ok := AsString(v); ok {
-			if buf.Len()+len(s) >= limit {
-				return nil, thread.refuseBytes(buf.Len()+len(s), "print: excessive output size")
+	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
+		for i, v := range args {
+			if i > 0 {
+				buf.WriteString(sep)
 			}
-			buf.WriteString(s)
-		} else if b, ok := v.(Bytes); ok {
-			if buf.Len()+len(b) >= limit {
-				return nil, thread.refuseBytes(buf.Len()+len(b), "print: excessive output size")
+			if s, ok := AsString(v); ok {
+				if buf.Len()+len(s) >= limit {
+					return th.refuseBytes(buf.Len()+len(s), "print: excessive output size")
+				}
+				buf.WriteString(s)
+			} else if b, ok := v.(Bytes); ok {
+				if buf.Len()+len(b) >= limit {
+					return th.refuseBytes(buf.Len()+len(b), "print: excessive output size")
+				}
+				buf.WriteString(string(b))
+			} else if code, werr := writeValueMeter(buf, v, limit, m); code != writeOK {
+				return th.formErr(code, werr, limit, "print", "print: excessive output size")
 			}
-			buf.WriteString(string(b))
-		} else if code, werr := writeValueMeter(buf, v, limit, &m); code != writeOK {
-			return nil, thread.formErr(code, werr, limit, "print", "print: excessive output size")
 		}
-	}
-	if err := thread.chargeBytes(buf.Len()); err != nil {
-		return nil, excess(err, "print: excessive output size")
-	}
-	if err := m.flush(); err != nil {
+		return nil
+	}, func(n int) error { return excess(thread.chargeBytes(n), "print: excessive output size") })
+	if err != nil {
 		return nil, err
 	}
-
-	s := buf.String()
 	if thread.Print != nil {
 		thread.Print(thread, s)
 	} else {
@@ -1161,21 +1163,22 @@ func repr(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, err
 	}
 	limit := thread.stringLimit()
-	buf := new(strings.Builder)
-	m := thread.meter()
-	switch code, werr := writeValueMeter(buf, x, limit, &m); {
-	case werr != nil || code == writeDeep || code == writeBigInt:
-		return nil, thread.formErr(code, werr, limit, "repr", "")
-	case code == writeLimit && limit < maxAlloc:
-		// The budget is what the form outgrew.
-		return nil, thread.formErr(code, werr, limit, "repr", "repr: excessive result size")
-	}
-	if err := m.flush(); err != nil {
+	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
+		switch code, werr := writeValueMeter(buf, x, limit, m); {
+		case werr != nil || code == writeDeep || code == writeBigInt:
+			return th.formErr(code, werr, limit, "repr", "")
+		case code == writeLimit && limit < maxAlloc:
+			// The budget is what the form outgrew.
+			return th.formErr(code, werr, limit, "repr", "repr: excessive result size")
+		}
+		return nil
+	}, func(n int) error { return thread.chargeBudget(uint64(n)) }) // (at the ceiling the bounded form is returned: the budget only)
+	if err != nil {
 		return nil, err
 	}
 	// At the ceiling, where str reports an error, repr returns the bounded
-	// form (see writeValue). Call charges its bytes to the budget.
-	return String(buf.String()), nil
+	// form (see writeValue).
+	return String(s), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#reversed
@@ -1380,19 +1383,18 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		// Report an error if a value's string form exceeds the size bound
 		// (writeValue stops at the limit, so only a bounded form reaches it).
 		limit := thread.stringLimit()
-		buf := new(strings.Builder)
-		m := thread.meter()
-		if code, werr := writeValueMeter(buf, x, limit, &m); code != writeOK {
-			return nil, thread.formErr(code, werr, limit, "str", "str: value's string form exceeds the size limit")
-		}
-		if err := m.flush(); err != nil {
+		s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
+			if code, werr := writeValueMeter(buf, x, limit, m); code != writeOK {
+				return th.formErr(code, werr, limit, "str", "str: value's string form exceeds the size limit")
+			}
+			return nil
+		}, func(n int) error {
+			return excess(thread.chargeBytes(n), "str: value's string form exceeds the size limit")
+		})
+		if err != nil {
 			return nil, err
 		}
-		out := buf.String()
-		if err := thread.chargeBytes(len(out)); err != nil {
-			return nil, excess(err, "str: value's string form exceeds the size limit")
-		}
-		return String(out), nil
+		return String(s), nil
 	}
 }
 
@@ -2093,13 +2095,23 @@ func string_find(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·format
 func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
-	format := string(b.Receiver().(String))
-	var auto, manual bool // kinds of positional indexing used
+	recv := string(b.Receiver().(String))
 	// Every field can add as much as its argument: a format with many fields
 	// and a large argument is an amplifier. Stop at the limit.
 	limit := thread.stringLimit()
-	m := thread.meter()
-	buf := new(strings.Builder)
+	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
+		return stringFormatTo(th, buf, m, limit, recv, args, kwargs)
+	}, func(n int) error { return excess(thread.chargeBytes(n), "format: excessive result size") })
+	if err != nil {
+		return nil, err
+	}
+	return String(s), nil
+}
+
+// stringFormatTo writes the result of format to buf (see Thread.buildForm: it
+// is run twice for a large result).
+func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, args Tuple, kwargs []Tuple) error {
+	var auto, manual bool // kinds of positional indexing used
 	index := 0
 	for {
 		literal := format
@@ -2116,7 +2128,7 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 				break
 			}
 			if len(literal) == j+1 || literal[j+1] != '}' {
-				return nil, fmt.Errorf("format: single '}' in format")
+				return fmt.Errorf("format: single '}' in format")
 			}
 			buf.WriteString(literal[:j+1])
 			literal = literal[j+2:]
@@ -2136,7 +2148,7 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 		format = format[i+1:]
 		i = strings.IndexByte(format, '}')
 		if i < 0 {
-			return nil, fmt.Errorf("format: unmatched '{' in format")
+			return fmt.Errorf("format: unmatched '{' in format")
 		}
 
 		var arg Value
@@ -2171,22 +2183,22 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 		if name == "" {
 			// "{}": automatic indexing
 			if manual {
-				return nil, fmt.Errorf("format: cannot switch from manual field specification to automatic field numbering")
+				return fmt.Errorf("format: cannot switch from manual field specification to automatic field numbering")
 			}
 			auto = true
 			if index >= len(args) {
-				return nil, fmt.Errorf("format: tuple index out of range")
+				return fmt.Errorf("format: tuple index out of range")
 			}
 			arg = args[index]
 			index++
 		} else if num, ok := decimal(name); ok {
 			// positional argument
 			if auto {
-				return nil, fmt.Errorf("format: cannot switch from automatic field numbering to manual field specification")
+				return fmt.Errorf("format: cannot switch from automatic field numbering to manual field specification")
 			}
 			manual = true
 			if num >= len(args) {
-				return nil, fmt.Errorf("format: tuple index out of range")
+				return fmt.Errorf("format: tuple index out of range")
 			} else {
 				arg = args[num]
 			}
@@ -2202,48 +2214,42 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 				// Starlark does not support Python's x.y or a[i] syntaxes,
 				// or nested use of {...}.
 				if strings.Contains(name, ".") {
-					return nil, fmt.Errorf("format: attribute syntax x.y is not supported in replacement fields: %s", errStr(name))
+					return fmt.Errorf("format: attribute syntax x.y is not supported in replacement fields: %s", errStr(name))
 				}
 				if strings.Contains(name, "[") {
-					return nil, fmt.Errorf("format: element syntax a[i] is not supported in replacement fields: %s", errStr(name))
+					return fmt.Errorf("format: element syntax a[i] is not supported in replacement fields: %s", errStr(name))
 				}
 				if strings.Contains(name, "{") {
-					return nil, fmt.Errorf("format: nested replacement fields not supported")
+					return fmt.Errorf("format: nested replacement fields not supported")
 				}
-				return nil, fmt.Errorf("format: keyword %s not found", errStr(name))
+				return fmt.Errorf("format: keyword %s not found", errStr(name))
 			}
 		}
 
 		if spec != "" {
 			// Starlark does not support Python's format_spec features.
-			return nil, fmt.Errorf("format spec features not supported in replacement fields: %s", errStr(spec))
+			return fmt.Errorf("format spec features not supported in replacement fields: %s", errStr(spec))
 		}
 
 		switch conv {
 		case "s":
 			if str, ok := AsString(arg); ok {
 				if buf.Len()+len(str) >= limit {
-					return nil, thread.refuseBytes(buf.Len()+len(str), "format: excessive result size")
+					return th.refuseBytes(buf.Len()+len(str), "format: excessive result size")
 				}
 				buf.WriteString(str)
-			} else if code, werr := writeValueMeter(buf, arg, limit, &m); code != writeOK {
-				return nil, thread.formErr(code, werr, limit, "format", "format: excessive result size")
+			} else if code, werr := writeValueMeter(buf, arg, limit, m); code != writeOK {
+				return th.formErr(code, werr, limit, "format", "format: excessive result size")
 			}
 		case "r":
-			if code, werr := writeValueMeter(buf, arg, limit, &m); code != writeOK {
-				return nil, thread.formErr(code, werr, limit, "format", "format: excessive result size")
+			if code, werr := writeValueMeter(buf, arg, limit, m); code != writeOK {
+				return th.formErr(code, werr, limit, "format", "format: excessive result size")
 			}
 		default:
-			return nil, fmt.Errorf("format: unknown conversion %q", errStr(conv))
+			return fmt.Errorf("format: unknown conversion %q", errStr(conv))
 		}
 	}
-	if err := thread.chargeBytes(buf.Len()); err != nil {
-		return nil, excess(err, "format: excessive result size")
-	}
-	if err := m.flush(); err != nil {
-		return nil, err
-	}
-	return String(buf.String()), nil
+	return nil
 }
 
 // decimal interprets s as a sequence of decimal digits.
@@ -2632,6 +2638,16 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		return nil, err
 	}
 
+	// The usual forms make the list of values directly: not a list of strings
+	// first, which is another 16 bytes a field.
+	if sep_ == nil || sep_ == None {
+		if maxsplit < 0 {
+			return NewList(fieldsValues(recv, fields)), nil
+		}
+	} else if sep, ok := AsString(sep_); ok && sep != "" && (maxsplit < 0 || b.Name() == "split") {
+		return NewList(splitValues(recv, sep, maxsplit, fields)), nil
+	}
+
 	if sep_ == nil || sep_ == None {
 		// special case: split on whitespace
 		if maxsplit < 0 {
@@ -2668,6 +2684,44 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		list[i] = String(x)
 	}
 	return NewList(list), nil
+}
+
+// fieldsValues is strings.Fields(s) as a slice of n (the number of fields) values.
+func fieldsValues(s string, n int) []Value {
+	res := make([]Value, 0, n)
+	start := -1
+	for i, r := range s {
+		if unicode.IsSpace(r) {
+			if start >= 0 {
+				res = append(res, String(s[start:i]))
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		res = append(res, String(s[start:]))
+	}
+	return res
+}
+
+// splitValues is strings.SplitN(s, sep, maxsplit+1) (all of them if maxsplit
+// is negative) as a slice of n values.
+func splitValues(s, sep string, maxsplit, n int) []Value {
+	res := make([]Value, 0, n)
+	for maxsplit != 0 {
+		i := strings.Index(s, sep)
+		if i < 0 {
+			break
+		}
+		res = append(res, String(s[:i]))
+		s = s[i+len(sep):]
+		if maxsplit > 0 {
+			maxsplit--
+		}
+	}
+	return append(res, String(s))
 }
 
 // fieldsCount returns the number of fields strings.Fields(s) would return.
@@ -2747,7 +2801,7 @@ func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &keepends); err != nil {
 		return nil, err
 	}
-	var lines []string
+	var lines []Value
 	if s := string(b.Receiver().(String)); s != "" {
 		// One line per newline, and one more: count before splitting.
 		n := strings.Count(s, "\n") + 1
@@ -2758,20 +2812,22 @@ func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 			return nil, err
 		}
 		// TODO(adonovan): handle CRLF correctly.
-		if keepends {
-			lines = strings.SplitAfter(s, "\n")
-		} else {
-			lines = strings.Split(s, "\n")
-		}
-		if strings.HasSuffix(s, "\n") {
-			lines = lines[:len(lines)-1]
+		lines = make([]Value, 0, n)
+		for s != "" {
+			i := strings.IndexByte(s, '\n')
+			if i < 0 {
+				lines = append(lines, String(s))
+				break
+			}
+			if keepends {
+				lines = append(lines, String(s[:i+1]))
+			} else {
+				lines = append(lines, String(s[:i]))
+			}
+			s = s[i+1:]
 		}
 	}
-	list := make([]Value, len(lines))
-	for i, x := range lines {
-		list[i] = String(x)
-	}
-	return NewList(list), nil
+	return NewList(lines), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·add.

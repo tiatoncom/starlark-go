@@ -234,14 +234,22 @@ func indexByte(s string, b byte) int {
 // Quote returns a Starlark literal that denotes s.
 // If b, it returns a bytes literal.
 func Quote(s string, b bool) string {
-	const hex = "0123456789abcdef"
-	var runeTmp [utf8.UTFMax]byte
-
 	buf := make([]byte, 0, 3*len(s)/2)
 	if b {
 		buf = append(buf, 'b')
 	}
 	buf = append(buf, '"')
+	buf = AppendQuoted(buf, s)
+	buf = append(buf, '"')
+	return string(buf)
+}
+
+// AppendQuoted appends to dst the escaped form of s that Quote puts between
+// the quotes. It is independent of the bytes around s, so a long string can
+// be quoted in pieces cut at the start of a rune.
+func AppendQuoted(buf []byte, s string) []byte {
+	const hex = "0123456789abcdef"
+	var runeTmp [utf8.UTFMax]byte
 	for width := 0; len(s) > 0; s = s[width:] {
 		r := rune(s[0])
 		width = 1
@@ -304,8 +312,7 @@ func Quote(s string, b bool) string {
 			}
 		}
 	}
-	buf = append(buf, '"')
-	return string(buf)
+	return buf
 }
 
 // QuoteLen returns len(Quote(s, b)) without building the quoted string: the

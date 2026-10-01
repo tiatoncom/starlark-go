@@ -858,7 +858,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
-				return x.Add(y), nil
+				if err := thread.intRoom(wordsAdd(x, y)); err != nil {
+					return nil, excess(err, "excessive integer addition")
+				}
+				return thread.intDone(x.Add(y))
 			case Float:
 				xf, err := x.finiteFloat()
 				if err != nil {
@@ -910,7 +913,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
-				return x.Sub(y), nil
+				if err := thread.intRoom(wordsAdd(x, y)); err != nil {
+					return nil, excess(err, "excessive integer subtraction")
+				}
+				return thread.intDone(x.Sub(y))
 			case Float:
 				xf, err := x.finiteFloat()
 				if err != nil {
@@ -951,15 +957,13 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			switch y := y.(type) {
 			case Int:
 				// A product of big integers is as long as both together.
-				if n := satAdd(bigIntBytes(x), bigIntBytes(y)); n != 0 {
-					if err := thread.charge(n, n); err != nil {
-						return nil, excess(err, "excessive integer multiplication")
-					}
+				if err := thread.intRoom(wordsMul(x, y)); err != nil {
+					return nil, excess(err, "excessive integer multiplication")
 				}
 				if err := thread.chargeIntQuadratic(x, y); err != nil {
 					return nil, err
 				}
-				return x.Mul(y), nil
+				return thread.intDone(x.Mul(y))
 			case Float:
 				xf, err := x.finiteFloat()
 				if err != nil {
@@ -1066,7 +1070,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntQuadratic(x, y); err != nil {
 					return nil, err
 				}
-				return x.Div(y), nil
+				if err := thread.intRoom(bigWords(x)); err != nil { // the quotient is not longer than x
+					return nil, excess(err, "excessive integer division")
+				}
+				return thread.intDone(x.Div(y))
 			case Float:
 				xf, err := x.finiteFloat()
 				if err != nil {
@@ -1107,7 +1114,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntQuadratic(x, y); err != nil {
 					return nil, err
 				}
-				return x.Mod(y), nil
+				if err := thread.intRoom(bigWords(y)); err != nil { // the remainder is shorter than y
+					return nil, excess(err, "excessive integer modulo")
+				}
+				return thread.intDone(x.Mod(y))
 			case Float:
 				xf, err := x.finiteFloat()
 				if err != nil {
@@ -1196,7 +1206,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
-				return x.Or(y), nil
+				if err := thread.intRoom(wordsAdd(x, y)); err != nil {
+					return nil, excess(err, "excessive integer operation")
+				}
+				return thread.intDone(x.Or(y))
 			}
 
 		case *Dict: // union
@@ -1238,7 +1251,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
-				return x.And(y), nil
+				if err := thread.intRoom(wordsAdd(x, y)); err != nil {
+					return nil, excess(err, "excessive integer operation")
+				}
+				return thread.intDone(x.And(y))
 			}
 		case *Set: // intersection
 			if y, ok := y.(*Set); ok {
@@ -1263,7 +1279,10 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, y); err != nil {
 					return nil, err
 				}
-				return x.Xor(y), nil
+				if err := thread.intRoom(wordsAdd(x, y)); err != nil {
+					return nil, excess(err, "excessive integer operation")
+				}
+				return thread.intDone(x.Xor(y))
 			}
 		case *Set: // symmetric difference
 			if y, ok := y.(*Set); ok {
@@ -1297,12 +1316,20 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 				if err := thread.chargeIntLinear(x, x); err != nil {
 					return nil, err
 				}
-				return x.Lsh(uint(y)), nil
+				if w := bigWords(x); w != 0 {
+					if err := thread.intRoom(w + uint64(y)/64 + 1); err != nil {
+						return nil, excess(err, "excessive integer shift")
+					}
+				}
+				return thread.intDone(x.Lsh(uint(y)))
 			} else {
 				if err := thread.chargeIntLinear(x, x); err != nil {
 					return nil, err
 				}
-				return x.Rsh(uint(y)), nil
+				if err := thread.intRoom(bigWords(x)); err != nil {
+					return nil, excess(err, "excessive integer shift")
+				}
+				return thread.intDone(x.Rsh(uint(y)))
 			}
 		}
 
@@ -1808,8 +1835,23 @@ func findParam(params []compile.Binding, name string) int {
 // (a %s of a shared subgraph can expand exponentially), then charged.
 func interpolate(thread *Thread, format string, x Value) (Value, error) {
 	limit := thread.stringLimit()
-	m := thread.meter()
-	buf := new(strings.Builder)
+	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
+		return interpolateTo(th, buf, m, limit, format, x)
+	}, func(n int) error {
+		if err := thread.chargeBytes(n); err != nil {
+			return excess(err, "excessive string interpolation (over %d bytes)", maxAlloc)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return String(s), nil
+}
+
+// interpolateTo writes the interpolation of format with x to buf (see
+// Thread.buildForm: it is run twice for a large result).
+func interpolateTo(thread *Thread, buf *sink, m *meter, limit int, format string, x Value) error {
 	index := 0
 	nargs := 1
 	if tuple, ok := x.(Tuple); ok {
@@ -1818,7 +1860,7 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 	for {
 		// Bound the interpolation result like repeat.
 		if buf.Len() >= limit {
-			return nil, thread.refuseBytes(buf.Len(), "excessive string interpolation (over %d bytes)", maxAlloc)
+			return thread.refuseBytes(buf.Len(), "excessive string interpolation (over %d bytes)", maxAlloc)
 		}
 		i := strings.IndexByte(format, '%')
 		if i < 0 {
@@ -1840,21 +1882,21 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 			format = format[1:]
 			j := strings.IndexByte(format, ')')
 			if j < 0 {
-				return nil, fmt.Errorf("incomplete format key")
+				return fmt.Errorf("incomplete format key")
 			}
 			key := format[:j]
 			if dict, ok := x.(Mapping); !ok {
-				return nil, fmt.Errorf("format requires a mapping")
+				return fmt.Errorf("format requires a mapping")
 			} else if v, found, _ := dict.Get(String(key)); found {
 				arg = v
 			} else {
-				return nil, fmt.Errorf("key not found: %s", errStr(key))
+				return fmt.Errorf("key not found: %s", errStr(key))
 			}
 			format = format[j+1:]
 		} else {
 			// positional argument: %s.
 			if index >= nargs {
-				return nil, fmt.Errorf("not enough arguments for format string")
+				return fmt.Errorf("not enough arguments for format string")
 			}
 			if tuple, ok := x.(Tuple); ok {
 				arg = tuple[index]
@@ -1871,22 +1913,22 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 
 		// conversion type
 		if format == "" {
-			return nil, fmt.Errorf("incomplete format")
+			return fmt.Errorf("incomplete format")
 		}
 		switch c := format[0]; c {
 		case 's', 'r':
 			if str, ok := AsString(arg); ok && c == 's' {
 				buf.WriteString(str)
-			} else if code, werr := writeValueMeter(buf, arg, limit, &m); code != writeOK {
-				return nil, thread.formErr(code, werr, limit, "%", "excessive string interpolation (over %d bytes)")
+			} else if code, werr := writeValueMeter(buf, arg, limit, m); code != writeOK {
+				return thread.formErr(code, werr, limit, "%", "excessive string interpolation (over %d bytes)")
 			}
 		case 'd', 'i', 'o', 'x', 'X':
 			i, err := NumberToInt(arg)
 			if err != nil {
-				return nil, fmt.Errorf("%%%c format requires integer: %v", c, err)
+				return fmt.Errorf("%%%c format requires integer: %v", c, err)
 			}
 			if err := thread.chargeIntToString(i, c == 'd' || c == 'i'); err != nil {
-				return nil, err
+				return err
 			}
 			switch c {
 			case 'd', 'i':
@@ -1901,7 +1943,7 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 		case 'e', 'f', 'g', 'E', 'F', 'G':
 			f, ok := AsFloat(arg)
 			if !ok {
-				return nil, fmt.Errorf("%%%c format requires float, not %s", c, arg.Type())
+				return fmt.Errorf("%%%c format requires float, not %s", c, arg.Type())
 			}
 			Float(f).format(buf, c)
 		case 'c':
@@ -1910,38 +1952,31 @@ func interpolate(thread *Thread, format string, x Value) (Value, error) {
 				// chr(int)
 				r, err := AsInt32(arg)
 				if err != nil || r < 0 || r > unicode.MaxRune {
-					return nil, fmt.Errorf("%%c format requires a valid Unicode code point, got %s", errValue(arg))
+					return fmt.Errorf("%%c format requires a valid Unicode code point, got %s", errValue(arg))
 				}
-				buf.WriteRune(rune(r))
+				buf.writeRune(rune(r))
 			case String:
 				r, size := utf8.DecodeRuneInString(string(arg))
 				if size != len(arg) || len(arg) == 0 {
-					return nil, fmt.Errorf("%%c format requires a single-character string")
+					return fmt.Errorf("%%c format requires a single-character string")
 				}
-				buf.WriteRune(r)
+				buf.writeRune(r)
 			default:
-				return nil, fmt.Errorf("%%c format requires int or single-character string, not %s", arg.Type())
+				return fmt.Errorf("%%c format requires int or single-character string, not %s", arg.Type())
 			}
 		case '%':
 			buf.WriteByte('%')
 		default:
-			return nil, fmt.Errorf("unknown conversion %%%c", c)
+			return fmt.Errorf("unknown conversion %%%c", c)
 		}
 		format = format[1:]
 		index++
 	}
 
 	if index < nargs && !is[Mapping](x) {
-		return nil, fmt.Errorf("too many arguments for format string")
+		return fmt.Errorf("too many arguments for format string")
 	}
-
-	if err := thread.chargeBytes(buf.Len()); err != nil {
-		return nil, excess(err, "excessive string interpolation (over %d bytes)", maxAlloc)
-	}
-	if err := m.flush(); err != nil {
-		return nil, err
-	}
-	return String(buf.String()), nil
+	return nil
 }
 
 func is[T any](x any) bool {

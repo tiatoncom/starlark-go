@@ -1029,7 +1029,7 @@ func TestValueWriter_CycleCheckUsesASetWhenDeep(t *testing.T) {
 	for i := 0; i < 5000; i++ {
 		v = NewList([]Value{v})
 	}
-	var buf strings.Builder
+	var buf sink
 	w := valueWriter{out: &buf, limit: maxAlloc}
 	w.write(v, 0)
 	if w.result != writeOK {

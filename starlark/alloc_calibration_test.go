@@ -49,6 +49,12 @@ func measure(t *testing.T, setup, op string) measured {
 // The formula charges at least 0.8 of what the structure retains (it may charge
 // more: the formulas are upper bounds, and garbage counts), and no more than
 // 4 times (a formula that drifts far above the structure is a bug as well).
+// y and y2 are integers of ~4000 bits (500 bytes, 63 words).
+// z is an integer of 64000 bits (8000 bytes): a size class of its own.
+const hugeIntSetup = "z = 1 << 500\nfor i in range(7): z = z * z\n"
+
+const bigIntSetup = "y = 1 << 500\nfor i in range(3): y = y * y\ny = y >> 20\ny2 = y + 12345\n"
+
 func TestAllocFormulaCalibration(t *testing.T) {
 	for _, c := range []struct {
 		name, setup, op string
@@ -76,6 +82,24 @@ func TestAllocFormulaCalibration(t *testing.T) {
 		{"set of ints", "", "r = set()\nfor i in range(20000): r.add(i)", 20000},
 		{"set(range)", "", "r = set(range(20000))", 20000},
 		{"dict(x)", "x = [(i, i) for i in range(20000)]", "r = dict(x)", 20000},
+		{"ints of 33 bits", "", "r = [(1 << 32) + i for i in range(20000)]", 20000},
+		{"[y + i], y of 4000 bits", bigIntSetup, "r = [y + i for i in range(2000)]", 2000},
+		{"[y - i], y of 4000 bits", bigIntSetup, "r = [y - i for i in range(2000)]", 2000},
+		{"[y * i], y of 4000 bits", bigIntSetup, "r = [y * (i + 5) for i in range(2000)]", 2000},
+		{"[y << 1], y of 4000 bits", bigIntSetup, "r = [y << (i % 64) for i in range(2000)]", 2000},
+		{"[y >> 1], y of 4000 bits", bigIntSetup, "r = [y >> (i % 64) for i in range(2000)]", 2000},
+		{"[y & y2]", bigIntSetup, "r = [y & (y2 + i) for i in range(2000)]", 2000},
+		{"[y | i]", bigIntSetup, "r = [y | i for i in range(2000)]", 2000},
+		{"[y ^ i]", bigIntSetup, "r = [y ^ i for i in range(2000)]", 2000},
+		{"[~y]", bigIntSetup, "r = [~y for i in range(2000)]", 2000},
+		{"[-y]", bigIntSetup, "r = [-y for i in range(2000)]", 2000},
+		{"[abs(-y)]", bigIntSetup, "r = [abs(-y) for i in range(2000)]", 2000},
+		{"[y // 3]", bigIntSetup, "r = [y // (i + 3) for i in range(2000)]", 2000},
+		{"[y2 % y]", bigIntSetup, "r = [(y * y2) % (y + i) for i in range(2000)]", 2000},
+		{"[z + i], z of 64000 bits", hugeIntSetup, "r = [z + i for i in range(300)]", 300},
+		{"[z >> 100], z of 64000 bits", hugeIntSetup, "r = [z >> (i % 200) for i in range(300)]", 300},
+		{"[int(float)]", "", "r = [int(1e300 * (i + 1)) for i in range(2000)]", 2000},
+		{"[int(str)]", "s = '9' * 1000", "r = [int(s) + i for i in range(2000)]", 2000},
 	} {
 		m := measure(t, c.setup, c.op)
 		ratio := m.charged / m.retained
@@ -112,6 +136,20 @@ func TestAllocUnchargedGrowthPerStep(t *testing.T) {
 		{"r += [i]", "r = []", "for i in range(100000): r += [i]"},
 		{"insert(0, i)", "r = []", "for i in range(3000): r.insert(0, i)"},
 		{"tuple of ints", "r = []", "for i in range(100000): r.append(i); a, b = i, i"},
+		{"append(i + y), 33 bit", "r = []\ny = 1 << 32", "for i in range(100000): r.append(y + i)"},
+		{"append(y + i), 4000 bits", bigIntSetup + "r = []", "for i in range(20000): r.append(y + i)"},
+		{"append(y - i)", bigIntSetup + "r = []", "for i in range(20000): r.append(y - i)"},
+		{"append(y << 1)", bigIntSetup + "r = []", "for i in range(20000): r.append(y << 1)"},
+		{"append(y >> 1)", bigIntSetup + "r = []", "for i in range(20000): r.append(y >> 1)"},
+		{"append(y & y2)", bigIntSetup + "r = []", "for i in range(20000): r.append(y & y2)"},
+		{"append(~y)", bigIntSetup + "r = []", "for i in range(20000): r.append(~y)"},
+		{"append(-y)", bigIntSetup + "r = []", "for i in range(20000): r.append(-y)"},
+		{"append(y // 3)", bigIntSetup + "r = []", "for i in range(20000): r.append(y // 3)"},
+		{"append(y * 3)", bigIntSetup + "r = []", "for i in range(20000): r.append(y * 3)"},
+		{"append(int(float))", "r = []", "for i in range(20000): r.append(int(1e300))"},
+		{"append(z + i), 64000 bits", hugeIntSetup + "r = []", "for i in range(300): r.append(z + i)"},
+		{"append(z >> 1), 64000 bits", hugeIntSetup + "r = []", "for i in range(300): r.append(z >> 1)"},
+		{"+= with y", bigIntSetup + "r = 0", "for i in range(20000): r += y"},
 	} {
 		m := measure(t, c.setup, c.op)
 		uncharged := (m.retained - m.charged) / m.steps

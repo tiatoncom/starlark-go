@@ -58,8 +58,8 @@ b'c' in bs	1031
 big + 1	262
 big - big2	262
 big & big2	262
-bm * bm	8212
-abs(-big)	263
+bm * bm	8183
+abs(-big)	518
 hash(s)	16391
 float(digits)	2055
 bytes(s)	1031
@@ -224,8 +224,8 @@ small: b'c' in bs	14
 small: big + 1	262
 small: big - big2	262
 small: big & big2	262
-small: bm * bm	8212
-small: abs(-big)	263
+small: bm * bm	8183
+small: abs(-big)	518
 small: hash(s)	132
 small: float(digits)	25
 small: bytes(s)	14

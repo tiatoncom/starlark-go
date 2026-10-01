@@ -246,8 +246,8 @@ var chargeCases = []struct {
 	{"f(a=1) into **kwargs", "def f(**k): return None", "f(a=1)", 512},
 	{"f(**d) with 10 entries: 7 are in the inline bucket", "d = {}\nfor i in range(10): d['k%d' % i] = i\ndef f(**k): return None", "f(**d)", 10*80 + 512 + 3*128},
 	// big integers: the digits of both operands
-	{"bigint*bigint", "x = 1 << 500", "r = x * x", 2 * 63},
-	{"bigint*int", "x = 1 << 500", "r = x * 3", 63},
+	{"bigint*bigint", "x = 1 << 500", "r = x * x", intBytesOfWords(16)},
+	{"bigint*int", "x = 1 << 500", "r = x * 3", intBytesOfWords(8)},
 	{"int*int is free", "x = 1 << 20", "r = x * 3", 0},
 	// built-ins that return a value that already exists are not charged
 	{"len", "x = [1, 2, 3]", "r = len(x)", 0},
@@ -453,16 +453,16 @@ func TestAllocBudget_BigIntSquaringIsBounded(t *testing.T) {
 	// charged the digit bytes of both operands, (BitLen+7)/8 each, before it
 	// is made; work out the iteration that the budget refuses.
 	x := new(big.Int).Lsh(big.NewInt(1), 500)
-	var total uint64
+	total := intBytesOfWords(uint64(len(x.Bits()))) // x = 1 << 500
 	wantIter := -1
 	for i := 0; i < 40; i++ {
-		n := 2 * uint64((x.BitLen()+7)/8)
-		if total+n > budgetMiB {
+		// refused before the product is made, by the bound of its words
+		if total+intBytesOfWords(2*uint64(len(x.Bits()))) > budgetMiB {
 			wantIter = i
 			break
 		}
-		total += n
 		x.Mul(x, x)
+		total += intBytesOfWords(uint64(len(x.Bits())))
 	}
 	if wantIter < 0 {
 		t.Fatal("the model never reaches the budget")

@@ -121,6 +121,9 @@ type workMeter struct {
 const flushWork = 4096
 
 func (m *workMeter) add(n uint64) error {
+	if m == nil {
+		return nil
+	}
 	m.units += n
 	if m.units >= starlark.FreeWork && m.units-m.charged*starlark.WorkPerStep >= flushWork {
 		return m.flush()
@@ -129,7 +132,7 @@ func (m *workMeter) add(n uint64) error {
 }
 
 func (m *workMeter) flush() error {
-	if m.units < starlark.FreeWork {
+	if m == nil || m.units < starlark.FreeWork {
 		return nil
 	}
 	if steps := m.units / starlark.WorkPerStep; steps > m.charged {
@@ -147,14 +150,56 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 	work := workMeter{th: thread} // one unit a node, a quarter a byte quoted
 
-	buf := new(bytes.Buffer)
+	// The output is written twice if it is large (see outBuf): the first
+	// pass counts its bytes, charges them, and enforces the headroom, and
+	// allocates nothing; the second writes into a buffer of the exact size.
+	out := &outBuf{probe: formProbe}
+	var garbage uint64 // bytes of the items of the dictionaries (see encodeTo)
+	stop, err := encodeTo(thread, x, out, &work, thread.AllocHeadroom(), &garbage)
+	if err != nil {
+		if stop != nil {
+			return nil, allocErr(b, stop)
+		}
+		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+	}
+	n := out.n
+	if err := thread.ChargeAlloc(uint64(n)); err != nil {
+		return nil, allocErr(b, err)
+	}
+	if err := work.add(uint64(n) / 4); err != nil { // the quoting
+		return nil, err
+	}
+	if err := work.flush(); err != nil {
+		return nil, err
+	}
+	if !out.counting {
+		return starlark.String(out.b.String()), nil
+	}
+	// The second pass makes the items again.
+	if err := thread.ChargeAlloc(garbage); err != nil {
+		return nil, allocErr(b, err)
+	}
+	w := &outBuf{}
+	w.b.Grow(n)
+	if _, err := encodeTo(thread, x, w, nil, math.MaxUint64, nil); err != nil {
+		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+	}
+	if w.n != n {
+		return nil, fmt.Errorf("%s: internal error: %d bytes were counted as %d", b.Name(), w.n, n)
+	}
+	return starlark.String(w.b.String()), nil
+}
 
+// encodeTo writes the JSON encoding of x to buf. work is the meter of the
+// first pass (nil in the second, whose work is the first's); headroom the
+// size at which the output is refused (stop is then the error: the budget's);
+// garbage is the first pass's, which charges the items of the dictionaries it
+// makes (they are allocated, and garbage at once) and adds them up.
+func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *workMeter, headroom uint64, garbage *uint64) (stop error, _ error) {
 	// The output of a value with shared substructure is exponential in the
 	// depth of the sharing (cycles are detected, shared children are not):
 	// stop as soon as it outgrows the headroom of the thread. Once it has,
 	// ChargeAlloc of its length is refused, which gives the error.
-	headroom := thread.AllocHeadroom()
-	var stop error
 	overflowed := func() bool {
 		if uint64(buf.Len()) <= headroom {
 			return false
@@ -180,23 +225,23 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return true
 	}
 
-	var quoteSpace [128]byte
 	quote := func(s string) bool {
-		// Non-trivial escaping is handled by Go's encoding/json.
-		if isPrintableASCII(s) {
-			if tooBig(quotedLenASCII(s)) {
-				return false
-			}
-			buf.Write(strconv.AppendQuote(quoteSpace[:0], s))
+		// The size of the quoted string is computed before it is written
+		// (and a pass that only counts need not write it).
+		ascii := isPrintableASCII(s)
+		n := 0
+		if ascii {
+			n = quotedLenASCII(s)
 		} else {
-			if tooBig(quotedLen(s)) {
-				return false
-			}
-			// TODO(adonovan): opt: RFC 8259 mandates UTF-8 for JSON.
-			// Can we avoid this call?
-			data, _ := json.Marshal(s)
-			buf.Write(data)
+			n = quotedLen(s)
 		}
+		if tooBig(n) {
+			return false
+		}
+		if buf.skip(n) {
+			return true
+		}
+		buf.writeQuoted(s, ascii)
 		return true
 	}
 
@@ -208,6 +253,10 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	const pathSetDepth = 32
 
 	var emit func(x starlark.Value, depth int) error
+	var emitValue func(x starlark.Value, depth int) error
+	// emit checks the limits and the cycles, and writes the node by emitValue
+	// (the push and the pop of the path are not a defer: a defer in a function
+	// with this many returns is allocated).
 	emit = func(x starlark.Value, depth int) error {
 		if overflowed() {
 			return stop
@@ -225,7 +274,8 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			stop = err
 			return err
 		}
-		if ptr := pointer(x); ptr != nil {
+		ptr := pointer(x)
+		if ptr != nil {
 			var cycle bool
 			if pathSet != nil {
 				_, cycle = pathSet[ptr]
@@ -245,14 +295,34 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					pathSet[p] = struct{}{}
 				}
 			}
-			defer func() {
-				if pathSet != nil {
-					delete(pathSet, path[len(path)-1])
-				}
-				path = path[0 : len(path)-1]
-			}()
 		}
-
+		err := emitValue(x, depth)
+		if ptr != nil {
+			if pathSet != nil {
+				delete(pathSet, path[len(path)-1])
+			}
+			path = path[0 : len(path)-1]
+		}
+		return err
+	}
+	// emitSeq writes the elements of a list or a tuple.
+	emitSeq := func(x starlark.Value, seq starlark.Indexable, depth int) error {
+		buf.WriteByte('[')
+		for i := 0; i < seq.Len(); i++ {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := emit(seq.Index(i), depth+1); err != nil {
+				if stop != nil {
+					return stop
+				}
+				return fmt.Errorf("at %s index %d: %v", x.Type(), i, err)
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	}
+	emitValue = func(x starlark.Value, depth int) error {
 		switch x := x.(type) {
 		case json.Marshaler:
 			// Application-defined starlark.Value types
@@ -294,14 +364,20 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					return err
 				}
 			}
-			fmt.Fprint(buf, x)
+			if v, small := x.Int64(); small {
+				var tmp [24]byte
+				buf.Write(strconv.AppendInt(tmp[:0], v, 10))
+			} else {
+				buf.WriteString(x.String())
+			}
 
 		case starlark.Float:
 			if !isFinite(float64(x)) {
 				return fmt.Errorf("cannot encode non-finite float %v", x)
 			}
 			// Float.String always contains a decimal point. (%g does not!)
-			buf.WriteString(x.String())
+			var tmp [40]byte
+			buf.Write(appendFloat(tmp[:0], float64(x)))
 
 		case starlark.String:
 			if !quote(string(x)) {
@@ -312,6 +388,15 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			// e.g. dict (must have string keys)
 			buf.WriteByte('{')
 			items := x.Items()
+			if garbage != nil {
+				// The items are allocated, so they are charged.
+				n := satMul(uint64(len(items)), jsonItemBytes)
+				if err := thread.ChargeAlloc(n); err != nil {
+					stop = err
+					return err
+				}
+				*garbage = satAdd(*garbage, n)
+			}
 			for _, item := range items {
 				if _, ok := item[0].(starlark.String); !ok {
 					return fmt.Errorf("%s has %s key, want string", x.Type(), item[0].Type())
@@ -338,23 +423,29 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			}
 			buf.WriteByte('}')
 
+		case *starlark.List:
+			return emitSeq(x, x, depth) // (no iterator to allocate)
+
+		case starlark.Tuple:
+			return emitSeq(x, x, depth)
+
 		case starlark.Iterable:
-			// e.g. tuple, list
 			buf.WriteByte('[')
 			iter := x.Iterate()
-			defer iter.Done()
 			var elem starlark.Value
 			for i := 0; iter.Next(&elem); i++ {
 				if i > 0 {
 					buf.WriteByte(',')
 				}
 				if err := emit(elem, depth+1); err != nil {
+					iter.Done()
 					if stop != nil {
 						return stop
 					}
 					return fmt.Errorf("at %s index %d: %v", x.Type(), i, err)
 				}
 			}
+			iter.Done()
 			buf.WriteByte(']')
 
 		case starlark.HasAttrs:
@@ -396,21 +487,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 
 	if err := emit(x, 0); err != nil {
-		if stop != nil {
-			return nil, allocErr(b, stop)
-		}
-		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+		return stop, err
 	}
-	if err := thread.ChargeAlloc(uint64(buf.Len())); err != nil {
-		return nil, allocErr(b, err)
-	}
-	if err := work.add(uint64(buf.Len()) / 4); err != nil { // the quoting
-		return nil, err
-	}
-	if err := work.flush(); err != nil {
-		return nil, err
-	}
-	return starlark.String(buf.String()), nil
+	return nil, nil
 }
 
 // short cuts a string that is embedded in an error message.
@@ -557,18 +636,41 @@ func encodeIndent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tu
 	if err != nil {
 		return nil, err
 	}
-	if err := thread.ChargeAlloc(indentSize(string(str.(starlark.String)), prefix, indent)); err != nil {
-		return nil, allocErr(b, err)
-	}
-	// The scan and the indentation: ~2 ns a byte of the input.
-	if err := chargeUnits(thread, uint64(len(str.(starlark.String)))/4); err != nil {
+	out, err := indentString(thread, b, string(str.(starlark.String)), prefix, indent)
+	if err != nil {
 		return nil, err
 	}
-	var buf bytes.Buffer
-	if err := json.Indent(&buf, []byte(str.(starlark.String)), prefix, indent); err != nil {
-		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+	return starlark.String(out), nil
+}
+
+// indentString is json.Indent of str, charged and allocated once: the buffer
+// is made of the size that is charged (the bound of the output, or what
+// json.Indent grows it to), the input is not copied, and the output is not
+// copied into a string.
+func indentString(thread *starlark.Thread, b *starlark.Builtin, str, prefix, indent string) (string, error) {
+	// json.Indent grows its buffer by twice the input before it writes.
+	size := max(indentSize(str, prefix, indent), 2*uint64(len(str)))
+	if err := thread.ChargeAlloc(size); err != nil {
+		return "", allocErr(b, err)
 	}
-	return starlark.String(buf.String()), nil
+	// The scan and the indentation: ~2 ns a byte of the input.
+	if err := chargeUnits(thread, uint64(len(str))/4); err != nil {
+		return "", err
+	}
+	if len(str) == 0 {
+		return "", nil
+	}
+	var buf bytes.Buffer
+	buf.Grow(int(size))
+	// (json.Indent reads src and does not keep it: no copy of str is needed.)
+	src := unsafe.Slice(unsafe.StringData(str), len(str))
+	if err := json.Indent(&buf, src, prefix, indent); err != nil {
+		return "", fmt.Errorf("%s: %v", b.Name(), err)
+	}
+	if buf.Len() == 0 {
+		return "", nil
+	}
+	return unsafe.String(&buf.Bytes()[0], buf.Len()), nil
 }
 
 func pointer(i any) unsafe.Pointer {
@@ -616,18 +718,11 @@ func indent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return nil, err
 	}
 
-	if err := thread.ChargeAlloc(indentSize(str, prefix, indent)); err != nil {
-		return nil, allocErr(b, err)
-	}
-	// The scan and the indentation: ~2 ns a byte of the input.
-	if err := chargeUnits(thread, uint64(len(str))/4); err != nil {
+	out, err := indentString(thread, b, str, prefix, indent)
+	if err != nil {
 		return nil, err
 	}
-	buf := new(bytes.Buffer)
-	if err := json.Indent(buf, []byte(str), prefix, indent); err != nil {
-		return nil, fmt.Errorf("%s: %v", b.Name(), err)
-	}
-	return starlark.String(buf.String()), nil
+	return starlark.String(out), nil
 }
 
 func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (v starlark.Value, err error) {
@@ -884,6 +979,17 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					}
 					return starlark.Float(x)
 				} else {
+					if len(digits) <= 9 {
+						// fits in 32 bits: no big.Int
+						v := 0
+						for k := 0; k < len(digits); k++ {
+							v = v*10 + int(digits[k]-'0')
+						}
+						if num[0] == '-' {
+							v = -v
+						}
+						return starlark.MakeInt(v)
+					}
 					x, ok := new(big.Int).SetString(num, 10)
 					if !ok {
 						fail("invalid number: %s", short(num))
@@ -936,4 +1042,156 @@ func chargeUnits(th *starlark.Thread, units uint64) error {
 		return nil
 	}
 	return th.ChargeSteps(units / starlark.WorkPerStep)
+}
+
+// jsonItemBytes is the size of an item of Items() (a pair of values and the
+// slice that holds them), rounded up.
+const jsonItemBytes = 64
+
+// formProbe is the size up to which an output is made in one pass (the garbage
+// of an output that outgrows it is at most 5 * formProbe bytes).
+const formProbe = 4096
+
+// An outBuf is where an output is written. It counts the bytes written, and
+// keeps them, unless it is counting only (an output that outgrew its probe,
+// which the second pass writes into a buffer of the exact size): a buffer that
+// grows by append allocates five times what it holds, and copying it into a
+// string once more.
+type outBuf struct {
+	b        strings.Builder
+	n        int
+	probe    int // if > 0, count only once n would exceed it
+	counting bool
+}
+
+func (o *outBuf) Len() int { return o.n }
+
+func (o *outBuf) room(n int) {
+	if o.probe > 0 && !o.counting && o.n+n > o.probe {
+		o.counting = true
+		o.b = strings.Builder{}
+	}
+}
+
+// skip counts n bytes that are not written if the buffer is counting only, and
+// reports whether it did.
+func (o *outBuf) skip(n int) bool {
+	o.room(n)
+	if o.counting {
+		o.n += n
+		return true
+	}
+	return false
+}
+
+func (o *outBuf) Write(p []byte) (int, error) {
+	o.room(len(p))
+	o.n += len(p)
+	if !o.counting {
+		o.b.Write(p)
+	}
+	return len(p), nil
+}
+
+func (o *outBuf) WriteString(s string) (int, error) {
+	o.room(len(s))
+	o.n += len(s)
+	if !o.counting {
+		o.b.WriteString(s)
+	}
+	return len(s), nil
+}
+
+func (o *outBuf) WriteByte(c byte) error {
+	o.room(1)
+	o.n++
+	if !o.counting {
+		o.b.WriteByte(c)
+	}
+	return nil
+}
+
+// writeQuoted writes the JSON string s in pieces, so that no copy of the
+// quoted string is made. ascii says that s is printable ASCII.
+func (o *outBuf) writeQuoted(s string, ascii bool) {
+	var tmp [512]byte
+	if ascii {
+		o.WriteByte('"')
+		for len(s) > 0 {
+			n := min(len(s), 128)
+			p := strconv.AppendQuote(tmp[:0], s[:n])
+			o.Write(p[1 : len(p)-1])
+			s = s[n:]
+		}
+		o.WriteByte('"')
+		return
+	}
+	o.WriteByte('"')
+	for len(s) > 0 {
+		n := min(len(s), 64)
+		for k := n; k > 0 && k < len(s) && !utf8.RuneStart(s[k]); k-- {
+			n = k - 1 // not in the middle of a rune
+		}
+		if n == 0 {
+			n = min(len(s), 64)
+		}
+		o.Write(appendJSONString(tmp[:0], s[:n]))
+		s = s[n:]
+	}
+	o.WriteByte('"')
+}
+
+// appendJSONString appends s as encoding/json writes it between the quotes
+// (with the escaping of HTML): see quotedLen.
+func appendJSONString(dst []byte, s string) []byte {
+	const hex = "0123456789abcdef"
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			switch {
+			case b == '"' || b == '\\':
+				dst = append(dst, '\\', b)
+			case b == '\b':
+				dst = append(dst, '\\', 'b')
+			case b == '\f':
+				dst = append(dst, '\\', 'f')
+			case b == '\n':
+				dst = append(dst, '\\', 'n')
+			case b == '\r':
+				dst = append(dst, '\\', 'r')
+			case b == '\t':
+				dst = append(dst, '\\', 't')
+			case b < 0x20 || b == '<' || b == '>' || b == '&':
+				dst = append(dst, '\\', 'u', '0', '0', hex[b>>4], hex[b&0xF])
+			default:
+				dst = append(dst, b)
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			dst = append(dst, `�`...)
+		case r == ' ':
+			dst = append(dst, ` `...)
+		case r == ' ':
+			dst = append(dst, ` `...)
+		default:
+			dst = append(dst, s[i:i+size]...)
+		}
+		i += size
+	}
+	return dst
+}
+
+// appendFloat appends the string form of a finite float: %g with the
+// shortest representation, and a decimal point if there is no exponent.
+func appendFloat(dst []byte, f float64) []byte {
+	n := len(dst)
+	dst = strconv.AppendFloat(dst, f, 'g', -1, 64)
+	if bytes.IndexByte(dst[n:], 'e') < 0 && bytes.IndexByte(dst[n:], '.') < 0 {
+		dst = append(dst, ".0"...)
+	}
+	return dst
 }
