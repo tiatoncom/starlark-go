@@ -159,6 +159,9 @@ retry:
 	ht.tailLink = &insert.next
 
 	ht.len++
+	if m != nil {
+		m.added++ // (what chargeGrowth charges: not the keys that were there)
+	}
 
 	return nil
 }
@@ -381,10 +384,14 @@ func (ht *hashtable) clear() error {
 	if err := ht.checkMutable("clear"); err != nil {
 		return err
 	}
+	// The table goes back to the one of a new table: clearing a table that has
+	// grown to a million buckets by zeroing them would take that long for
+	// every clear, whatever the length (a loop of `d[k] = v; d.clear()`).
+	if len(ht.table) > 1 {
+		ht.table = ht.bucket0[:1]
+	}
 	if ht.table != nil {
-		for i := range ht.table {
-			ht.table[i] = bucket{}
-		}
+		ht.table[0] = bucket{}
 	}
 	ht.head = nil
 	ht.tailLink = &ht.head

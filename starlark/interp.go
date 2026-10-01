@@ -24,26 +24,19 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	// but allows CALL to avoid a copy.
 
 	f := fn.funcode
-	if f.Prog.Recursion {
-		// prevent stack overflow
-		//
-		// Each CallInternal recursion (via Call) uses ~1.4KB,
-		// but the stack limit is on the order of 1GB, so a
-		// maximum of about 700K recursive calls is possible.
-		// Limit it to much less here.
-		if len(thread.stack) > 100_000 {
-			return nil, fmt.Errorf("Starlark stack overflow")
-		}
-	} else {
+
+	// The depth of the stack of calls is bounded, with or without recursion:
+	// a chain of a hundred thousand different functions is as deep as a
+	// recursion, and as much of the Go stack (see SetMaxCallStackDepth).
+	if len(thread.stack) > thread.maxCallDepth() {
+		return nil, fmt.Errorf("Starlark stack overflow")
+	}
+	if !f.Prog.Recursion {
 		// detect recursion
-		for _, fr := range thread.stack[:len(thread.stack)-1] {
-			// We look for the same function code,
-			// not function value, otherwise the user could
-			// defeat the check by writing the Y combinator.
-			if frfn, ok := fr.Callable().(*Function); ok && frfn.funcode == f {
-				return nil, fmt.Errorf("function %s called recursively", fn.Name())
-			}
+		if err := thread.enterFunction(fn, f); err != nil {
+			return nil, err
 		}
+		defer thread.leaveFunction(f)
 	}
 
 	fr := thread.frameAt(0)
@@ -60,6 +53,14 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	// that is expanded in chunks of min(k, nspace), for k=256 or 1024.
 	nlocals := len(f.Locals)
 	nspace := nlocals + f.MaxStack
+	if nspace > frameFreeSlots {
+		// A function with many parameters and locals makes a large frame at
+		// every call, and binds a default to every parameter: charge it, memory
+		// and work, before it is made.
+		if err := thread.chargeFrame(nspace); err != nil {
+			return nil, thread.evalError(err)
+		}
+	}
 	space := make([]Value, nspace)
 	locals := space[:nlocals:nlocals] // local variables, starting with parameters
 	stack := space[nlocals:]          // operand stack
@@ -109,14 +110,10 @@ loop:
 	for {
 		thread.Steps++
 		if thread.Steps >= thread.maxSteps {
-			if thread.OnMaxSteps != nil {
-				thread.OnMaxSteps(thread)
-			} else {
-				thread.Cancel("too many steps")
-			}
+			thread.stepGate()
 		}
 		if reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); reason != nil {
-			err = fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
+			err = thread.cancelError(*(*string)(reason))
 			break loop
 		}
 
@@ -272,15 +269,14 @@ loop:
 					}
 					// The entries of y are copied in one step: charge them
 					// (an upper bound: keys already in x are charged too).
-					if err2 := thread.charge(dictBytes(xdict.Len()+ydict.Len()), satMul(uint64(ydict.Len()), allocBytesPerEntry)); err2 != nil {
+					if err2 := thread.roomGrowth(xdict.Len(), ydict.Len()); err2 != nil {
 						err = excess(err2, "excessive dict update (%d + %d entries)", xdict.Len(), ydict.Len())
 						break loop
 					}
+					before := xdict.Len()
 					m := thread.meter()
-					if err = xdict.ht.addAllM(&m, &ydict.ht); err != nil {
-						break loop
-					}
-					if err = m.flush(); err != nil {
+					err = xdict.ht.addAllM(&m, &ydict.ht)
+					if err = thread.finishGrowth(before, &m, err); err != nil {
 						break loop
 					}
 					z = xdict

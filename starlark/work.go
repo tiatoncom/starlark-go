@@ -2,89 +2,185 @@ package starlark
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"sync/atomic"
 	"unsafe"
 )
 
-// This file implements the accounting of the TIME that a built-in function or
-// operator takes, in interpreter steps.
+// This file implements the accounting of the TIME that a program takes,
+// beyond its interpreter steps, in units of WORK.
 //
 // A step (Thread.Steps) counts an opcode, and the step limit
-// (SetMaxExecutionSteps) bounds the work of a program by bounding its
-// opcodes. But one opcode, or one call of a built-in, can do work that is
-// linear (or worse) in the size of its operand: `x in l` compares x with every
-// element of l, `s.replace` scans the string, `d[k]` walks a chain of a hash
-// table, `int(s)` is quadratic in the digits of s. Without a charge for that
-// work, the number of steps is unrelated to the time taken: a program of a few
-// dozen steps can run for hours, and cannot be interrupted, because the
-// interpreter looks at the step limit and at cancellation only between
-// opcodes.
+// (SetMaxExecutionSteps) bounds the work of a program by bounding its opcodes.
+// But one opcode, or one call of a built-in, can do work that is linear (or
+// worse) in the size of its operand: `x in l` compares x with every element of
+// l, `s.replace` scans the string, `d[k]` walks a chain of a hash table,
+// `int(s)` is quadratic in the digits of s. Without a charge for that work,
+// the number of steps is unrelated to the time taken: a program of a few dozen
+// steps can run for hours, and cannot be interrupted, because the interpreter
+// looks at the step limit and at cancellation only between opcodes.
 //
-// So an operation charges the steps for the work it does, in units of work
-// declared per primitive (the table in prices.go):
+// The steps are not changed for it: they are what they always were, for any
+// program, whatever its operands. The work is a second counter, with its own
+// limit, and the invariant of the second counter is one sentence:
 //
-//	1 unit of work = one element visited, compared, probed or hashed
-//	                 (~8 ns: measured 3-10 ns for an int or string compare)
-//	WorkPerStep units of work = 1 step
+//	a program that has done W units of work (Thread.Work) has used at most
+//	C * W nanoseconds of CPU, where C is workNanoseconds
 //
-// An operation whose work is below FreeWork units costs no step beyond those
-// of the opcodes, and the remainder is not carried to the next operation: the
-// number of steps of a program whose operands are all small (under
-// WorkPerStep elements, whatever the weight of an element: at most 4 units) is
-// exactly what it was before the work was accounted. The charge is made BEFORE the work where
-// its size is known in advance, so an operation that does not fit in the
-// remaining steps is refused instead of run; where the size is not known (an
-// iterator, a comparison that stops at the first difference) it is made in
-// chunks as the work goes on, and the operation stops at the chunk where the
-// limit is reached.
+// A unit of work is about the time of one simple step of the interpreter. Every
+// step is a unit, so the work is never less than the steps; the rest is what
+// the operations charge for what they do (the table of prices in prices.go):
+// the elements they visit, compare, probe, hash or copy, the bytes they scan,
+// and the memory they allocate (garbage costs the allocator and the collector
+// time too, and counts).
 //
-// The charge is made in exactly the way the interpreter makes it at an opcode:
-// Steps is increased, OnMaxSteps (or Cancel("too many steps")) is called if the
-// limit is reached, and a cancelled thread makes the operation fail with the
-// error of the interpreter. A host that arms OnMaxSteps to poll its context
-// every N steps (the engine does, every 1024) therefore also polls it during a
-// long operation, at most N steps late.
+// An operation charges the work BEFORE it does it where its size is known in
+// advance, so an operation that does not fit in what is left of the limit is
+// refused instead of run; where the size is not known (an iterator, a
+// comparison that stops at the first difference) it charges in chunks as it
+// goes (a meter), and stops at the chunk where the limit is reached.
 //
-// WorkPerStep is a measured trade-off (see prices.go): one step of an opcode
-// takes 2.5-9 ns, one unit of work ~8 ns, so equal time per step would be
-// 1 unit; but the steps of every program whose operands are below
-// WorkPerStep must not change, and the engine has handlers with lists of a few
-// dozen elements. At 16 the free window of an operation is 15 units
-// (~120 ns, within an order of magnitude of what the opcodes around it cost),
-// and the most time that a program can get out of one step of the limit is
-// WorkPerStep * 8 ns = 128 ns: the 10M steps of the engine's default limit
-// are at most ~1.3 s of work.
-const WorkPerStep = 16
+// When the limit is reached the operation fails with a *WorkBudgetError, the
+// thread is cancelled (so that the host's built-ins, which may swallow an
+// error, are stopped at the next opcode), and Work() is the limit, not more.
+// The thread also notices a cancellation by the host (Thread.Cancel) at every
+// charge, so a long operation is stopped as promptly as a long loop.
+const workNanoseconds = 10
 
-// FreeWork is the work, in units, under which an operation is not charged:
-// 4 steps' worth, ~0.5 microsecond. An operation that does more work is
-// charged all of it (units / WorkPerStep steps), not the excess.
-const FreeWork = 4 * WorkPerStep
+// workCancelReason is the reason of the cancellation of a thread that has done
+// all the work it may.
+const workCancelReason = "work budget exhausted"
 
-// ChargeSteps adds n steps to the thread, as if the interpreter had executed n
-// more opcodes: it calls OnMaxSteps (or cancels the thread with "too many
-// steps") if the limit is reached, and returns the error of a cancelled thread.
-// A built-in function of the host whose time is not constant calls it, with
-// the work it is about to do divided by WorkPerStep, before it does the work.
+// A WorkBudgetError is the error reported when an operation would take the
+// work of the thread over the limit set by SetMaxWork. The operation did not
+// run (or stopped at a chunk of work): the thread is cancelled, and Work() is
+// the limit.
+//
+// A host recognizes the refusal with errors.As; it need not parse the text.
+type WorkBudgetError struct {
+	Limit     uint64 // the limit, as set by SetMaxWork
+	Charged   uint64 // work charged before the request that was refused
+	Requested uint64 // work the refused request needed (0: the steps reached the limit)
+}
+
+// Error reports the limit only: the other numbers derive from the data of the
+// script.
+func (e *WorkBudgetError) Error() string {
+	return fmt.Sprintf("starlark: work budget exhausted: a thread may do at most %d units of work", e.Limit)
+}
+
+// SetMaxWork sets the limit of the work of this thread (see Work). When an
+// operation would take it over the limit, the operation fails with a
+// *WorkBudgetError and the thread is cancelled. A limit of 0, the default,
+// means no limit: the work is counted all the same.
+func (thread *Thread) SetMaxWork(max uint64) {
+	thread.maxWork = max
+	thread.regate()
+}
+
+// Work returns the work done by this thread so far, in units: its steps, and
+// what the operations charged beyond them. It saturates at MaxUint64. It is
+// counted whether or not there is a limit. After a refusal it is the limit.
+func (thread *Thread) Work() uint64 {
+	return satAdd(thread.Steps, thread.extraWork)
+}
+
+// ChargeWork charges n units of work to the thread. A built-in function of the
+// host whose time is not constant calls it BEFORE it does the work, with the
+// work it is about to do (an element visited or compared, a few bytes scanned,
+// is a unit: see the table in prices.go); if it returns an error, the function
+// must return it and stop, without doing the work. The error is a
+// *WorkBudgetError if the limit would be exceeded, and the error of a
+// cancellation if the thread was cancelled (by the host, or by the work or the
+// step limit): in both the function must return it as it is.
+//
+// A function that does its work in a loop may charge as it goes (a chunk of
+// a few hundred units at a time is as promptly stopped as a chunk of one).
 // n = 0 is free.
-func (thread *Thread) ChargeSteps(n uint64) error {
-	if n == 0 {
+//
+// Like every method of Thread that changes it, ChargeWork must be called only
+// from the goroutine that runs the thread.
+func (thread *Thread) ChargeWork(n uint64) error {
+	if thread == nil {
 		return nil
 	}
-	thread.Steps = satAdd(thread.Steps, n)
-	// (maxSteps is 0, "no limit", until the first call on the thread.)
-	if thread.maxSteps != 0 && thread.Steps >= thread.maxSteps {
+	if n != 0 {
+		if thread.maxWork != 0 {
+			if cur := thread.Work(); n > thread.maxWork-min(cur, thread.maxWork) {
+				return thread.workExhausted(cur, n)
+			}
+		}
+		thread.extraWork = satAdd(thread.extraWork, n)
+		if thread.maxWork != 0 {
+			thread.regate()
+		}
+	}
+	if reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); reason != nil {
+		return thread.cancelError(*(*string)(reason))
+	}
+	return nil
+}
+
+// workExhausted is the refusal of a charge of n at the work cur: the work is
+// the limit, and the thread is cancelled.
+func (thread *Thread) workExhausted(cur, n uint64) error {
+	// Work() = Steps + extraWork is the limit.
+	if thread.maxWork > thread.Steps {
+		thread.extraWork = thread.maxWork - thread.Steps
+	} else {
+		thread.extraWork = 0
+	}
+	e := &WorkBudgetError{Limit: thread.maxWork, Charged: cur, Requested: n}
+	thread.workErr = e
+	thread.Cancel(workCancelReason)
+	thread.regate()
+	return e
+}
+
+// regate sets the step at which the interpreter looks for the limits: the
+// smaller of the host's step limit and the step at which the work would be the
+// limit. (The interpreter compares one number at every step, as it did.)
+func (thread *Thread) regate() {
+	gate := thread.userMaxSteps
+	if gate == 0 {
+		gate = math.MaxUint64
+	}
+	if thread.maxWork != 0 {
+		left := uint64(1)
+		if thread.maxWork > thread.extraWork {
+			left = max(thread.maxWork-thread.extraWork, 1)
+		}
+		gate = min(gate, left)
+	}
+	thread.maxSteps = gate
+}
+
+// stepGate is what the interpreter does when the steps reach the gate: the
+// host's step limit (OnMaxSteps, or Cancel("too many steps")) if it is that,
+// and the work limit if it is that.
+func (thread *Thread) stepGate() {
+	if thread.userMaxSteps != 0 && thread.Steps >= thread.userMaxSteps {
 		if thread.OnMaxSteps != nil {
 			thread.OnMaxSteps(thread)
 		} else {
 			thread.Cancel("too many steps")
 		}
+		return
 	}
-	if reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); reason != nil {
-		return &cancelledError{*(*string)(reason)}
+	if thread.maxWork != 0 && thread.Work() >= thread.maxWork && thread.workErr == nil {
+		thread.workExhausted(thread.Work(), 0)
 	}
-	return nil
+}
+
+// cancelError is the error of a cancelled thread, which an operation returns
+// and the interpreter reports: the work error if that is the reason, and the
+// text of the interpreter otherwise.
+func (thread *Thread) cancelError(reason string) error {
+	if reason == workCancelReason && thread.workErr != nil {
+		return thread.workErr
+	}
+	return &cancelledError{reason}
 }
 
 // A cancelledError is the error of an operation that found the thread
@@ -96,28 +192,28 @@ func (e *cancelledError) Error() string {
 	return "Starlark computation cancelled: " + e.reason
 }
 
-// chargeWork charges units of work, if they make at least one step. A nil
-// thread (the exported functions that take none) is not charged.
+// chargeWork charges units of work. A nil thread (the exported functions that
+// take none) is not charged.
 func (thread *Thread) chargeWork(units uint64) error {
-	if units < FreeWork || thread == nil {
+	if thread == nil {
 		return nil
 	}
-	return thread.ChargeSteps(units / WorkPerStep)
+	return thread.ChargeWork(units)
 }
 
 // flushWork is how much work a meter accumulates before it charges it.
-const flushWork = 4096
+const flushWork = 1024
 
 // A meter accumulates the work of one operation whose size is not known in
 // advance, and charges it as it grows (every flushWork units) and at the end,
-// so that a long operation is stopped near the limit, not after it. The
-// remainder below one step is dropped at the end of the operation. A nil
+// so that a long operation is stopped near the limit, not after it. A nil
 // meter, or one of a nil thread, does nothing, so that the code of an
 // operation is the same for the exported functions that have no thread.
 type meter struct {
 	thread  *Thread
 	units   uint64 // work so far
-	charged uint64 // steps charged so far
+	charged uint64 // units charged so far
+	added   int    // entries added to hash tables so far (for chargeGrowth)
 }
 
 // add records n units of work.
@@ -126,15 +222,7 @@ func (m *meter) add(n uint64) error {
 		return nil
 	}
 	m.units += n // (the units of one operation cannot overflow: they are sizes of memory that exists)
-	if m.units < FreeWork {
-		return nil // the common case: a small operation
-	}
-	return m.addSlow()
-}
-
-// addSlow is add past the free window: charge when a chunk has built up.
-func (m *meter) addSlow() error {
-	if m.units-m.charged*WorkPerStep >= flushWork {
+	if m.units-m.charged >= flushWork {
 		return m.flush()
 	}
 	return nil
@@ -142,19 +230,12 @@ func (m *meter) addSlow() error {
 
 // flush charges the work recorded so far.
 func (m *meter) flush() error {
-	if m == nil || m.units < FreeWork || m.thread == nil {
+	if m == nil || m.thread == nil {
 		return nil
 	}
-	return m.flushSlow()
-}
-
-func (m *meter) flushSlow() error {
-	if steps := m.units / WorkPerStep; steps > m.charged {
-		n := steps - m.charged
-		m.charged = steps
-		return m.thread.ChargeSteps(n)
-	}
-	return nil
+	n := m.units - m.charged
+	m.charged = m.units
+	return m.thread.ChargeWork(n)
 }
 
 // meter returns a meter for the work of one operation of thread.

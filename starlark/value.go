@@ -861,7 +861,7 @@ type Builtin struct {
 	// the call, and the shallow size of the result after it, unless the price
 	// says that the built-in charged it itself or returned a value that
 	// exists already (alloc.go). The host charges the work of its own
-	// built-ins with ChargeSteps and ChargeAlloc.
+	// built-ins with ChargeWork and ChargeAlloc.
 	price *price
 }
 
@@ -1452,7 +1452,9 @@ func (s *Set) symmetricDifferenceM(m *meter, other Iterator) (Value, error) {
 			return nil, err
 		}
 		if !found {
-			if err := diff.insertM(m, x); err != nil {
+			// (an element that cannot be inserted, one that is not hashable
+			// when the receiver is empty, is left out, as in v0.2.0)
+			if err := diff.insertM(m, x); err != nil && isResourceError(err) {
 				return nil, err
 			}
 		}
@@ -1592,9 +1594,12 @@ const MaxIntBits = 14285
 
 const maxIntBits = MaxIntBits
 
-// A leaf that does not fit in what remains of the limit is cut at this many
-// bytes in an error message (see errValue).
-const errValueLimit = 96
+// errValueLimit is the size of the form of a value (of a name, a literal) in
+// the text of an error under which it is printed whole, as it was in v0.2.0: a
+// key, a name, a literal of up to this many bytes is in the message as it is.
+// A longer one is cut to this many bytes and marked, since the message must not
+// be as large as the value, which can be megabytes (see errValue, errStr).
+const errValueLimit = 256
 
 // toString returns the string form of value v.
 // It may be more efficient than v.String() for larger values.
@@ -1605,13 +1610,15 @@ func toString(v Value) string {
 	return out.String()
 }
 
-// errValue returns the string form of v for an error message: at most about
-// errValueLimit bytes, cut and marked if it is longer. The text of an error
-// that embeds a value of the script (a dict key, a string that fails to
-// parse) must not be as large as the value, which can be megabytes.
+// errValue returns the string form of v for an error message: the form itself
+// if it is of at most errValueLimit bytes, and else its first errValueLimit
+// bytes, marked. The text of an error that embeds a value of the script (a dict
+// key, a string that fails to parse) must not be as large as the value, which
+// can be megabytes.
 func errValue(v Value) string {
 	var out sink
-	w := valueWriter{out: &out, limit: errValueLimit, cut: true}
+	// (the writer refuses a form of the limit's size: allow one byte more)
+	w := valueWriter{out: &out, limit: errValueLimit + 1, cut: true}
 	w.write(v, 0)
 	return out.String()
 }
@@ -1767,7 +1774,7 @@ func (w *valueWriter) leaf(n int, exact bool, emit func(), cut func(room int) st
 		}
 		emit()
 	case w.cut:
-		if room := w.limit - w.out.Len(); room > 0 {
+		if room := w.limit - 1 - w.out.Len(); room > 0 { // (the limit is one more than the form that is cut to)
 			w.out.WriteString(cut(room))
 		}
 		w.full()
@@ -1829,11 +1836,11 @@ func (w *valueWriter) write(x Value, depth int) {
 
 	case String:
 		w.leaf(syntax.QuoteLen(string(x), false), true, func() { w.out.writeQuoted(string(x), false) },
-			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), false) })
+			func(room int) string { return quotedPrefix(string(x), false, room) })
 
 	case Bytes:
 		w.leaf(syntax.QuoteLen(string(x), true), true, func() { w.out.writeQuoted(string(x), true) },
-			func(room int) string { return syntax.Quote(string(x[:min(len(x), room/4)]), true) })
+			func(room int) string { return quotedPrefix(string(x), true, room) })
 
 	case *List:
 		w.out.WriteByte('[')
@@ -2097,4 +2104,27 @@ func (b Bytes) Has(y Value) (bool, error) {
 	default:
 		return false, fmt.Errorf("'in bytes' requires bytes or int as left operand, not %s", y.Type())
 	}
+}
+
+// quotedPrefix is the first room bytes (or fewer, to end at the start of a
+// character) of syntax.Quote(s, bytes), made without quoting the whole of s.
+func quotedPrefix(s string, bytes bool, room int) string {
+	buf := make([]byte, 0, min(room, len(s)*4)+16)
+	if bytes {
+		buf = append(buf, 'b')
+	}
+	buf = append(buf, '"')
+	for len(s) > 0 && len(buf) <= room {
+		_, w := utf8.DecodeRuneInString(s)
+		buf = syntax.AppendQuoted(buf, s[:w])
+		s = s[w:]
+	}
+	if len(buf) > room {
+		cut := room
+		for cut > 0 && !utf8.RuneStart(buf[cut]) {
+			cut--
+		}
+		buf = buf[:cut]
+	}
+	return string(buf)
 }

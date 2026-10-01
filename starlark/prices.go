@@ -5,7 +5,7 @@ import (
 )
 
 // The price of every built-in function and method of this package, in units of
-// work (work.go: WorkPerStep units = 1 step).
+// work (work.go).
 //
 // A price is one of:
 //
@@ -178,7 +178,7 @@ func strBytesAt(a Tuple, i int) int {
 
 // dictPrices are the prices of the methods of dict.
 var dictPrices = map[string]price{
-	"clear":      work("one unit per 4 entries (the buckets are zeroed)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlots(recvLen(r)) }),
+	"clear":      o1("the table is replaced by that of a new dict (not zeroed)"),
 	"get":        inside("hash of the key, chain of the bucket"),
 	"items":      work("3 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 3 * uint64(recvLen(r)) }),
 	"keys":       work("3 units per entry", func(r Value, _ Tuple, _ []Tuple) uint64 { return 3 * uint64(recvLen(r)) }),
@@ -223,7 +223,7 @@ func indexArg(a Tuple, i int) int {
 // setPrices are the prices of the methods of set.
 var setPrices = map[string]price{
 	"add":                  inside("hash of the element, chain of the bucket, an insert"),
-	"clear":                work("one unit per 4 entries", func(r Value, _ Tuple, _ []Tuple) uint64 { return workSlots(recvLen(r)) }),
+	"clear":                o1("the table is replaced by that of a new set (not zeroed)"),
 	"difference":           inside("a copy of the set and a delete per element of the argument"),
 	"discard":              inside("hash of the element, chain of the bucket"),
 	"intersection":         inside("a lookup per element of the argument"),

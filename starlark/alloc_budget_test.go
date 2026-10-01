@@ -117,6 +117,9 @@ func db(n int) uint64 { return 512 + 128*uint64(max(n-7, 0)) }
 // Each case runs "setup", then op, and the bytes charged by op alone are
 // compared with want, which is written out from the formulas of alloc.go.
 // Operands are made in the setup: a literal in op is charged too.
+// seven is a dict at the end of its inline bucket.
+const seven = "a = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7}"
+
 var chargeCases = []struct {
 	name  string
 	setup string
@@ -182,11 +185,11 @@ var chargeCases = []struct {
 	{"list()", "", "r = list()", lb(0)},
 	{"tuple(range)", "", "r = tuple(range(10))", tb(10)},
 	{"tuple()", "", "r = tuple()", 0},
-	{"set(range)", "", "r = set(range(10))", 512 + 10*128},
+	{"set(range)", "", "r = set(range(10))", db(10)}, // (the entries past the inline bucket)
 	{"set()", "", "r = set()", db(0)},
 	{"dict()", "", "r = dict()", db(0)},
-	{"dict(pairs)", "x = [(1, 2), (3, 4)]", "r = dict(x)", 512 + 2*128},
-	{"dict(dict)", "x = {1: 2, 3: 4, 5: 6}", "r = dict(x)", 512 + 3*128},
+	{"dict(pairs)", "x = [(1, 2), (3, 4)]", "r = dict(x)", db(2)},
+	{"dict(dict)", "x = {1: 2, 3: 4, 5: 6}", "r = dict(x)", db(3)},
 	{"sorted", "x = [3, 1, 2]", "r = sorted(x)", lb(3)},
 	{"sorted/key", "x = [3, 1, 2]\ndef k(v): return -v", "r = sorted(x, key=k)", lb(3) + lb(3)},
 	{"reversed", "x = [1, 2, 3]", "r = reversed(x)", lb(3)},
@@ -208,9 +211,13 @@ var chargeCases = []struct {
 	{"dict.keys", "d = {'a': 1, 'b': 2}", "r = d.keys()", lb(2)},
 	{"dict.values", "d = {'a': 1, 'b': 2}", "r = d.values()", lb(0) + 2*80},
 	{"dict|dict", "a = {'a': 1, 'b': 2}; b = {'c': 3}", "r = a | b", db(3)},
-	{"dict|=dict", "a = {'a': 1, 'b': 2}; b = {'c': 3}", "a |= b", 1 * 128},
-	{"dict.update(dict)", "a = {'a': 1}; b = {'a': 2, 'b': 3, 'c': 4}", "a.update(b)", 3 * 128},
-	{"dict.update(pairs)", "a = {'a': 1}; b = [('b', 2), ('c', 3)]", "a.update(b)", 2 * 128},
+	// the entries that are ADDED are charged, past the inline bucket of 7: a key
+	// that is in the dict already is not
+	{"dict|=dict", seven + "; b = {'x': 3}", "a |= b", 1 * 128},
+	{"dict|=dict with the same keys", seven + "; b = {'a': 3, 'b': 4}", "a |= b", 0},
+	{"dict.update(dict)", seven + "; b = {'a': 2, 'x': 3, 'y': 4}", "a.update(b)", 2 * 128},
+	{"dict.update(pairs)", seven + "; b = [('x', 2), ('y', 3)]", "a.update(b)", 2 * 128},
+	{"dict.update(itself)", seven, "a.update(a)", 0},
 	{"set|set", "a = set([1, 2, 3]); b = set([3, 4])", "r = a | b", db(5)},
 	{"set&set", "a = set([1, 2, 3]); b = set([3, 4])", "r = a & b", db(2)},
 	{"set-set", "a = set([1, 2, 3]); b = set([3, 4])", "r = a - b", db(3)},
@@ -219,7 +226,8 @@ var chargeCases = []struct {
 	{"set.intersection", "a = set([1, 2, 3]); b = set([3, 4])", "r = a.intersection(b)", db(2)},
 	{"set.difference", "a = set([1, 2, 3]); b = set([3, 4])", "r = a.difference(b)", db(3)},
 	{"set.symmetric_difference", "a = set([1, 2, 3]); b = set([3, 4])", "r = a.symmetric_difference(b)", db(5)},
-	{"set.update", "a = set([1, 2, 3]); b = [3, 4]", "a.update(b)", 2 * 128},
+	{"set.update", "a = set(range(7)); b = [3, 40, 100]", "a.update(b)", 2 * 128},
+	{"set.update with the same elements", "a = set(range(7)); b = list(a)", "a.update(b)", 0},
 	// literals and creation: the base of every container, and a function
 	{"[]", "", "r = []", lb(0)},
 	{"[1, 2, 3]", "", "r = [1, 2, 3]", lb(3)},
@@ -957,7 +965,7 @@ func TestAllocCharge_UnknownLengthExact(t *testing.T) {
 		{"enumerate", "", "r = enumerate(lazy(3))", lb(0) + 3*80},
 		{"zip", "", "r = zip(lazy(3), lazy(3))", lb(0) + 3*80},
 		{"bytes", "", "r = bytes(lazy(3))", 3},
-		{"dict", "", "r = dict(lazy_pairs(3))", db(0) + 3*128},
+		{"dict", "", "r = dict(lazy_pairs(3))", db(3)},
 		{"list.extend", "x = [1]", "x.extend(lazy(3))", 3 * 32},
 		{"list+=", "x = [1]", "x += lazy(3)", 3 * 32},
 		{"f(*x)", "def f(*a): return None", "f(*lazy(3))", 3*32 + tb(3)},
@@ -1043,8 +1051,8 @@ func TestAllocCharge_MappingOfUnknownLength(t *testing.T) {
 		name, setup, op string
 		want            uint64
 	}{
-		{"dict(m)", "", "r = dict(lazy_map(3))", db(0) + 3*128},
-		{"dict.update(m)", "d = {}", "d.update(lazy_map(3))", 3 * 128},
+		{"dict(m)", "", "r = dict(lazy_map(3))", db(3)},
+		{"dict.update(m)", "d = {}\nfor i in range(100, 107): d[i] = i", "d.update(lazy_map(3))", 3 * 128},
 		{"f(**m)", "def f(**k): return None", "f(**lazy_map(3))", 3*80 + 512},
 	} {
 		r := runProgWith(t, 0, c.setup+"\nmark()\n"+c.op+"\nmark()\n", lazyMapBuiltins())

@@ -109,38 +109,35 @@ var Module = &starlarkstruct.Module{
 }
 
 // A workMeter accumulates the work of one call of a function of this module,
-// in units (starlark.WorkPerStep of them make a step), and charges it to the
-// thread as it grows, so that a long call is stopped near the step limit. It is
-// the meter of the starlark package, for a function that is not in it.
+// in units of work (see starlark.Thread.ChargeWork), and charges it to the
+// thread as it grows, so that a long call is stopped near the limit. It is the
+// meter of the starlark package, for a function that is not in it.
 type workMeter struct {
 	th      *starlark.Thread
 	units   uint64
 	charged uint64
 }
 
-const flushWork = 4096
+const flushWork = 1024
 
 func (m *workMeter) add(n uint64) error {
 	if m == nil {
 		return nil
 	}
 	m.units += n
-	if m.units >= starlark.FreeWork && m.units-m.charged*starlark.WorkPerStep >= flushWork {
+	if m.units-m.charged >= flushWork {
 		return m.flush()
 	}
 	return nil
 }
 
 func (m *workMeter) flush() error {
-	if m == nil || m.units < starlark.FreeWork {
+	if m == nil {
 		return nil
 	}
-	if steps := m.units / starlark.WorkPerStep; steps > m.charged {
-		n := steps - m.charged
-		m.charged = steps
-		return m.th.ChargeSteps(n)
-	}
-	return nil
+	n := m.units - m.charged
+	m.charged = m.units
+	return m.th.ChargeWork(n)
 }
 
 func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -968,8 +965,9 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 				// parse literal
 				if !float && len(digits) > starlark.MaxIntDigits {
-					// The conversion is quadratic in the digits.
-					fail("number has more than %d digits", starlark.MaxIntDigits)
+					// The conversion is quadratic in the digits: a limit, not a
+					// syntax error (the default is not returned for it).
+					panic(refusal{fmt.Errorf("json.decode: number has more than %d digits", starlark.MaxIntDigits)})
 				}
 				spend(uint64(len(num)) * uint64(len(num)) / 4096)
 				if float {
@@ -1035,13 +1033,9 @@ func isdigit(b byte) bool {
 	return b >= '0' && b <= '9'
 }
 
-// chargeUnits charges units of work to the thread, as the starlark package
-// does for an operation of its own: nothing under starlark.FreeWork.
+// chargeUnits charges units of work to the thread.
 func chargeUnits(th *starlark.Thread, units uint64) error {
-	if units < starlark.FreeWork {
-		return nil
-	}
-	return th.ChargeSteps(units / starlark.WorkPerStep)
+	return th.ChargeWork(units)
 }
 
 // jsonItemBytes is the size of an item of Items() (a pair of values and the

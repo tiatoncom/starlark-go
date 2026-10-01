@@ -1230,11 +1230,12 @@ func set(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		n = Len(iterable)
 	}
 	if n >= 0 {
-		b := satAdd(allocBaseDict, satMul(uint64(n), allocBytesPerEntry))
-		if err := thread.charge(b, b); err != nil {
+		// (duplicates are not charged: the entries that are added are)
+		if err := thread.roomEntries(n); err != nil {
 			return nil, excess(err, "set: excessive size (%d elements)", n)
 		}
-	} else if err := thread.chargeEntries(0); err != nil {
+	}
+	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "set: excessive size")
 	}
 	set := new(Set)
@@ -1253,7 +1254,11 @@ func set(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 				return nil, nameErr(b, err)
 			}
 		}
-		if err := m.flush(); err != nil {
+		if n >= 0 {
+			if err := thread.finishGrowth(0, &m, nil); err != nil {
+				return nil, err
+			}
+		} else if err := m.flush(); err != nil { // (charged as it came)
 			return nil, err
 		}
 	}
@@ -1312,9 +1317,9 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 
 	slice := &sortSlice{keys: keys, values: values, m: thread.meter()}
 	if reverse {
-		sort.Stable(sort.Reverse(slice))
+		stableSort(reverseSortSlice{slice}, len(slice.values))
 	} else {
-		sort.Stable(slice)
+		stableSort(slice, len(slice.values))
 	}
 	if slice.stop != nil {
 		return nil, slice.stop
@@ -1334,6 +1339,11 @@ type sortSlice struct {
 }
 
 func (s *sortSlice) Len() int { return len(s.values) }
+
+// reverseSortSlice is sort.Reverse of a sortSlice.
+type reverseSortSlice struct{ *sortSlice }
+
+func (r reverseSortSlice) Less(i, j int) bool { return r.sortSlice.Less(j, i) }
 func (s *sortSlice) Less(i, j int) bool {
 	keys := s.keys
 	if s.keys == nil {
@@ -2112,6 +2122,7 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 // is run twice for a large result).
 func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, args Tuple, kwargs []Tuple) error {
 	var auto, manual bool // kinds of positional indexing used
+	var kwmap map[string]Value
 	index := 0
 	for {
 		literal := format
@@ -2203,11 +2214,22 @@ func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, a
 				arg = args[num]
 			}
 		} else {
-			// keyword argument
-			for _, kv := range kwargs {
-				if string(kv[0].(String)) == name {
-					arg = kv[1]
-					break
+			// keyword argument (a map of them, if there are many: each field
+			// would otherwise look at every one)
+			if len(kwargs) > 8 {
+				if kwmap == nil {
+					kwmap = make(map[string]Value, len(kwargs))
+					for i := len(kwargs) - 1; i >= 0; i-- { // (the first of two equal names wins)
+						kwmap[string(kwargs[i][0].(String))] = kwargs[i][1]
+					}
+				}
+				arg = kwmap[name]
+			} else {
+				for _, kv := range kwargs {
+					if string(kv[0].(String)) == name {
+						arg = kv[1]
+						break
+					}
 				}
 			}
 			if arg == nil {
@@ -2528,32 +2550,112 @@ func string_strip(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		return nil, err
 	}
 	recv := string(b.Receiver().(String))
-	var s string
+	m := thread.meter()
+	var left, right bool
 	switch b.Name()[0] {
 	case 's': // strip
-		if chars != "" {
-			s = strings.Trim(recv, chars)
-		} else {
-			s = strings.TrimSpace(recv)
-		}
+		left, right = true, true
 	case 'l': // lstrip
-		if chars != "" {
-			s = strings.TrimLeft(recv, chars)
-		} else {
-			s = strings.TrimLeftFunc(recv, unicode.IsSpace)
-		}
+		left = true
 	case 'r': // rstrip
-		if chars != "" {
-			s = strings.TrimRight(recv, chars)
-		} else {
-			s = strings.TrimRightFunc(recv, unicode.IsSpace)
-		}
+		right = true
 	}
-	// The work is the bytes that were trimmed, and the set of characters.
-	if err := thread.chargeWork(workSlow(len(recv)-len(s)) + workFast(len(chars))); err != nil {
+	s, err := trimString(&m, recv, chars, left, right)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.flush(); err != nil {
 		return nil, err
 	}
 	return String(s), nil
+}
+
+// A cutset is the set of the characters of the argument of strip: the table of
+// its ASCII characters, and a map of the others, built once, so that trimming
+// is linear in the string and the set (strings.Trim looks every character of
+// the string up in the set by a scan: the product of the two).
+type cutset struct {
+	ascii  [2]uint64
+	others map[rune]struct{}
+	n      int // the characters
+}
+
+func newCutset(chars string) *cutset {
+	c := new(cutset)
+	for _, r := range chars { // (an invalid byte is U+FFFD, as in strings.Trim)
+		c.n++
+		if r < utf8.RuneSelf {
+			c.ascii[r>>6] |= 1 << (r & 63)
+		} else {
+			if c.others == nil {
+				c.others = make(map[rune]struct{})
+			}
+			c.others[r] = struct{}{}
+		}
+	}
+	return c
+}
+
+func (c *cutset) has(r rune) bool {
+	if r < utf8.RuneSelf {
+		return c.ascii[r>>6]&(1<<(r&63)) != 0
+	}
+	_, ok := c.others[r]
+	return ok
+}
+
+// trimString is Trim, TrimLeft or TrimRight of recv by the characters chars
+// (the white space if there are none), charging the work to m as it goes: a
+// unit for each character of the cutset, and one for each two characters that
+// are looked at.
+func trimString(m *meter, recv, chars string, left, right bool) (string, error) {
+	var in func(r rune) bool
+	if chars == "" {
+		in = unicode.IsSpace
+	} else {
+		if err := m.add(uint64(len(chars))); err != nil {
+			return "", err
+		}
+		c := newCutset(chars)
+		in = c.has
+	}
+	s := recv
+	looked := uint64(0)
+	if left {
+		for len(s) > 0 {
+			r, n := rune(s[0]), 1
+			if r >= utf8.RuneSelf {
+				r, n = utf8.DecodeRuneInString(s)
+			}
+			if !in(r) {
+				break
+			}
+			s = s[n:]
+			if looked++; looked%1024 == 0 {
+				if err := m.add(512); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+	if right {
+		for len(s) > 0 {
+			r, n := rune(s[len(s)-1]), 1
+			if r >= utf8.RuneSelf {
+				r, n = utf8.DecodeLastRuneInString(s)
+			}
+			if !in(r) {
+				break
+			}
+			s = s[:len(s)-n]
+			if looked++; looked%1024 == 0 {
+				if err := m.add(512); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+	return s, m.add(looked%1024/2 + 1)
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·title
@@ -2883,17 +2985,17 @@ func set_difference(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Val
 		return nil, err
 	}
 	// The result is a copy of the receiver less some elements.
-	if err := thread.chargeEntries(b.Receiver().(*Set).Len()); err != nil {
+	if err := thread.roomEntries(b.Receiver().(*Set).Len()); err != nil {
+		return nil, excess(err, "difference: excessive size (%d elements)", b.Receiver().(*Set).Len())
+	}
+	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "difference: excessive size (%d elements)", b.Receiver().(*Set).Len())
 	}
 	iter := other.Iterate()
 	defer iter.Done()
 	m := thread.meter()
 	diff, err := b.Receiver().(*Set).differenceM(&m, iter)
-	if err == nil {
-		err = m.flush()
-	}
-	if err != nil {
+	if err = thread.finishGrowth(0, &m, err); err != nil {
 		return nil, nameErr(b, err)
 	}
 	return diff, nil
@@ -2912,17 +3014,17 @@ func set_intersection(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (V
 	if m := Len(other); m >= 0 && m < n {
 		n = m
 	}
-	if err := thread.chargeEntries(n); err != nil {
+	if err := thread.roomEntries(n); err != nil {
+		return nil, excess(err, "intersection: excessive size (%d elements)", n)
+	}
+	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "intersection: excessive size (%d elements)", n)
 	}
 	iter := other.Iterate()
 	defer iter.Done()
 	m := thread.meter()
 	diff, err := b.Receiver().(*Set).intersectionM(&m, iter)
-	if err == nil {
-		err = m.flush()
-	}
-	if err != nil {
+	if err = thread.finishGrowth(0, &m, err); err != nil {
 		return nil, nameErr(b, err)
 	}
 	return diff, nil
@@ -3034,14 +3136,21 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 	}
 	// The result has at most the elements of both operands (when the
 	// length of the other is not known, Call charges the result).
+	known := Len(other) >= 0
 	n := b.Receiver().(*Set).Len() + max(Len(other), 0)
-	if err := thread.chargeEntries(n); err != nil {
+	// (the entries that are added are charged: not the elements of the other
+	// that are in the receiver)
+	if err := thread.roomEntries(n); err != nil {
+		return nil, excess(err, "symmetric_difference: excessive size (%d elements)", n)
+	}
+	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "symmetric_difference: excessive size (%d elements)", n)
 	}
 	iter := other.Iterate()
 	defer iter.Done()
 	var ci *chargedIter
-	if Len(other) < 0 {
+	if !known {
+		// the elements of an iterable of unknown length are charged as they come
 		ci = &chargedIter{Iterator: iter, thread: thread, have: b.Receiver().(*Set).Len(), unit: allocBytesPerEntry}
 		iter = ci
 	}
@@ -3050,7 +3159,9 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 	if ci != nil && ci.err != nil {
 		return nil, ci.err
 	}
-	if err == nil {
+	if known {
+		err = thread.finishGrowth(0, &m, err)
+	} else if err == nil {
 		err = m.flush()
 	}
 	if err != nil {
@@ -3063,7 +3174,10 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 func set_union(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	// The result has at most the elements of the receiver and the arguments.
 	n := b.Receiver().(*Set).Len() + setUpdateLen(args)
-	if err := thread.chargeEntries(n); err != nil {
+	if err := thread.roomEntries(n); err != nil {
+		return nil, excess(err, "union: excessive size (%d elements)", n)
+	}
+	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "union: excessive size (%d elements)", n)
 	}
 	m := thread.meter()
@@ -3074,7 +3188,7 @@ func set_union(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 	if err := setUpdateM(thread, &m, receiverSet, args, kwargs); err != nil {
 		return nil, nameErr(b, err)
 	}
-	return receiverSet, m.flush()
+	return receiverSet, thread.finishGrowth(0, &m, nil)
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·update.
@@ -3083,15 +3197,17 @@ func set_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 	// elements (an upper bound: duplicates are charged).
 	recv := b.Receiver().(*Set)
 	if n := setUpdateLen(args); n > 0 {
-		if err := thread.charge(dictBytes(recv.Len()+n), satMul(uint64(n), allocBytesPerEntry)); err != nil {
+		if err := thread.roomGrowth(recv.Len(), n); err != nil {
 			return nil, excess(err, "update: excessive size (%d elements)", n)
 		}
 	}
+	before := recv.Len()
 	m := thread.meter()
-	if err := setUpdateM(thread, &m, recv, args, kwargs); err != nil {
+	err := setUpdateM(thread, &m, recv, args, kwargs)
+	if err := thread.finishGrowth(before, &m, err); err != nil {
 		return nil, nameErr(b, err)
 	}
-	return None, m.flush()
+	return None, nil
 }
 
 // Common implementation of string_{r}{find,index}.
@@ -3142,35 +3258,52 @@ func string_find_impl(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple, al
 // Common implementation of builtin dict function and dict.update method.
 // Precondition: len(updates) == 0 or 1.
 //
-// The entries of the argument are charged to thread, as an upper bound
-// (duplicate keys are charged): the argument is copied in one step.
+// The entries that are ADDED are charged to thread, one by one as they are:
+// the keys that are in the dict already are not (a dict that is updated with
+// its own keys does not grow). If the number of entries of the argument is
+// known, an update that could not fit is refused before it begins.
 func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh bool) error {
-	// base is charged with the first entries of a dict that dict() makes
-	// (and not charged for dict.update, where the dict exists).
-	base := uint64(0)
 	if fresh {
-		base = allocBaseDict
+		// the dict that dict() makes: its base, after the check that the
+		// entries it is to be made of fit (a refusal charges nothing)
+		n := 0
+		if len(updates) == 1 {
+			n = max(Len(updates[0]), 0)
+		}
+		if err := thread.roomEntries(n); err != nil {
+			return excess(err, "excessive size (%d entries)", n)
+		}
+		if err := thread.chargeEntries(0); err != nil {
+			return excess(err, "excessive size")
+		}
 	}
 	m := thread.meter() // the work of the inserts: hash of the keys, chains
+	// set adds a key and a value, and charges the entry if it is new.
+	set := func(k, v Value) error {
+		oldlen := dict.Len()
+		if err := dict.setKeyM(&m, k, v); err != nil {
+			return err // dict is frozen
+		}
+		return excess(thread.chargeNewEntry(dict, oldlen), "excessive size (over %d entries)", maxAlloc)
+	}
 	if len(updates) == 1 {
 		switch updates := updates[0].(type) {
 		case IterableMapping:
 			// Iterate over dict's key/value pairs, not just keys.
-			n := Len(updates)
-			if n >= 0 {
-				if err := thread.charge(dictBytes(dict.Len()+n), satAdd(base, satMul(uint64(n), allocBytesPerEntry))); err != nil {
+			if n := Len(updates); n >= 0 {
+				if err := thread.roomGrowth(dict.Len(), n); err != nil {
 					return excess(err, "excessive size (%d entries)", n)
 				}
 			}
 			items := updates.Items()
-			if n < 0 {
-				if err := thread.charge(dictBytes(dict.Len()+len(items)), satAdd(base, satMul(uint64(len(items)), allocBytesPerEntry))); err != nil {
+			if Len(updates) < 0 {
+				if err := thread.roomGrowth(dict.Len(), len(items)); err != nil {
 					return excess(err, "excessive size (%d entries)", len(items))
 				}
 			}
 			for _, item := range items {
-				if err := dict.setKeyM(&m, item[0], item[1]); err != nil {
-					return err // dict is frozen
+				if err := set(item[0], item[1]); err != nil {
+					return err
 				}
 			}
 		default:
@@ -3180,24 +3313,13 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh
 				return fmt.Errorf("got %s, want iterable", updates.Type())
 			}
 			defer iter.Done()
-			n := Len(updates)
-			if n >= 0 {
-				if err := thread.charge(dictBytes(dict.Len()+n), satAdd(base, satMul(uint64(n), allocBytesPerEntry))); err != nil {
+			if n := Len(updates); n >= 0 {
+				if err := thread.roomGrowth(dict.Len(), n); err != nil {
 					return excess(err, "excessive size (%d entries)", n)
-				}
-			}
-			if n < 0 && fresh {
-				if err := thread.chargeEntries(0); err != nil {
-					return excess(err, "excessive size")
 				}
 			}
 			var pair Value
 			for i := 0; iter.Next(&pair); i++ {
-				if n < 0 {
-					if err := thread.chargeOne(dict.Len(), allocBytesPerEntry); err != nil {
-						return excess(err, "excessive size (over %d entries)", maxAlloc)
-					}
-				}
 				iter2 := Iterate(pair)
 				if iter2 == nil {
 					return fmt.Errorf("dictionary update sequence element #%d is not iterable (%s)", i, pair.Type())
@@ -3213,7 +3335,7 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh
 				var k, v Value
 				iter2.Next(&k)
 				iter2.Next(&v)
-				if err := dict.setKeyM(&m, k, v); err != nil {
+				if err := set(k, v); err != nil {
 					return err
 				}
 			}
@@ -3223,8 +3345,8 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh
 	// Then add the kwargs.
 	before := dict.Len()
 	for _, pair := range kwargs {
-		if err := dict.setKeyM(&m, pair[0], pair[1]); err != nil {
-			return err // dict is frozen
+		if err := set(pair[0], pair[1]); err != nil {
+			return err
 		}
 	}
 	// In the common case, each kwarg will add another dict entry.
@@ -3291,6 +3413,8 @@ func setUpdateM(thread *Thread, m *meter, s *Set, args Tuple, kwargs []Tuple) er
 func nameErr(b *Builtin, msg any) error {
 	switch err := msg.(type) {
 	case *AllocBudgetError:
+		return err
+	case *WorkBudgetError:
 		return err
 	case *cancelledError:
 		return err

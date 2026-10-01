@@ -345,6 +345,30 @@ type Funcode struct {
 
 	lntOnce sync.Once
 	lnt     []pclinecol // decoded line number table
+
+	paramOnce sync.Once
+	paramIdx  map[string]int // the index of each ordinary parameter by name
+}
+
+// ParamIndex returns the index of each ordinary parameter (not *args or
+// **kwargs) of the function by its name, which a call with many keyword
+// arguments looks up instead of searching for each of them in the list of the
+// parameters (the product of the two). It is built once.
+func (fc *Funcode) ParamIndex() map[string]int {
+	fc.paramOnce.Do(func() {
+		n := fc.NumParams
+		if fc.HasKwargs {
+			n--
+		}
+		if fc.HasVarargs {
+			n--
+		}
+		fc.paramIdx = make(map[string]int, n)
+		for i := 0; i < n; i++ {
+			fc.paramIdx[fc.Locals[i].Name] = i
+		}
+	})
+	return fc.paramIdx
 }
 
 type pclinecol struct {

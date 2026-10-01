@@ -260,13 +260,11 @@ func (thread *Thread) charge(size, bytes uint64) error {
 		return errExcessive
 	}
 	if thread != nil {
-		// Allocating and zeroing memory takes time, ~0.3 ns a byte: charge
-		// it in steps (see work.go). The first allocWorkFree bytes are free,
-		// so that a container's base does not cost a step.
-		if bytes > allocWorkFree {
-			if err := thread.chargeWork((bytes - allocWorkFree) / allocBytesPerWork); err != nil {
-				return err
-			}
+		// Allocating and zeroing memory takes time, and the collector's, and
+		// the memory that is allocated is garbage soon: a unit of work for each
+		// allocBytesPerWork bytes.
+		if err := thread.chargeWork(bytes / allocBytesPerWork); err != nil {
+			return err
 		}
 		thread.allocated = satAdd(thread.allocated, bytes)
 	}
@@ -353,7 +351,7 @@ func excess(err error, format string, args ...any) error {
 // and the host can also recognize it by type through any wrapping.
 func prefixErr(prefix string, err error) error {
 	switch err.(type) {
-	case *AllocBudgetError, *cancelledError:
+	case *AllocBudgetError, *WorkBudgetError, *cancelledError:
 		return err
 	}
 	return fmt.Errorf("%s: %v", prefix, err)
@@ -648,4 +646,75 @@ func (thread *Thread) unaryInt(op syntax.Token, x Int) (Value, error) {
 		return nil, err
 	}
 	return thread.intDone(z.(Int))
+}
+
+// frameFreeSlots is the size of a frame (locals and operand stack, in values)
+// under which a call charges nothing for it: the memory of an ordinary
+// function is garbage as soon as it returns, and its time is that of the
+// opcodes of the call. A function whose frame is larger charges all of it.
+const frameFreeSlots = 64
+
+// chargeFrame charges the frame of a call of nspace values: its memory as
+// allocation, and a unit of work for each of its values besides the memory's
+// (the defaults are bound to the parameters one by one).
+func (thread *Thread) chargeFrame(nspace int) error {
+	b := satMul(uint64(nspace), allocBytesPerValue)
+	if err := thread.charge(b, b); err != nil {
+		return excess(err, "excessive frame (%d values)", nspace)
+	}
+	return thread.chargeWork(uint64(nspace))
+}
+
+// growthBytes is the memory that a dict or set of before entries gains by
+// growing by added entries.
+func growthBytes(before, added int) uint64 {
+	return dictBytes(before+added) - dictBytes(before)
+}
+
+// roomGrowth refuses, before anything is done, a growth of a dict or set of
+// before entries by at most bound entries that would not fit: the check of an
+// operation that charges what it actually adds (the keys that are in the table
+// already are not new), made with the most it could add.
+func (thread *Thread) roomGrowth(before, bound int) error {
+	if bound <= 0 {
+		return nil
+	}
+	return thread.checkRoom(dictBytes(before+bound), growthBytes(before, bound))
+}
+
+// chargeGrowth charges the entries that the operation of m added to a table
+// that had before entries, and not the keys that it only looked up: a table
+// that is updated with its own keys does not grow, and is not charged.
+func (thread *Thread) chargeGrowth(before int, m *meter) error {
+	n := m.added
+	m.added = 0
+	if n == 0 || thread == nil {
+		return nil
+	}
+	b := growthBytes(before, n)
+	if err := thread.chargeBudget(b); err != nil {
+		return err
+	}
+	return thread.chargeWork(b / allocBytesPerWork)
+}
+
+// finishGrowth ends an operation that made a new dict or set (before = 0) or
+// grew one: it flushes the meter, and charges the entries that were added.
+func (thread *Thread) finishGrowth(before int, m *meter, err error) error {
+	if err == nil {
+		err = m.flush()
+	}
+	// (the entries that were added are charged even if the operation failed
+	// part way: they are there)
+	if gerr := thread.chargeGrowth(before, m); err == nil {
+		err = gerr
+	}
+	return err
+}
+
+// roomEntries refuses, before anything is done, a new dict or set of up to n
+// entries that would not fit (nothing is charged).
+func (thread *Thread) roomEntries(n int) error {
+	b := dictBytes(n)
+	return thread.checkRoom(b, b)
 }

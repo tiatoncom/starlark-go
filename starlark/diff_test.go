@@ -2,8 +2,8 @@ package starlark_test
 
 // A differential test against v0.2.0: the same programs, run by v0.2.0 and by
 // this version, must give the same result, the same error text and the same
-// number of steps (Thread.Steps), exactly, when every operand is small; and the
-// same result, with at least as many steps, when an operand is large.
+// number of steps (Thread.Steps), exactly, whatever the operands: the steps are
+// the interpreter's alone, and the time of an operation is in the work.
 //
 // The expectations of v0.2.0 are in testdata/diff_v020.golden (small operands)
 // and testdata/diff_big_v020.golden (large operands). They were produced by
@@ -371,8 +371,8 @@ func TestWriteDiffGolden(t *testing.T) {
 	writeGolden(t, dir+"/"+goldenBig, uniq(bigCorpus()))
 }
 
-// Programs whose operands are all small (every operation does less work than
-// FreeWork) behave exactly as in v0.2.0: result, error text, prints and steps.
+// Programs whose operands are small behave exactly as in v0.2.0: result, error
+// text, prints and steps.
 func TestDifferentialAgainstV020(t *testing.T) {
 	golden := readGolden(t, goldenSmall)
 	if len(golden) < 3583 {
@@ -413,8 +413,7 @@ func TestDifferentialAgainstV020(t *testing.T) {
 	t.Logf("%d programs: results, errors, prints and steps identical to v0.2.0", compared)
 }
 
-// Programs with large operands: the same result, at least as many steps. The
-// table of the steps is the log of the test.
+// Programs with large operands: the same result, error, and steps.
 func TestDifferentialLargeOperands(t *testing.T) {
 	golden := readGolden(t, goldenBig)
 	type row struct {
@@ -432,15 +431,13 @@ func TestDifferentialLargeOperands(t *testing.T) {
 			t.Errorf("%.200q\n   v0.2.0: %s %.100q %.100q\n   now:    %s %.100q %.100q", g.Src, g.Status, g.Result, g.Err, got.Status, got.Result, got.Err)
 			continue
 		}
-		if got.Steps < g.Steps {
+		if got.Steps != g.Steps {
 			t.Errorf("%q: %d steps, v0.2.0 had %d", g.Src, got.Steps, g.Steps)
-		}
-		if got.Steps > g.Steps {
 			rows = append(rows, row{g.Src, g.Steps, got.Steps})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].steps-rows[i].was > rows[j].steps-rows[j].was })
-	t.Logf("%d of %d programs take more steps than in v0.2.0", len(rows), len(golden))
+	t.Logf("%d of %d programs take other steps than in v0.2.0", len(rows), len(golden))
 	for i, r := range rows {
 		if i >= 40 {
 			break

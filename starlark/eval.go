@@ -58,7 +58,29 @@ type Thread struct {
 	// computing the difference in its value before and after a computation.
 	//
 	// The precise meaning of "step" is not specified and may change.
+	//
+	// The steps are those of the interpreter alone, as they were: the time of a
+	// built-in or an operator is not counted in them but in the work of the
+	// thread (work.go).
 	Steps, maxSteps uint64
+
+	// userMaxSteps is the limit that SetMaxExecutionSteps set (0: none), and
+	// maxSteps the step at which the interpreter looks: the smaller of it and
+	// the step at which the work limit is reached (work.go).
+	userMaxSteps uint64
+
+	// callDepth is the limit of the depth of the stack of calls set by
+	// SetMaxCallStackDepth (0: DefaultMaxCallStackDepth), and active the
+	// number of active calls of each function when the stack is deep (see
+	// enterFunction).
+	callDepth int
+	active    map[*compile.Funcode]int32
+	scanned   uint64 // frames looked at by enterFunction (for a test)
+
+	// extraWork is the work charged beyond the steps (each of which is a unit
+	// of work), and maxWork its limit, 0 if none. See work.go.
+	extraWork, maxWork uint64
+	workErr            *WorkBudgetError
 
 	// allocated is the number of bytes charged to this thread and
 	// maxAllocBytes its budget, 0 if none. See alloc.go.
@@ -86,7 +108,8 @@ func (thread *Thread) ExecutionSteps() uint64 {
 // the optional OnMaxSteps function or the default behavior
 // of calling thread.Cancel("too many steps").
 func (thread *Thread) SetMaxExecutionSteps(max uint64) {
-	thread.maxSteps = max
+	thread.userMaxSteps = max
+	thread.regate()
 }
 
 // Uncancel resets the cancellation state.
@@ -937,17 +960,17 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // difference
 			if y, ok := y.(*Set); ok {
-				if err := thread.chargeEntries(x.Len()); err != nil {
+				if err := thread.roomEntries(x.Len()); err != nil {
+					return nil, excess(err, "excessive set difference (%d elements)", x.Len())
+				}
+				if err := thread.chargeEntries(0); err != nil {
 					return nil, excess(err, "excessive set difference (%d elements)", x.Len())
 				}
 				iter := y.Iterate()
 				defer iter.Done()
 				m := thread.meter()
 				z, err := x.differenceM(&m, iter)
-				if err == nil {
-					err = m.flush()
-				}
-				return z, err
+				return z, thread.finishGrowth(0, &m, err)
 			}
 		}
 
@@ -1214,15 +1237,15 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 
 		case *Dict: // union
 			if y, ok := y.(*Dict); ok {
-				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive dict union (%d + %d entries)", x.Len(), y.Len())
+				}
+				if err := thread.chargeEntries(0); err != nil {
 					return nil, excess(err, "excessive dict union (%d + %d entries)", x.Len(), y.Len())
 				}
 				m := thread.meter()
 				z, err := x.unionM(&m, y)
-				if err == nil {
-					err = m.flush()
-				}
-				if err != nil {
+				if err = thread.finishGrowth(0, &m, err); err != nil {
 					return nil, err
 				}
 				return z, nil
@@ -1230,17 +1253,17 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 
 		case *Set: // union
 			if y, ok := y.(*Set); ok {
-				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive set union (%d + %d elements)", x.Len(), y.Len())
+				}
+				if err := thread.chargeEntries(0); err != nil {
 					return nil, excess(err, "excessive set union (%d + %d elements)", x.Len(), y.Len())
 				}
 				iter := Iterate(y)
 				defer iter.Done()
 				m := thread.meter()
 				z, err := x.unionM(&m, iter)
-				if err == nil {
-					err = m.flush()
-				}
-				return z, err
+				return z, thread.finishGrowth(0, &m, err)
 			}
 		}
 
@@ -1258,17 +1281,17 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // intersection
 			if y, ok := y.(*Set); ok {
-				if err := thread.chargeEntries(min(x.Len(), y.Len())); err != nil {
+				if err := thread.roomEntries(min(x.Len(), y.Len())); err != nil {
+					return nil, excess(err, "excessive set intersection (%d, %d elements)", x.Len(), y.Len())
+				}
+				if err := thread.chargeEntries(0); err != nil {
 					return nil, excess(err, "excessive set intersection (%d, %d elements)", x.Len(), y.Len())
 				}
 				iter := y.Iterate()
 				defer iter.Done()
 				m := thread.meter()
 				z, err := x.intersectionM(&m, iter)
-				if err == nil {
-					err = m.flush()
-				}
-				return z, err
+				return z, thread.finishGrowth(0, &m, err)
 			}
 		}
 
@@ -1286,17 +1309,17 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // symmetric difference
 			if y, ok := y.(*Set); ok {
-				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive set symmetric difference (%d + %d elements)", x.Len(), y.Len())
+				}
+				if err := thread.chargeEntries(0); err != nil {
 					return nil, excess(err, "excessive set symmetric difference (%d + %d elements)", x.Len(), y.Len())
 				}
 				iter := y.Iterate()
 				defer iter.Done()
 				m := thread.meter()
 				z, err := x.symmetricDifferenceM(&m, iter)
-				if err == nil {
-					err = m.flush()
-				}
-				return z, err
+				return z, thread.finishGrowth(0, &m, err)
 			}
 		}
 
@@ -1706,6 +1729,13 @@ func setArgs(thread *Thread, locals []Value, fn *Function, args Tuple, kwargs []
 		return nil
 	}
 
+	// Each keyword argument is looked up among the parameters.
+	if len(kwargs) > 0 {
+		if err := thread.chargeWork(3 * uint64(len(kwargs))); err != nil {
+			return err
+		}
+	}
+
 	cond := func(x bool, y, z any) any {
 		if x {
 			return y
@@ -1765,9 +1795,21 @@ func setArgs(thread *Thread, locals []Value, fn *Function, args Tuple, kwargs []
 
 	// Bind keyword arguments to parameters.
 	paramIdents := fn.funcode.Locals[:nparams]
+	var paramIndex map[string]int // for many parameters and many keyword arguments
+	if len(kwargs) > 8 && nparams > 8 {
+		paramIndex = fn.funcode.ParamIndex()
+	}
 	for _, pair := range kwargs {
 		k, v := pair[0].(String), pair[1]
-		if i := findParam(paramIdents, string(k)); i >= 0 {
+		i := -1
+		if paramIndex != nil {
+			if j, ok := paramIndex[string(k)]; ok {
+				i = j
+			}
+		} else {
+			i = findParam(paramIdents, string(k))
+		}
+		if i >= 0 {
 			if locals[i] != nil {
 				return fmt.Errorf("function %s got multiple values for parameter %s", fn.Name(), errValue(k))
 			}
@@ -1982,4 +2024,81 @@ func interpolateTo(thread *Thread, buf *sink, m *meter, limit int, format string
 func is[T any](x any) bool {
 	_, ok := x.(T)
 	return ok
+}
+
+// DefaultMaxCallStackDepth is the depth of the stack of calls that a thread
+// allows if SetMaxCallStackDepth was not called: the limit that a program with
+// recursion had, and that a program without it did not (a chain of different
+// functions as long as the limit takes the same Go stack: about 100 MiB).
+const DefaultMaxCallStackDepth = 100_000
+
+// SetMaxCallStackDepth sets the depth of the stack of calls that this thread
+// allows, in frames (a call of a function or a built-in is a frame), with or
+// without recursion. A call that would be deeper fails with the error
+// "Starlark stack overflow", as a Starlark error, not a crash of Go. n <= 0
+// restores DefaultMaxCallStackDepth.
+//
+// Each level of the stack of calls takes the stack of Go that the interpreter
+// uses for it: 1.4-2.7 KiB for a call of a function, and more for a call
+// through a built-in (sorted(key=f), max(key=f)); a host that sets the limit
+// must keep it far below the limit of the stack of Go (1 GiB by default).
+func (thread *Thread) SetMaxCallStackDepth(n int) {
+	thread.callDepth = n
+}
+
+func (thread *Thread) maxCallDepth() int {
+	if thread.callDepth > 0 {
+		return thread.callDepth
+	}
+	return DefaultMaxCallStackDepth
+}
+
+// recursionScanDepth is the depth up to which a call looks at the frames to
+// see if its function is active; deeper, the number of active calls of each
+// function is kept in a map, so that a call is not as slow as the stack is
+// deep (a chain of a hundred thousand functions made it quadratic).
+const recursionScanDepth = 32
+
+// enterFunction reports an error if fn is active: called, and not returned
+// from. The funcode is compared, not the function value, otherwise the user
+// could defeat the check by writing the Y combinator.
+func (thread *Thread) enterFunction(fn *Function, f *compile.Funcode) error {
+	below := thread.stack[:len(thread.stack)-1]
+	if thread.active == nil {
+		if len(below) <= recursionScanDepth {
+			thread.scanned += uint64(len(below))
+			for _, fr := range below {
+				if frfn, ok := fr.Callable().(*Function); ok && frfn.funcode == f {
+					return fmt.Errorf("function %s called recursively", fn.Name())
+				}
+			}
+			return nil
+		}
+		// The stack is deep now: count the active calls once, and keep the
+		// count from here on.
+		thread.active = make(map[*compile.Funcode]int32)
+		thread.scanned += uint64(len(below))
+		for _, fr := range below {
+			if frfn, ok := fr.Callable().(*Function); ok {
+				thread.active[frfn.funcode]++
+			}
+		}
+	}
+	if thread.active[f] > 0 {
+		return fmt.Errorf("function %s called recursively", fn.Name())
+	}
+	thread.active[f]++
+	return nil
+}
+
+// leaveFunction undoes enterFunction, for a call that did not fail with it.
+func (thread *Thread) leaveFunction(f *compile.Funcode) {
+	if thread.active != nil {
+		if thread.active[f]--; thread.active[f] == 0 {
+			delete(thread.active, f)
+		}
+		if len(thread.stack)-1 <= recursionScanDepth {
+			thread.active = nil
+		}
+	}
 }

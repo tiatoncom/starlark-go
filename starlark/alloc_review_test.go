@@ -298,7 +298,7 @@ func TestInPlaceForms_AreCharged(t *testing.T) {
 		name, setup, op string
 		min             uint64 // at least this many bytes
 	}{
-		{"d |= e", "d = {1: 1}\ne = {}\nfor i in range(100): e[i + 10] = i", "d |= e", 100 * 128},
+		{"d |= e", "d = {1: 1}\ne = {}\nfor i in range(100): e[i + 10] = i", "d |= e", 94 * 128}, // (100 new keys, past the inline bucket)
 		{"s |= t", "s = set([1])\nt = set(range(100))", "s |= t", 90 * 128},
 		{"s &= t", "s = set(range(100))\nt = set(range(100))", "s &= t", 90 * 128},
 		{"s -= t", "s = set(range(100))\nt = set([1])", "s -= t", 90 * 128},

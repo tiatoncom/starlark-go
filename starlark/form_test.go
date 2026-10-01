@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
+	"unicode"
 
 	"go.starlark.net/syntax"
 )
@@ -260,4 +261,73 @@ func sameStrings(got []Value, want []string) bool {
 		}
 	}
 	return true
+}
+
+// strip, lstrip and rstrip are strings.Trim, TrimLeft and TrimRight (and the
+// white space forms), for any string and any set of characters.
+func TestForm_TrimIsTheStandardLibrarys(t *testing.T) {
+	r := rand.New(rand.NewSource(13))
+	for i := 0; i < 20000; i++ {
+		s := randString(r, r.Intn(40))
+		chars := randString(r, r.Intn(12))
+		if r.Intn(4) == 0 {
+			chars = ""
+		}
+		for k, c := range []struct {
+			left, right bool
+			want        string
+		}{
+			{true, true, ifEmpty(chars, strings.TrimSpace(s), strings.Trim(s, chars))},
+			{true, false, ifEmpty(chars, strings.TrimLeftFunc(s, unicode.IsSpace), strings.TrimLeft(s, chars))},
+			{false, true, ifEmpty(chars, strings.TrimRightFunc(s, unicode.IsSpace), strings.TrimRight(s, chars))},
+		} {
+			m := (&Thread{}).meter()
+			got, err := trimString(&m, s, chars, c.left, c.right)
+			if err != nil || got != c.want {
+				t.Fatalf("case %d trim(%q, %q) = %q, want %q (%v)", k, s, chars, got, c.want, err)
+			}
+		}
+	}
+}
+
+func ifEmpty(chars, a, b string) string {
+	if chars == "" {
+		return a
+	}
+	return b
+}
+
+// A value in the text of an error is printed whole if its form is of at most
+// errValueLimit bytes, as in v0.2.0, and cut to that many bytes, marked, if it
+// is longer: the boundary is exact.
+func TestErrValue_TheBoundaryIsExact(t *testing.T) {
+	for n := errValueLimit - 3; n <= errValueLimit+3; n++ {
+		body := strings.Repeat("a", n-2) // the form is the string and its quotes
+		got := errValue(String(body))
+		if want := `"` + body + `"`; n <= errValueLimit {
+			if got != want {
+				t.Errorf("a form of %d bytes was not printed whole: %.40q", n, got)
+			}
+		} else {
+			if !strings.HasPrefix(got, want[:errValueLimit]) || !strings.HasSuffix(got, writeValueOverflowMark) || len(got) != errValueLimit+len(writeValueOverflowMark) {
+				t.Errorf("a form of %d bytes: %d bytes, %.40q...%q", n, len(got), got, got[len(got)-30:])
+			}
+		}
+		// the same for a string of the script that is a name
+		name := strings.Repeat("a", n)
+		if got := errStr(name); n <= errValueLimit && got != name {
+			t.Errorf("a name of %d bytes was cut", n)
+		} else if n > errValueLimit && (len(got) <= errValueLimit || !strings.HasSuffix(got, fmt.Sprintf("...<%d bytes>", n))) {
+			t.Errorf("a name of %d bytes was not cut: %.20q", n, got)
+		}
+	}
+	// A list: whole up to the limit, and then its prefix of the limit.
+	whole := errValue(NewList([]Value{String("x"), MakeInt(1), Tuple{None, Bool(true)}}))
+	if whole != `["x", 1, (None, True)]` {
+		t.Errorf("a short list: %q", whole)
+	}
+	long := errValue(NewList([]Value{String(strings.Repeat("a", 100)), String(strings.Repeat("b", 100)), String(strings.Repeat("c", 100))}))
+	if !strings.HasSuffix(long, writeValueOverflowMark) || !strings.Contains(long, `"bbbb`) || strings.Contains(long, `"ccc`) && len(long) > errValueLimit+len(writeValueOverflowMark)+1 {
+		t.Errorf("a long list: %q", long)
+	}
 }
