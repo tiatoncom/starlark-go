@@ -312,6 +312,11 @@ func TestJSON_EncodeOfASharedDAGIsStoppedAtTheHeadroom(t *testing.T) {
 	if r.err == nil || !strings.Contains(r.err.Error(), budgetPrefix) {
 		t.Fatalf("err = %v", r.err)
 	}
+	// ... and the nodes visited are those of the headroom (a node is 2 bytes of
+	// the output, at least), not the 2^22 of the whole DAG.
+	if r.th.Steps > 100_000 {
+		t.Errorf("%d steps: the encoding went on after the headroom was used", r.th.Steps)
+	}
 	// With room for it, the output is what it is.
 	r = exec(t, 64<<20, "t = [1]\nfor i in range(10):\n  t = [t, t]\ns = json.encode(t)\nn = len(s)\n")
 	if r.err != nil {

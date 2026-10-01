@@ -45,6 +45,13 @@ str(l)	7600
 repr(bigl)	1567
 str(bn)	162
 '%d' % bn	120
+big // bm	32687
+big % bm	32687
+big | big2	262
+big ^ big2	262
+big << 3	262
+big >> 3	262
+b'c' in bs	1031
 big + 1	262
 big - big2	262
 big & big2	262
