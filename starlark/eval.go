@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"math/bits"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -76,6 +77,12 @@ type Thread struct {
 	callDepth int
 	active    map[*compile.Funcode]int32
 	scanned   uint64 // frames looked at by enterFunction (for a test)
+
+	// formSink and formMeter are the sink and the meter of the string form
+	// that is being made (see buildForm), reused for the next.
+	formBusy  bool
+	formSink  sink
+	formMeter meter
 
 	// extraWork is the work charged beyond the steps (each of which is a unit
 	// of work), and maxWork its limit, 0 if none. See work.go.
@@ -1877,14 +1884,8 @@ func findParam(params []compile.Binding, name string) int {
 // (a %s of a shared subgraph can expand exponentially), then charged.
 func interpolate(thread *Thread, format string, x Value) (Value, error) {
 	limit := thread.stringLimit()
-	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
-		return interpolateTo(th, buf, m, limit, format, x)
-	}, func(n int) error {
-		if err := thread.chargeBytes(n); err != nil {
-			return excess(err, "excessive string interpolation (over %d bytes)", maxAlloc)
-		}
-		return nil
-	})
+	j := formJob{kind: jobInterpolate, limit: limit, format: format, x: x}
+	s, err := thread.buildForm(&j)
 	if err != nil {
 		return nil, err
 	}
@@ -1972,22 +1973,38 @@ func interpolateTo(thread *Thread, buf *sink, m *meter, limit int, format string
 			if err := thread.chargeIntToString(i, c == 'd' || c == 'i'); err != nil {
 				return err
 			}
+			base := 10
 			switch c {
-			case 'd', 'i':
-				fmt.Fprintf(buf, "%d", i)
 			case 'o':
-				fmt.Fprintf(buf, "%o", i)
-			case 'x':
-				fmt.Fprintf(buf, "%x", i)
-			case 'X':
-				fmt.Fprintf(buf, "%X", i)
+				base = 8
+			case 'x', 'X':
+				base = 16
+			}
+			if iSmall, iBig := i.get(); iBig == nil {
+				var tmp [24]byte
+				digits := strconv.AppendInt(tmp[:0], iSmall, base)
+				if c == 'X' {
+					for k, d := range digits {
+						if 'a' <= d && d <= 'f' {
+							digits[k] = d - 'a' + 'A'
+						}
+					}
+				}
+				buf.Write(digits)
+			} else {
+				text := iBig.Text(base)
+				if c == 'X' {
+					text = strings.ToUpper(text)
+				}
+				buf.WriteString(text)
 			}
 		case 'e', 'f', 'g', 'E', 'F', 'G':
 			f, ok := AsFloat(arg)
 			if !ok {
 				return fmt.Errorf("%%%c format requires float, not %s", c, arg.Type())
 			}
-			Float(f).format(buf, c)
+			var tmp [64]byte
+			buf.Write(Float(f).appendFormat(tmp[:0], c))
 		case 'c':
 			switch arg := arg.(type) {
 			case Int:

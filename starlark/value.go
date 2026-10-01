@@ -434,22 +434,26 @@ func (x Bool) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error
 type Float float64
 
 func (f Float) String() string {
-	var buf strings.Builder
-	f.format(&buf, 'g')
-	return buf.String()
+	var tmp [64]byte
+	return string(f.appendFormat(tmp[:0], 'g'))
 }
 
 func (f Float) format(buf io.StringWriter, conv byte) {
+	var tmp [64]byte
+	buf.WriteString(string(f.appendFormat(tmp[:0], conv)))
+}
+
+// appendFormat appends the form of f in the conversion conv (%g, %e, %f and
+// their upper-case forms) to dst.
+func (f Float) appendFormat(dst []byte, conv byte) []byte {
 	ff := float64(f)
 	if !isFinite(ff) {
 		if math.IsInf(ff, +1) {
-			buf.WriteString("+inf")
+			return append(dst, "+inf"...)
 		} else if math.IsInf(ff, -1) {
-			buf.WriteString("-inf")
-		} else {
-			buf.WriteString("nan")
+			return append(dst, "-inf"...)
 		}
-		return
+		return append(dst, "nan"...)
 	}
 
 	// %g is the default format used by str.
@@ -457,18 +461,18 @@ func (f Float) format(buf io.StringWriter, conv byte) {
 	// and always includes a '.' or an 'e' so that the value
 	// is self-evidently a float, not an int.
 	if conv == 'g' || conv == 'G' {
-		s := strconv.FormatFloat(ff, conv, -1, 64)
-		buf.WriteString(s)
+		n := len(dst)
+		dst = strconv.AppendFloat(dst, ff, conv, -1, 64)
 		// Ensure result always has a decimal point if no exponent.
 		// "123" -> "123.0"
-		if strings.IndexByte(s, conv-'g'+'e') < 0 && strings.IndexByte(s, '.') < 0 {
-			buf.WriteString(".0")
+		if bytes.IndexByte(dst[n:], conv-'g'+'e') < 0 && bytes.IndexByte(dst[n:], '.') < 0 {
+			dst = append(dst, ".0"...)
 		}
-		return
+		return dst
 	}
 
 	// %[eEfF] use 6-digit precision
-	buf.WriteString(strconv.FormatFloat(ff, conv, 6, 64))
+	return strconv.AppendFloat(dst, ff, conv, 6, 64)
 }
 
 // appendFloatG appends f.String() to dst, without allocating if dst has room.
@@ -1880,13 +1884,13 @@ func (w *valueWriter) write(x Value, depth int) {
 		w.out.WriteByte(')')
 
 	case *Function:
-		fmt.Fprintf(w.out, "<function %s>", x.Name())
+		w.out.WriteString("<function " + x.Name() + ">")
 
 	case *Builtin:
 		if x.recv != nil {
-			fmt.Fprintf(w.out, "<built-in method %s of %s value>", x.Name(), x.recv.Type())
+			w.out.WriteString("<built-in method " + x.Name() + " of " + x.recv.Type() + " value>")
 		} else {
-			fmt.Fprintf(w.out, "<built-in function %s>", x.Name())
+			w.out.WriteString("<built-in function " + x.Name() + ">")
 		}
 
 	case *Dict:

@@ -95,32 +95,127 @@ func (s *sink) writeMark(mark string) {
 	s.markEnd = s.n
 }
 
-// buildForm makes a string by running f twice if it is large. f writes the
-// form to out, charging its work to m (nil: none) and its thread's steps to
-// th (nil: none); it must write the same bytes in each run. charge is called
-// with the size of the form before it is allocated: its error is returned.
-func (thread *Thread) buildForm(f func(th *Thread, out *sink, m *meter) error, charge func(n int) error) (string, error) {
-	out := &sink{probe: formProbe}
-	m := thread.meter()
-	if err := f(thread, out, &m); err != nil {
+// A formJob is one of the string forms that are made in two passes when they
+// are large: what it is (kind), and what it is made of. It is a struct with a
+// method for each kind, not a function value, so that the sink and the meter of
+// the first pass stay on the stack: a form that is a few bytes long allocates
+// no more than its string.
+type formJob struct {
+	kind   int
+	limit  int
+	x      Value // str, repr: the value; interpolate: the argument
+	args   Tuple // print, format: the arguments
+	kwargs []Tuple
+	sep    string // print: the separator
+	format string // interpolate, format: the format
+}
+
+const (
+	jobStr = iota
+	jobRepr
+	jobPrint
+	jobInterpolate
+	jobFormat
+)
+
+// run writes the form to out, charging its work to m (nil: none) and its steps
+// to th (nil: none). It writes the same bytes in each of the two runs.
+func (j *formJob) run(th *Thread, out *sink, m *meter) error {
+	switch j.kind {
+	case jobStr:
+		if code, werr := writeValueMeter(out, j.x, j.limit, m); code != writeOK {
+			return th.formErr(code, werr, j.limit, "str", "str: value's string form exceeds the size limit")
+		}
+	case jobRepr:
+		switch code, werr := writeValueMeter(out, j.x, j.limit, m); {
+		case werr != nil || code == writeDeep || code == writeBigInt:
+			return th.formErr(code, werr, j.limit, "repr", "")
+		case code == writeLimit && j.limit < maxAlloc:
+			// The budget is what the form outgrew.
+			return th.formErr(code, werr, j.limit, "repr", "repr: excessive result size")
+		}
+	case jobPrint:
+		for i, v := range j.args {
+			if i > 0 {
+				out.WriteString(j.sep)
+			}
+			if s, ok := AsString(v); ok {
+				if out.Len()+len(s) >= j.limit {
+					return th.refuseBytes(out.Len()+len(s), "print: excessive output size")
+				}
+				out.WriteString(s)
+			} else if b, ok := v.(Bytes); ok {
+				if out.Len()+len(b) >= j.limit {
+					return th.refuseBytes(out.Len()+len(b), "print: excessive output size")
+				}
+				out.WriteString(string(b))
+			} else if code, werr := writeValueMeter(out, v, j.limit, m); code != writeOK {
+				return th.formErr(code, werr, j.limit, "print", "print: excessive output size")
+			}
+		}
+	case jobInterpolate:
+		return interpolateTo(th, out, m, j.limit, j.format, j.x)
+	case jobFormat:
+		return stringFormatTo(th, out, m, j.limit, j.format, j.args, j.kwargs)
+	}
+	return nil
+}
+
+// charge charges the n bytes of the form, before it is allocated if it is
+// large.
+func (j *formJob) charge(thread *Thread, n int) error {
+	switch j.kind {
+	case jobStr:
+		return excess(thread.chargeBytes(n), "str: value's string form exceeds the size limit")
+	case jobRepr:
+		return thread.chargeBudget(uint64(n)) // (at the ceiling the bounded form is returned: the budget only)
+	case jobPrint:
+		return excess(thread.chargeBytes(n), "print: excessive output size")
+	case jobInterpolate:
+		return excess(thread.chargeBytes(n), "excessive string interpolation (over %d bytes)", maxAlloc)
+	case jobFormat:
+		return excess(thread.chargeBytes(n), "format: excessive result size")
+	}
+	return nil
+}
+
+// buildForm makes the string of j, running it twice if it is large: the first
+// pass counts the bytes, charges the work and the limit, and allocates nothing
+// but the first formProbe bytes; the second writes into a buffer of the exact
+// size.
+func (thread *Thread) buildForm(j *formJob) (string, error) {
+	// The sink and the meter of the first pass are the thread's, reused: made
+	// afresh they would be allocated (they are passed to code that the compiler
+	// cannot see through), a few dozen bytes for each short string. A form made
+	// inside a form (a String method of a host value) finds them taken.
+	var out *sink
+	var m *meter
+	if thread != nil && !thread.formBusy {
+		thread.formBusy = true
+		defer thread.releaseForm()
+		out, m = &thread.formSink, &thread.formMeter
+		*out = sink{probe: formProbe}
+		*m = meter{thread: thread}
+	} else {
+		out, m = &sink{probe: formProbe}, &meter{thread: thread}
+	}
+	if err := j.run(thread, out, m); err != nil {
 		return "", err
 	}
 	if err := m.flush(); err != nil {
 		return "", err
 	}
 	n := out.n
-	if charge != nil {
-		if err := charge(n); err != nil {
-			return "", err
-		}
+	if err := j.charge(thread, n); err != nil {
+		return "", err
 	}
 	if !out.counting {
 		return out.String(), nil
 	}
 	// The second pass: the work was charged by the first.
-	w := &sink{}
+	var w sink
 	w.b.Grow(n)
-	if err := f(nil, w, nil); err != nil {
+	if err := j.run(nil, &w, nil); err != nil {
 		return "", err
 	}
 	if w.n != n {
@@ -154,4 +249,12 @@ func (s *sink) writeQuoted(str string, bytes bool) {
 		str = str[n:]
 	}
 	s.WriteByte('"')
+}
+
+// releaseForm gives the thread's sink and meter back, and lets go of what the
+// sink held.
+func (thread *Thread) releaseForm() {
+	thread.formSink = sink{}
+	thread.formMeter = meter{}
+	thread.formBusy = false
 }

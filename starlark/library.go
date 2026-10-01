@@ -922,27 +922,8 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 		return nil, err
 	}
 	limit := thread.stringLimit()
-	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
-		for i, v := range args {
-			if i > 0 {
-				buf.WriteString(sep)
-			}
-			if s, ok := AsString(v); ok {
-				if buf.Len()+len(s) >= limit {
-					return th.refuseBytes(buf.Len()+len(s), "print: excessive output size")
-				}
-				buf.WriteString(s)
-			} else if b, ok := v.(Bytes); ok {
-				if buf.Len()+len(b) >= limit {
-					return th.refuseBytes(buf.Len()+len(b), "print: excessive output size")
-				}
-				buf.WriteString(string(b))
-			} else if code, werr := writeValueMeter(buf, v, limit, m); code != writeOK {
-				return th.formErr(code, werr, limit, "print", "print: excessive output size")
-			}
-		}
-		return nil
-	}, func(n int) error { return excess(thread.chargeBytes(n), "print: excessive output size") })
+	j := formJob{kind: jobPrint, limit: limit, args: args, sep: sep}
+	s, err := thread.buildForm(&j)
 	if err != nil {
 		return nil, err
 	}
@@ -1163,16 +1144,8 @@ func repr(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, err
 	}
 	limit := thread.stringLimit()
-	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
-		switch code, werr := writeValueMeter(buf, x, limit, m); {
-		case werr != nil || code == writeDeep || code == writeBigInt:
-			return th.formErr(code, werr, limit, "repr", "")
-		case code == writeLimit && limit < maxAlloc:
-			// The budget is what the form outgrew.
-			return th.formErr(code, werr, limit, "repr", "repr: excessive result size")
-		}
-		return nil
-	}, func(n int) error { return thread.chargeBudget(uint64(n)) }) // (at the ceiling the bounded form is returned: the budget only)
+	j := formJob{kind: jobRepr, limit: limit, x: x}
+	s, err := thread.buildForm(&j)
 	if err != nil {
 		return nil, err
 	}
@@ -1390,17 +1363,20 @@ func str(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		}
 		return String(utf8Transcode(string(x))), nil
 	default:
+		if i, ok := x.(Int); ok {
+			if _, big := i.get(); big == nil { // the form of a small integer is short: no machinery
+				s := i.String()
+				if err := thread.chargeBytes(len(s)); err != nil {
+					return nil, excess(err, "str: value's string form exceeds the size limit")
+				}
+				return String(s), nil
+			}
+		}
 		// Report an error if a value's string form exceeds the size bound
 		// (writeValue stops at the limit, so only a bounded form reaches it).
 		limit := thread.stringLimit()
-		s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
-			if code, werr := writeValueMeter(buf, x, limit, m); code != writeOK {
-				return th.formErr(code, werr, limit, "str", "str: value's string form exceeds the size limit")
-			}
-			return nil
-		}, func(n int) error {
-			return excess(thread.chargeBytes(n), "str: value's string form exceeds the size limit")
-		})
+		j := formJob{kind: jobStr, limit: limit, x: x}
+		s, err := thread.buildForm(&j)
 		if err != nil {
 			return nil, err
 		}
@@ -2109,9 +2085,8 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 	// Every field can add as much as its argument: a format with many fields
 	// and a large argument is an amplifier. Stop at the limit.
 	limit := thread.stringLimit()
-	s, err := thread.buildForm(func(th *Thread, buf *sink, m *meter) error {
-		return stringFormatTo(th, buf, m, limit, recv, args, kwargs)
-	}, func(n int) error { return excess(thread.chargeBytes(n), "format: excessive result size") })
+	j := formJob{kind: jobFormat, limit: limit, format: recv, args: args, kwargs: kwargs}
+	s, err := thread.buildForm(&j)
 	if err != nil {
 		return nil, err
 	}
