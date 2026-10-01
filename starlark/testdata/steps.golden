@@ -20,6 +20,9 @@ enumerate(l)	21880
 zip(l, m)	28131
 sorted(l)	116893
 sorted(reversed(l))	180021
+all(...) false at the end	6261
+any(...) true at the end	6260
+any(...) false	4697
 max(l)	6256
 min(l)	6256
 any(l[:1]) (stops at once)	11
@@ -141,6 +144,9 @@ small: enumerate(l)	442
 small: zip(l, m)	568
 small: sorted(l)	1594
 small: sorted(reversed(l))	2857
+small: all(...) false at the end	136
+small: any(...) true at the end	135
+small: any(...) false	103
 small: max(l)	131
 small: min(l)	131
 small: any(l[:1]) (stops at once)	11
