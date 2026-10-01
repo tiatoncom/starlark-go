@@ -232,6 +232,11 @@ func (s *sink) writeRune(r rune) {
 // writeQuoted writes syntax.Quote(str, bytes), in pieces, so that no copy of
 // the quoted string is made.
 func (s *sink) writeQuoted(str string, bytes bool) {
+	if !s.counting && s.n+len(str)+3 <= s.probe {
+		// A form that is small is made in one piece: the quotes and the text
+		// (an escape or a rune that is not ASCII makes it grow, once).
+		s.target().Grow(len(str) + 3)
+	}
 	if bytes {
 		s.WriteByte('b')
 	}
