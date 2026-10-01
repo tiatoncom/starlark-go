@@ -38,7 +38,7 @@ func hashM(m *meter, k Value) (uint32, error) {
 		return k.hashM(m, 0)
 	case Int:
 		if _, big := k.get(); big != nil {
-			if err := m.add(uint64(len(big.Bits()))); err != nil {
+			if err := m.add(words64(big)); err != nil {
 				return 0, err
 			}
 		}
@@ -200,7 +200,7 @@ func compareM(m *meter, op syntax.Token, x, y Value, depth int) (bool, error) {
 		case Int:
 			if y, ok := y.(Int); ok {
 				if _, big := x.get(); big != nil {
-					if err := m.add(uint64(len(big.Bits()))); err != nil {
+					if err := m.add(words64(big)); err != nil {
 						return false, err
 					}
 				}
@@ -317,7 +317,7 @@ func dictsEqualM(m *meter, x, y *Dict, depth int) (bool, error) {
 	}
 	for e := x.ht.head; e != nil; e = e.next {
 		key, xval := e.key, e.value
-		if err := m.add(1); err != nil { // one entry
+		if err := m.add(11); err != nil { // an entry: the key looked up in y (hash, bucket, compare: ~100 ns), its values compared
 			return false, err
 		}
 		yval, found, err := y.ht.lookupM(m, key)

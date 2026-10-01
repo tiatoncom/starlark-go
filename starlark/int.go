@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/bits"
 	"reflect"
 	"strconv"
 
@@ -188,8 +189,23 @@ func (i Int) Hash() (uint32, error) {
 		// only above bit 32 (i << 32) must not all share a bucket, which makes
 		// a dict of them a linked list.
 		h := uint32(0)
-		for _, w := range iBig.Bits() {
-			h = h*0x9E3779B1 ^ uint32(w) ^ uint32(uint64(w)>>32)*0x85EBCA6B
+		mix := func(w uint64) {
+			h = h*0x9E3779B1 ^ uint32(w) ^ uint32(w>>32)*0x85EBCA6B
+		}
+		if bits.UintSize == 64 {
+			for _, w := range iBig.Bits() {
+				mix(uint64(w))
+			}
+		} else {
+			// the same hash on a platform of 32-bit words: two make one of 64 bits
+			ws := iBig.Bits()
+			for i := 0; i < len(ws); i += 2 {
+				w := uint64(ws[i])
+				if i+1 < len(ws) {
+					w |= uint64(ws[i+1]) << 32
+				}
+				mix(w)
+			}
 		}
 		return 12582917 * (h + 3), nil
 	} else {

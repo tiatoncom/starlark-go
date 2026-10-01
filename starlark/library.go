@@ -288,7 +288,7 @@ func bytes_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		var b byte
 		for i := 0; iter.Next(&elem); i++ {
 			if n < 0 {
-				if err := m.add(1); err != nil {
+				if err := m.add(iterWork(x)); err != nil {
 					return nil, err
 				}
 				if err := thread.chargeOne(buf.Len(), 1); err != nil {
@@ -399,7 +399,7 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 		}
 		m := thread.meter()
 		for i := 0; iter.Next(&x); i++ {
-			if err := m.add(1); err != nil {
+			if err := m.add(iterWork(iterable)); err != nil {
 				return nil, err
 			}
 			if err := thread.chargeOne(len(pairs), allocBytesPerItem); err != nil {
@@ -809,7 +809,7 @@ func list(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		var x Value
 		for iter.Next(&x) {
 			if n < 0 {
-				if err := m.add(1); err != nil {
+				if err := m.add(iterWork(iterable)); err != nil {
 					return nil, err
 				}
 				if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {
@@ -869,7 +869,7 @@ func minmax(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	m := thread.meter()
 	var x Value
 	for iter.Next(&x) {
-		if err := m.add(1); err != nil {
+		if err := m.add(3); err != nil { // an element: its turn of the iterator, the compare
 			return nil, err
 		}
 		var key Value
@@ -1183,7 +1183,7 @@ func reversed(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, er
 	var x Value
 	for iter.Next(&x) {
 		if known < 0 {
-			if err := m.add(1); err != nil {
+			if err := m.add(iterWork(iterable)); err != nil {
 				return nil, err
 			}
 			if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {
@@ -1450,7 +1450,7 @@ func tuple(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 	var x Value
 	for iter.Next(&x) {
 		if n < 0 {
-			if err := m.add(1); err != nil {
+			if err := m.add(iterWork(iterable)); err != nil {
 				return nil, err
 			}
 			if err := thread.chargeOne(len(elems), allocBytesPerNewValue); err != nil {

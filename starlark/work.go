@@ -3,6 +3,7 @@ package starlark
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"math/bits"
 	"sync/atomic"
 	"unsafe"
@@ -255,11 +256,37 @@ func workSlow(n int) uint64 { return uint64(max(n, 0)) / 4 }
 // workSlots is the work of copying n Value slots (16 bytes each, ~1 ns).
 func workSlots(n int) uint64 { return uint64(max(n, 0)) / 4 }
 
+// iterWork is the work of one turn of the iterator of v, for an iterable whose
+// length is not known (so that its work cannot be charged beforehand): a unit,
+// and for the iterators that make a new string for each element (elems and
+// codepoints of a string, elems of bytes: 15-30 ns of allocation and
+// conversion) five more.
+func iterWork(v Value) uint64 {
+	switch it := v.(type) {
+	case stringElems:
+		if !it.ords {
+			return 1
+		}
+	case stringCodepoints:
+		if !it.ords {
+			return 6
+		}
+	case bytesIterable:
+		return 6
+	}
+	return 1
+}
+
+// words64 is the number of 64-bit words of the big integer b, whatever the size
+// of the word of the platform (len(b.Bits()) would be twice as much on a
+// platform of 32-bit words: the work must not depend on it).
+func words64(b *big.Int) uint64 { return uint64(b.BitLen()+63) / 64 }
+
 // bigWords returns the number of machine words of x if it is a big integer,
 // and 0 for a small one.
 func bigWords(x Int) uint64 {
 	if _, big := x.get(); big != nil {
-		return uint64(len(big.Bits()))
+		return words64(big)
 	}
 	return 0
 }
@@ -309,7 +336,7 @@ func (thread *Thread) chargeIntToString(x Int, decimal bool) error {
 		return fmt.Errorf("an integer of more than %d decimal digits is not converted to a string", MaxIntDigits)
 	}
 	if !decimal {
-		return thread.chargeWork(uint64(len(big.Bits())))
+		return thread.chargeWork(words64(big))
 	}
 	d := uint64(big.BitLen()/3 + 1)
 	return thread.chargeWork(d * d / 4096)

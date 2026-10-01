@@ -133,13 +133,10 @@ const (
 	allocBytesPerItem = allocBytesPerValue + allocBaseTuple + 2*allocBytesPerValue
 
 	// allocBytesPerWork is the memory that takes one unit of work (~8 ns) to
-	// allocate and zero: measured 0.25-0.4 ns a byte for the large allocations
-	// (a list of a million slots takes ~6 ms to copy into new memory).
-	allocBytesPerWork = 32
-
-	// allocWorkFree is the size under which an allocation costs no work: a
-	// dict or set base (512), a list of a few dozen slots.
-	allocWorkFree = 1024
+	// allocate, zero and give back to the collector: measured 0.5 ns a byte for
+	// the large allocations of a list (copying a list of a million slots into
+	// new memory takes 8 ms, and the collector marks what is alive).
+	allocBytesPerWork = 16
 
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
@@ -444,7 +441,7 @@ func intBytesOfWords(w uint64) uint64 { return satAdd(allocBaseInt, satMul(alloc
 // does not fit in 32 bits), and 0 for a small one.
 func bigIntBytes(x Int) uint64 {
 	if _, big := x.get(); big != nil {
-		return intBytesOfWords(uint64(len(big.Bits())))
+		return intBytesOfWords(words64(big))
 	}
 	return 0
 }
@@ -484,7 +481,7 @@ func (thread *Thread) intRoom(w uint64) error {
 func (thread *Thread) intDone(z Int) (Value, error) {
 	if thread != nil {
 		if _, big := z.get(); big != nil {
-			if err := thread.chargeBudget(intBytesOfWords(uint64(len(big.Bits())))); err != nil {
+			if err := thread.chargeBudget(intBytesOfWords(words64(big))); err != nil {
 				return nil, err
 			}
 		}

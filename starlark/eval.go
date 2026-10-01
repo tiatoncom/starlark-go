@@ -679,7 +679,7 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 	var z Value
 	for iter.Next(&z) {
 		if !known {
-			if err := m.add(1); err != nil {
+			if err := m.add(iterWork(y)); err != nil {
 				return err
 			}
 			if err := thread.chargeOne(len(x.elems), allocBytesPerNewValue); err != nil {
@@ -1647,6 +1647,10 @@ func slice(thread *Thread, x, lo, hi, step_ Value) (Value, error) {
 		if step != 1 {
 			if err := thread.chargeBytes(sliceLen(start, end, step)); err != nil {
 				return nil, excess(err, "excessive slice (%d bytes)", sliceLen(start, end, step))
+			}
+			// a byte at a time: ~1.8 ns a byte of the result
+			if err := thread.chargeWork(workSlow(sliceLen(start, end, step))); err != nil {
+				return nil, err
 			}
 		}
 	}
