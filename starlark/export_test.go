@@ -6,6 +6,7 @@ package starlark
 // PriceRow is one line of a table of prices.
 type PriceRow struct {
 	Table, Name, Kind, Desc string
+	Call                    uint64 // the work of the call itself
 }
 
 // PriceRows are the prices of the built-ins and of the operators, by table.
@@ -34,7 +35,7 @@ func PriceRows() []PriceRow {
 		}
 		sortStrings(names)
 		for _, n := range names {
-			rows = append(rows, PriceRow{t.name, n, kind(t.table[n]), t.table[n].Desc()})
+			rows = append(rows, PriceRow{t.name, n, kind(t.table[n]), t.table[n].Desc(), t.table[n].call})
 		}
 	}
 	return rows

@@ -46,12 +46,12 @@ func TestWritePricesDoc(t *testing.T) {
 		}
 		r := row{p.name, ns, work, steps, ns / float64(max(work, 1))}
 		rows = append(rows, r)
-		if !strings.HasPrefix(p.name, "loop:") {
+		if !strings.HasPrefix(p.name, "loop:") && ns >= minProbeNanoseconds {
 			worst = append(worst, r)
 		}
 	}
 	sort.Slice(worst, func(i, j int) bool { return worst[i].nsPerUnit > worst[j].nsPerUnit })
-	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of seven runs, measured by `TestCalibrate` on the date and under the load above; the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: the prices are held to %d ns (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(priceNanoseconds))
+	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of seven runs, measured by `TestCalibrate` on the date and under the load above; the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = %d ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(starlark.WorkNanoseconds))
 	for i, r := range worst {
 		if i >= 15 {
 			break
@@ -69,9 +69,9 @@ func TestWritePricesDoc(t *testing.T) {
 	for _, pr := range starlark.PriceRows() {
 		if pr.Table != table {
 			table = pr.Table
-			fmt.Fprintf(&b, "\n### %s\n\n| name | charged | work (units) |\n|---|---|---|\n", table)
+			fmt.Fprintf(&b, "\n### %s\n\n| name | charged | the call | work (units) |\n|---|---|---|---|\n", table)
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", pr.Name, pr.Kind, strings.ReplaceAll(pr.Desc, "|", "\\|"))
+		fmt.Fprintf(&b, "| `%s` | %s | %d | %s |\n", pr.Name, pr.Kind, pr.Call, strings.ReplaceAll(pr.Desc, "|", "\\|"))
 	}
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
 		t.Fatal(err)
@@ -84,5 +84,5 @@ The steps of a program (` + "`Thread.Steps`" + `, ` + "`ExecutionSteps()`" + `) 
 
 **The unit of work** is about the time of a simple step of the interpreter (8 ns nominal). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
 
-**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine (the interpreter's own loops cost up to that much a unit; the priced operations at most ` + "`priceNanoseconds`" + ` of it).
+**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine (the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 `
