@@ -191,7 +191,7 @@ func TestMeter_StopsNearTheLimit(t *testing.T) {
 	m := th.meter()
 	var added uint64
 	var err error
-	for err == nil && added < 1<<40 {
+	for err == nil && added < 100*1000*WorkPerStep { // (a bound, so that a meter that never stops fails the test)
 		err = m.add(1)
 		added++
 	}
@@ -1160,5 +1160,52 @@ func TestAllocationCostsSteps(t *testing.T) {
 	}
 	if a, b := steps(10000), steps(1000000); b < 50*a/2 {
 		t.Errorf("[0]*1e6 cost %d steps, [0]*1e4 cost %d: an allocation is not charged as time", b, a)
+	}
+}
+
+// A call whose work does not fit in the steps that are left is refused before
+// it runs: it returns the error, and does not do its work.
+func TestCall_RefusedByItsPriceDoesNotRun(t *testing.T) {
+	newThread := func() *Thread {
+		th := &Thread{}
+		th.SetMaxExecutionSteps(100)
+		return th
+	}
+	// list.insert: the memmove of 100000 slots is 6250 steps.
+	l := NewList(make([]Value, 100000))
+	for i := range l.elems {
+		l.elems[i] = MakeInt(i)
+	}
+	insert, _ := l.Attr("insert")
+	res, err := Call(newThread(), insert, Tuple{MakeInt(0), String("x")}, nil)
+	if err == nil || !strings.Contains(err.Error(), "too many steps") {
+		t.Fatalf("insert: res = %v, err = %v", res, err)
+	}
+	if l.Len() != 100000 {
+		t.Errorf("a refused insert ran: len = %d", l.Len())
+	}
+	// list.pop(0), list.clear(), list.extend.
+	for _, c := range []struct {
+		name string
+		args Tuple
+	}{{"pop", Tuple{MakeInt(0)}}, {"clear", nil}, {"extend", Tuple{l}}} {
+		l := NewList(append([]Value(nil), l.elems...))
+		m, _ := l.Attr(c.name)
+		if _, err := Call(newThread(), m, c.args, nil); err == nil {
+			t.Errorf("%s: not refused", c.name)
+		}
+		if want := map[string]int{"pop": 100000, "clear": 100000, "extend": 100000}[c.name]; l.Len() != want {
+			t.Errorf("a refused %s ran: len = %d", c.name, l.Len())
+		}
+	}
+	// A string method returns no result.
+	s := String(strings.Repeat("ab", 1<<19))
+	upper, _ := s.Attr("upper")
+	if res, err := Call(newThread(), upper, nil, nil); err == nil || res != nil {
+		t.Errorf("upper: res = %v, err = %v", res, err)
+	}
+	// And a function of Universe: sorted of a list of 100000.
+	if res, err := Call(newThread(), Universe["sorted"], Tuple{l}, nil); err == nil || res != nil {
+		t.Errorf("sorted: res = %v, err = %v", res, err)
 	}
 }
