@@ -1874,6 +1874,9 @@ func setArgs(thread *Thread, locals []Value, fn *Function, args Tuple, kwargs []
 }
 
 func findParam(params []compile.Binding, name string) int {
+	if scanHook != nil {
+		scanHook("param", len(params))
+	}
 	for i, param := range params {
 		if param.Name == name {
 			return i
@@ -2123,3 +2126,10 @@ func (thread *Thread) leaveFunction(f *compile.Funcode) {
 		}
 	}
 }
+
+// scanHook, if not nil, is called with the number of elements that a linear
+// search of the interpreter looks through (the parameters of a function for a
+// keyword argument, the keyword arguments of a format for a field): a test
+// counts them, to see that a search with many arguments is not the product of
+// the two numbers. It is nil in a program.
+var scanHook func(kind string, n int)

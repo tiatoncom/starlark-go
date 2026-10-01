@@ -2209,6 +2209,9 @@ func stringFormatTo(th *Thread, buf *sink, m *meter, limit int, format string, a
 				}
 				arg = kwmap[name]
 			} else {
+				if scanHook != nil {
+					scanHook("format", len(kwargs))
+				}
 				for _, kv := range kwargs {
 					if string(kv[0].(String)) == name {
 						arg = kv[1]
