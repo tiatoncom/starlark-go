@@ -645,16 +645,20 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 	known := Len(y) >= 0
 	iter := y.Iterate()
 	defer iter.Done()
+	m := thread.meter() // one unit for each element whose number was not known
 	var z Value
 	for iter.Next(&z) {
 		if !known {
+			if err := m.add(1); err != nil {
+				return err
+			}
 			if err := thread.chargeOne(len(x.elems), allocBytesPerNewValue); err != nil {
 				return excess(err, "excessive list extension (over %d elements)", maxAlloc)
 			}
 		}
 		x.elems = append(x.elems, z)
 	}
-	return nil
+	return m.flush()
 }
 
 // getAttr implements x.dot.

@@ -1527,6 +1527,7 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		if err := thread.chargeValues(0); err != nil {
 			return nil, excess(err, "zip: excessive size")
 		}
+		m := thread.meter() // one unit for each element of each column, as with a known length
 	outer:
 		for {
 			tuple := make(Tuple, cols)
@@ -1535,10 +1536,16 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 					break outer
 				}
 			}
+			if err := m.add(uint64(cols)); err != nil {
+				return nil, err
+			}
 			if err := thread.charge(satMul(uint64(len(result))+1, rowBytes), rowBytes); err != nil {
 				return nil, excess(err, "zip: excessive size (over %d rows)", maxAlloc)
 			}
 			result = append(result, tuple)
+		}
+		if err := m.flush(); err != nil {
+			return nil, err
 		}
 	}
 	return NewList(result), nil

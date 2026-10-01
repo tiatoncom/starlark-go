@@ -132,11 +132,24 @@ enumerate(lazy(N))	6153
 bytes(lazy_bytes(N))	6153
 set(lazy(N))	98880
 sorted(lazy(N))	7522
-zip(lazy(N), lazy(N))	12
+zip(lazy(N), lazy(N))	12512
 dict(lazy_pairs(N))	98880
-l.extend(lazy(N))	10
+l.extend(lazy(N))	6260
 f(*lazy(N))	3137
 list(sx.elems())	12507
+' '.join(lazy_str(N))	6455
+d.update(lazy_pairs(N))	98240
+st.update(lazy(N))	93760
+st.union(lazy(N))	217628
+st.issubset(lazy(N))	7284
+st.issuperset(lazy(N))	6260
+st.intersection(lazy(N))	130128
+st.difference(lazy(N))	130128
+st.symmetric_difference(lazy(N))	130128
+min(lazy(N))	6258
+max(lazy(N))	6258
+all(lazy_str(N))	6259
+l += lazy(N)	6259
 print(s)	3077
 fail(s)	1028
 small: d.items()	73
@@ -273,10 +286,23 @@ small: enumerate(lazy(N))	9
 small: bytes(lazy_bytes(N))	9
 small: set(lazy(N))	1422
 small: sorted(lazy(N))	161
-small: zip(lazy(N), lazy(N))	12
+small: zip(lazy(N), lazy(N))	262
 small: dict(lazy_pairs(N))	1422
-small: l.extend(lazy(N))	10
+small: l.extend(lazy(N))	135
 small: f(*lazy(N))	74
 small: list(sx.elems())	257
+small: ' '.join(lazy_str(N))	138
+small: d.update(lazy_pairs(N))	1413
+small: st.update(lazy(N))	1135
+small: st.union(lazy(N))	3045
+small: st.issubset(lazy(N))	167
+small: st.issuperset(lazy(N))	135
+small: st.intersection(lazy(N))	2045
+small: st.difference(lazy(N))	2045
+small: st.symmetric_difference(lazy(N))	2045
+small: min(lazy(N))	133
+small: max(lazy(N))	133
+small: all(lazy_str(N))	134
+small: l += lazy(N)	134
 small: print(s)	27
 small: fail(s)	11
