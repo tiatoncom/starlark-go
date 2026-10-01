@@ -94,6 +94,8 @@ sp.rsplit(' ')	110256
 nl.splitlines()	110255
 ' '.join(strs)	112
 '{}'.format(s)	2054
+'%s' % (l,)	7601
+'%r' % (t,)	7601
 '%s' % s	2053
 s + s	4101
 s * 3	6149
@@ -213,6 +215,8 @@ small: sp.rsplit(' ')	846
 small: nl.splitlines()	845
 small: ' '.join(strs)	112
 small: '{}'.format(s)	21
+small: '%s' % (l,)	152
+small: '%r' % (t,)	152
 small: '%s' % s	20
 small: s + s	36
 small: s * 3	51
