@@ -30,8 +30,12 @@ func probeWork(t *testing.T, p probe) (work, steps uint64, err error) {
 	th.Print = func(*starlark.Thread, string) {}
 	predeclared := starlark.StringDict{
 		"json": json.Module,
-		"t0":   starlark.NewBuiltin("t0", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) { return starlark.None, nil }),
-		"t1":   starlark.NewBuiltin("t1", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) { return starlark.None, nil }),
+		"t0": starlark.NewBuiltin("t0", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
+			return starlark.None, nil
+		}),
+		"t1": starlark.NewBuiltin("t1", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
+			return starlark.None, nil
+		}),
 	}
 	var w0, s0, w1, s1 uint64
 	predeclared["t0"] = starlark.NewBuiltin("t0", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
