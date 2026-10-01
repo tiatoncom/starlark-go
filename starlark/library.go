@@ -395,6 +395,9 @@ func fail(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		if i > 0 {
 			buf.WriteString(sep)
 		}
+		if buf.Len() >= limit {
+			break // the message is bounded like any string form: the rest is dropped
+		}
 		if s, ok := AsString(v); ok {
 			buf.WriteString(s)
 		} else {
@@ -833,8 +836,14 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 			buf.WriteString(sep)
 		}
 		if s, ok := AsString(v); ok {
+			if buf.Len()+len(s) >= limit {
+				return nil, thread.refuseBytes(buf.Len()+len(s), "print: excessive output size")
+			}
 			buf.WriteString(s)
 		} else if b, ok := v.(Bytes); ok {
+			if buf.Len()+len(b) >= limit {
+				return nil, thread.refuseBytes(buf.Len()+len(b), "print: excessive output size")
+			}
 			buf.WriteString(string(b))
 		} else {
 			writeValueLimit(buf, v, nil, limit)
@@ -1943,9 +1952,6 @@ func string_format(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 		default:
 			return nil, fmt.Errorf("format: unknown conversion %q", conv)
 		}
-		if buf.Len() >= limit {
-			return nil, thread.refuseBytes(buf.Len(), "format: excessive result size")
-		}
 	}
 	if err := thread.chargeBytes(buf.Len()); err != nil {
 		return nil, excess(err, "format: excessive result size")
@@ -2105,9 +2111,6 @@ func string_replace(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Val
 	count := -1
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 2, &old, &new, &count); err != nil {
 		return nil, err
-	}
-	if old == new || count == 0 {
-		return String(recv), nil // unchanged, nothing is allocated
 	}
 	// m replacements turn len(recv) into len(recv) + m*(len(new)-len(old)):
 	// quadratic when both are large. Compute the size before replacing.

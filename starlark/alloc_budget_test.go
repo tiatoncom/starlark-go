@@ -338,6 +338,42 @@ func TestAllocBudget_RefusesOverBudget(t *testing.T) {
 	}
 }
 
+// The string forms are built up to the limit of the thread and no further:
+// a form of 2^40 leaves, or a thousand fields of a large argument, must not be
+// built to the end before it is refused.
+func TestAllocBudget_StringFormsStopAtTheBudget(t *testing.T) {
+	const shared = "x = [1]\nfor i in range(40): x = [x, x]\n" // 2^40 leaves in its string form
+	const many = "s = 'a' * 10000\nargs = (s,) * 5000\n"       // 50 MB in 5000 fields
+	for _, c := range []struct{ name, setup, op string }{
+		{"str", shared, "r = str(x)"},
+		{"repr", shared, "r = repr(x)"},
+		{"%s", shared, "r = '%s' % (x,)"},
+		{"%r", shared, "r = '%r' % (x,)"},
+		{"format", shared, "r = '{}'.format(x)"},
+		{"format/r", shared, "r = '{!r}'.format(x)"},
+		{"print", shared, "print(x)"},
+		{"print of many", many, "print(*args)"},
+		{"% with many fields", many + "f = '%s' * 5000\n", "r = f % args"},
+		{"format with many fields", many + "f = '{}' * 5000\n", "r = f.format(*args)"},
+		{"join with many parts", many, "r = ','.join(args)"},
+	} {
+		r := runProg(t, budgetMiB, c.setup+"mark()\n"+c.op+"\n")
+		wantBudgetErr(t, r, budgetMiB)
+		// The builder doubles: at most 2x the limit, with room to spare.
+		if spent := r.memEnd - r.memMark; spent > 8*budgetMiB {
+			t.Errorf("%s: allocated %d bytes before the refusal, want at most %d", c.name, spent, 8*budgetMiB)
+		}
+	}
+	// fail builds its message up to the limit too (and fails, as it always does).
+	r := runProg(t, budgetMiB, shared+"mark()\nfail(x)\n")
+	if r.err == nil || !strings.Contains(r.err.Error(), "fail: [[") || len(r.err.Error()) > 2*budgetMiB {
+		t.Errorf("fail: err = %.100v (%d bytes)", r.err, len(r.err.Error()))
+	}
+	if spent := r.memEnd - r.memMark; spent > 8*budgetMiB {
+		t.Errorf("fail: allocated %d bytes, want at most %d", spent, 8*budgetMiB)
+	}
+}
+
 // A refused operation must be refused before it allocates its result: the
 // charge in Call, which counts a result after it is made, would give the same
 // error and the same count, but only after the memory was spent. The runtime's
