@@ -193,7 +193,7 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			z, err2 := Binary(binop, x, y)
+			z, err2 := binaryOp(thread, binop, x, y)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -230,14 +230,14 @@ loop:
 					if err = xlist.checkMutable("apply += to"); err != nil {
 						break loop
 					}
-					if err = listExtend(xlist, yiter); err != nil {
+					if err = listExtend(thread, xlist, yiter); err != nil {
 						break loop
 					}
 					z = xlist
 				}
 			}
 			if z == nil {
-				z, err = Binary(syntax.PLUS, x, y)
+				z, err = binaryOp(thread, syntax.PLUS, x, y)
 				if err != nil {
 					break loop
 				}
@@ -265,7 +265,7 @@ loop:
 				}
 			}
 			if z == nil {
-				z, err = Binary(syntax.PIPE, x, y)
+				z, err = binaryOp(thread, syntax.PIPE, x, y)
 				if err != nil {
 					break loop
 				}
@@ -327,7 +327,20 @@ loop:
 					err = fmt.Errorf("argument after ** must be a mapping, not %s", kwargs.Type())
 					break loop
 				}
+				// The items are copied: charge before materializing them.
+				if n := Len(kwargs); n >= 0 {
+					if err2 := thread.charge(uint64(n), satMul(uint64(n), allocBytesPerItem)); err2 != nil {
+						err = excess(err2, "excessive ** argument (%d items)", n)
+						break loop
+					}
+				}
 				items := dict.Items()
+				if Len(kwargs) < 0 {
+					if err2 := thread.charge(uint64(len(items)), satMul(uint64(len(items)), allocBytesPerItem)); err2 != nil {
+						err = excess(err2, "excessive ** argument (%d items)", len(items))
+						break loop
+					}
+				}
 				for _, item := range items {
 					if _, ok := item[0].(String); !ok {
 						err = fmt.Errorf("keywords must be strings, not %s", item[0].Type())
@@ -361,8 +374,24 @@ loop:
 					err = fmt.Errorf("argument after * must be iterable, not %s", args.Type())
 					break loop
 				}
+				// The elements are copied: charge before growing.
+				n := Len(args)
+				if n >= 0 {
+					if err2 := thread.charge(uint64(len(positional))+uint64(n), satMul(uint64(n), allocBytesPerValue)); err2 != nil {
+						iter.Done()
+						err = excess(err2, "excessive * argument (%d elements)", n)
+						break loop
+					}
+				}
 				var elem Value
 				for iter.Next(&elem) {
+					if n < 0 {
+						if err2 := thread.charge(uint64(len(positional))+1, allocBytesPerValue); err2 != nil {
+							iter.Done()
+							err = excess(err2, "excessive * argument (over %d elements)", maxAlloc)
+							break loop
+						}
+					}
 					positional = append(positional, elem)
 				}
 				iter.Done()
@@ -490,7 +519,7 @@ loop:
 			hi := stack[sp-2]
 			step := stack[sp-1]
 			sp -= 4
-			res, err2 := slice(x, lo, hi, step)
+			res, err2 := slice(thread, x, lo, hi, step)
 			if err2 != nil {
 				err = err2
 				break loop

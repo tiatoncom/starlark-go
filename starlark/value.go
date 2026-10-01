@@ -1377,11 +1377,6 @@ func toString(v Value) string {
 	return buf.String()
 }
 
-// stringOverflowed reports whether a value's string form hit the size bound:
-// writeValue stops descending once the output reaches maxAlloc, so only a
-// bounded form is that long.
-func stringOverflowed(s string) bool { return len(s) >= maxAlloc }
-
 // writeValue writes x to out.
 //
 // path is used to detect cycles.
@@ -1390,10 +1385,19 @@ func stringOverflowed(s string) bool { return len(s) >= maxAlloc }
 // Callers should generally pass nil for path.
 // It is safe to re-use the same path slice for multiple calls.
 func writeValue(out *strings.Builder, x Value, path []Value) {
+	writeValueLimit(out, x, path, maxAlloc)
+}
+
+// writeValueLimit is writeValue with an explicit size limit: it stops
+// descending once out holds limit bytes or more, so only a bounded form
+// reaches that length. A caller that can report errors treats an output of
+// limit or more bytes as too large; limit is at most maxAlloc, and a thread's
+// stringLimit when the form is to be charged to its budget.
+func writeValueLimit(out *strings.Builder, x Value, path []Value, limit int) {
 	// A shared (non-cyclic) subgraph can expand exponentially in the
 	// string form. Stop at the size limit; callers that can report errors
 	// detect the marked output.
-	if out.Len() >= maxAlloc {
+	if out.Len() >= limit {
 		if !strings.Contains(out.String()[out.Len()-min(out.Len(), 64):], writeValueOverflowMark) {
 			out.WriteString(writeValueOverflowMark)
 		}
@@ -1429,7 +1433,7 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 				if i > 0 {
 					out.WriteString(", ")
 				}
-				writeValue(out, elem, append(path, x))
+				writeValueLimit(out, elem, append(path, x), limit)
 			}
 		}
 		out.WriteByte(']')
@@ -1440,7 +1444,7 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 			if i > 0 {
 				out.WriteString(", ")
 			}
-			writeValue(out, elem, path)
+			writeValueLimit(out, elem, path, limit)
 		}
 		if len(x) == 1 {
 			out.WriteByte(',')
@@ -1466,9 +1470,9 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 			for e := x.ht.head; e != nil; e = e.next {
 				k, v := e.key, e.value
 				out.WriteString(sep)
-				writeValue(out, k, path)
+				writeValueLimit(out, k, path, limit)
 				out.WriteString(": ")
-				writeValue(out, v, append(path, x)) // cycle check
+				writeValueLimit(out, v, append(path, x), limit) // cycle check
 				sep = ", "
 			}
 		}
@@ -1480,7 +1484,7 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 			if e != x.ht.head {
 				out.WriteString(", ")
 			}
-			writeValue(out, e.key, path)
+			writeValueLimit(out, e.key, path, limit)
 		}
 		out.WriteString("])")
 

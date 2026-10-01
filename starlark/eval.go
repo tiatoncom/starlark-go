@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/big"
 	"math/bits"
 	"sort"
@@ -58,6 +59,10 @@ type Thread struct {
 	//
 	// The precise meaning of "step" is not specified and may change.
 	Steps, maxSteps uint64
+
+	// allocated is the number of bytes charged to this thread and
+	// maxAllocBytes its budget, 0 if none. See alloc.go.
+	allocated, maxAllocBytes uint64
 
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
@@ -619,25 +624,35 @@ func makeExprFunc(opts *syntax.FileOptions, expr syntax.Expr, env StringDict) (*
 // The following functions are primitive operations of the byte code interpreter.
 
 // list += iterable
-func listExtend(x *List, y Iterable) error {
-	// Bound growth like repeat (maxAlloc). Repeated x += x doubles the list
-	// in a single step.
-	if ylist, ok := y.(*List); ok {
-		// fast path: list += list
-		if len(x.elems)+len(ylist.elems) >= maxAlloc {
-			return fmt.Errorf("excessive list extension (%d + %d elements)", len(x.elems), len(ylist.elems))
+//
+// The elements added are charged to the thread's allocation budget, and the
+// list may not grow to maxAlloc elements: repeated x += x doubles the list
+// in a single step.
+func listExtend(thread *Thread, x *List, y Iterable) error {
+	if n := Len(y); n >= 0 {
+		// Known length (fast path for list += list): check before growing.
+		if err := thread.charge(uint64(len(x.elems))+uint64(n), satMul(uint64(n), allocBytesPerValue)); err != nil {
+			return excess(err, "excessive list extension (%d + %d elements)", len(x.elems), n)
 		}
-		x.elems = append(x.elems, ylist.elems...)
-	} else {
-		iter := y.Iterate()
-		defer iter.Done()
-		var z Value
-		for iter.Next(&z) {
-			if len(x.elems) >= maxAlloc {
-				return fmt.Errorf("excessive list extension (over %d elements)", maxAlloc)
+		if ylist, ok := y.(*List); ok {
+			x.elems = append(x.elems, ylist.elems...)
+			return nil
+		}
+	}
+	// Unknown length (or a known length that is not a list): charge as the
+	// elements are produced, so that an endless iterator cannot outrun the
+	// limits. A known length was charged above.
+	known := Len(y) >= 0
+	iter := y.Iterate()
+	defer iter.Done()
+	var z Value
+	for iter.Next(&z) {
+		if !known {
+			if err := thread.charge(uint64(len(x.elems))+1, allocBytesPerValue); err != nil {
+				return excess(err, "excessive list extension (over %d elements)", maxAlloc)
 			}
-			x.elems = append(x.elems, z)
 		}
+		x.elems = append(x.elems, z)
 	}
 	return nil
 }
@@ -776,7 +791,17 @@ func Unary(op syntax.Token, x Value) (Value, error) {
 
 // Binary applies a strict binary operator (not AND or OR) to its operands.
 // For equality tests or ordered comparisons, use Compare instead.
+//
+// Binary has no thread: the size of its result is bounded by the ceiling of
+// one operation (maxAlloc) but is not charged to any budget. The interpreter
+// uses binaryOp, which charges the thread it runs on.
 func Binary(op syntax.Token, x, y Value) (Value, error) {
+	return binaryOp(nil, op, x, y)
+}
+
+// binaryOp implements Binary, charging the results that allocate to thread
+// (which may be nil: then only the ceiling applies).
+func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 	switch op {
 	case syntax.PLUS:
 		switch x := x.(type) {
@@ -784,8 +809,8 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			if y, ok := y.(String); ok {
 				// Bound concatenation like repeat (maxAlloc). Repeated
 				// s = s + s doubles the string in a single step.
-				if len(x)+len(y) >= maxAlloc {
-					return nil, fmt.Errorf("excessive string concatenation (%d + %d bytes)", len(x), len(y))
+				if err := thread.chargeBytes(len(x) + len(y)); err != nil {
+					return nil, excess(err, "excessive string concatenation (%d + %d bytes)", len(x), len(y))
 				}
 				return x + y, nil
 			}
@@ -815,8 +840,8 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			if y, ok := y.(*List); ok {
 				// Bound concatenation like repeat (maxAlloc). Repeated
 				// x = x + x doubles the list in a single step.
-				if x.Len()+y.Len() >= maxAlloc {
-					return nil, fmt.Errorf("excessive list concatenation (%d + %d elements)", x.Len(), y.Len())
+				if err := thread.chargeValues(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive list concatenation (%d + %d elements)", x.Len(), y.Len())
 				}
 				z := make([]Value, 0, x.Len()+y.Len())
 				z = append(z, x.elems...)
@@ -826,8 +851,8 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 		case Tuple:
 			if y, ok := y.(Tuple); ok {
 				// Bound concatenation like repeat (maxAlloc).
-				if len(x)+len(y) >= maxAlloc {
-					return nil, fmt.Errorf("excessive tuple concatenation (%d + %d elements)", len(x), len(y))
+				if err := thread.chargeValues(len(x) + len(y)); err != nil {
+					return nil, excess(err, "excessive tuple concatenation (%d + %d elements)", len(x), len(y))
 				}
 				z := make(Tuple, 0, len(x)+len(y))
 				z = append(z, x...)
@@ -862,6 +887,9 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // difference
 			if y, ok := y.(*Set); ok {
+				if err := thread.chargeEntries(x.Len()); err != nil {
+					return nil, excess(err, "excessive set difference (%d elements)", x.Len())
+				}
 				iter := y.Iterate()
 				defer iter.Done()
 				return x.Difference(iter)
@@ -873,6 +901,12 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
+				// A product of big integers is as long as both together.
+				if n := satAdd(bigIntBytes(x), bigIntBytes(y)); n != 0 {
+					if err := thread.charge(n, n); err != nil {
+						return nil, excess(err, "excessive integer multiplication")
+					}
+				}
 				return x.Mul(y), nil
 			case Float:
 				xf, err := x.finiteFloat()
@@ -881,17 +915,17 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 				}
 				return xf * y, nil
 			case String:
-				return stringRepeat(y, x)
+				return stringRepeat(thread, y, x)
 			case Bytes:
-				return bytesRepeat(y, x)
+				return bytesRepeat(thread, y, x)
 			case *List:
-				elems, err := tupleRepeat(Tuple(y.elems), x)
+				elems, err := tupleRepeat(thread, Tuple(y.elems), x)
 				if err != nil {
 					return nil, err
 				}
 				return NewList(elems), nil
 			case Tuple:
-				return tupleRepeat(y, x)
+				return tupleRepeat(thread, y, x)
 			}
 		case Float:
 			switch y := y.(type) {
@@ -906,15 +940,15 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case String:
 			if y, ok := y.(Int); ok {
-				return stringRepeat(x, y)
+				return stringRepeat(thread, x, y)
 			}
 		case Bytes:
 			if y, ok := y.(Int); ok {
-				return bytesRepeat(x, y)
+				return bytesRepeat(thread, x, y)
 			}
 		case *List:
 			if y, ok := y.(Int); ok {
-				elems, err := tupleRepeat(Tuple(x.elems), y)
+				elems, err := tupleRepeat(thread, Tuple(x.elems), y)
 				if err != nil {
 					return nil, err
 				}
@@ -922,7 +956,7 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case Tuple:
 			if y, ok := y.(Int); ok {
-				return tupleRepeat(x, y)
+				return tupleRepeat(thread, x, y)
 			}
 
 		}
@@ -1044,11 +1078,11 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 				return x.Mod(yf), nil
 			}
 		case String:
-			return interpolate(string(x), y)
+			return interpolate(thread, string(x), y)
 		}
 
 	case syntax.NOT_IN:
-		z, err := Binary(syntax.IN, x, y)
+		z, err := binaryOp(thread, syntax.IN, x, y)
 		if err != nil {
 			return nil, err
 		}
@@ -1075,11 +1109,17 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 
 		case *Dict: // union
 			if y, ok := y.(*Dict); ok {
+				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive dict union (%d + %d entries)", x.Len(), y.Len())
+				}
 				return x.Union(y), nil
 			}
 
 		case *Set: // union
 			if y, ok := y.(*Set); ok {
+				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive set union (%d + %d elements)", x.Len(), y.Len())
+				}
 				iter := Iterate(y)
 				defer iter.Done()
 				return x.Union(iter)
@@ -1094,6 +1134,9 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // intersection
 			if y, ok := y.(*Set); ok {
+				if err := thread.chargeEntries(min(x.Len(), y.Len())); err != nil {
+					return nil, excess(err, "excessive set intersection (%d, %d elements)", x.Len(), y.Len())
+				}
 				iter := y.Iterate()
 				defer iter.Done()
 				return x.Intersection(iter)
@@ -1108,6 +1151,9 @@ func Binary(op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // symmetric difference
 			if y, ok := y.(*Set); ok {
+				if err := thread.chargeEntries(x.Len() + y.Len()); err != nil {
+					return nil, excess(err, "excessive set symmetric difference (%d + %d elements)", x.Len(), y.Len())
+				}
 				iter := y.Iterate()
 				defer iter.Done()
 				return x.SymmetricDifference(iter)
@@ -1166,7 +1212,7 @@ unknown:
 // lower the limit.
 var maxAlloc = 1 << 30
 
-func tupleRepeat(elems Tuple, n Int) (Tuple, error) {
+func tupleRepeat(thread *Thread, elems Tuple, n Int) (Tuple, error) {
 	if len(elems) == 0 {
 		return nil, nil
 	}
@@ -1179,9 +1225,12 @@ func tupleRepeat(elems Tuple, n Int) (Tuple, error) {
 	}
 	// Inv: i > 0, len > 0
 	of, sz := bits.Mul(uint(len(elems)), uint(i))
-	if of != 0 || sz >= uint(maxAlloc) { // of != 0 => overflow
+	if of != 0 { // overflow
+		sz = math.MaxUint
+	}
+	if err := thread.chargeValues(int(min(sz, math.MaxInt))); err != nil {
 		// Don't print sz.
-		return nil, fmt.Errorf("excessive repeat (%d * %d elements)", len(elems), i)
+		return nil, excess(err, "excessive repeat (%d * %d elements)", len(elems), i)
 	}
 	res := make([]Value, sz)
 	// copy elems into res, doubling each time
@@ -1193,12 +1242,12 @@ func tupleRepeat(elems Tuple, n Int) (Tuple, error) {
 	return res, nil
 }
 
-func bytesRepeat(b Bytes, n Int) (Bytes, error) {
-	res, err := stringRepeat(String(b), n)
+func bytesRepeat(thread *Thread, b Bytes, n Int) (Bytes, error) {
+	res, err := stringRepeat(thread, String(b), n)
 	return Bytes(res), err
 }
 
-func stringRepeat(s String, n Int) (String, error) {
+func stringRepeat(thread *Thread, s String, n Int) (String, error) {
 	if s == "" {
 		return "", nil
 	}
@@ -1211,14 +1260,25 @@ func stringRepeat(s String, n Int) (String, error) {
 	}
 	// Inv: i > 0, len > 0
 	of, sz := bits.Mul(uint(len(s)), uint(i))
-	if of != 0 || sz >= uint(maxAlloc) { // of != 0 => overflow
+	if of != 0 { // overflow
+		sz = math.MaxUint
+	}
+	if err := thread.chargeBytes(int(min(sz, math.MaxInt))); err != nil {
 		// Don't print sz.
-		return "", fmt.Errorf("excessive repeat (%d * %d elements)", len(s), i)
+		return "", excess(err, "excessive repeat (%d * %d elements)", len(s), i)
 	}
 	return String(strings.Repeat(string(s), i)), nil
 }
 
 // Call calls the function fn with the specified positional and keyword arguments.
+//
+// When fn is a *Builtin, Call charges the thread's allocation budget for the
+// string, bytes, list, tuple, dict or set it returns (by the shallow size
+// formula of alloc.go), less whatever the built-in itself charged during the
+// call. So a built-in that checks its result size before allocating (and
+// charges it) is not charged twice, and one that does not charge at all
+// (including one implemented by the host) is still counted. If the budget is
+// exceeded the call fails with an *AllocBudgetError.
 func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 	c, ok := fn.(Callable)
 	if !ok {
@@ -1263,7 +1323,24 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 		thread.stack = thread.stack[:len(thread.stack)-1] // pop
 	}()
 
+	_, isBuiltin := c.(*Builtin)
+	var allocBefore uint64
+	if isBuiltin {
+		allocBefore = thread.allocated
+	}
+
 	result, err := c.CallInternal(thread, args, kwargs)
+
+	// Charge what the built-in returned and did not charge itself.
+	if isBuiltin && err == nil && result != nil {
+		if n := shallowSize(result); n > 0 {
+			if charged := thread.allocated - allocBefore; n > charged {
+				if err = thread.chargeBudget(n - charged); err != nil {
+					result = nil
+				}
+			}
+		}
+	}
 
 	// Sanity check: nil is not a valid Starlark value.
 	if result == nil && err == nil {
@@ -1280,7 +1357,7 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 	return result, err
 }
 
-func slice(x, lo, hi, step_ Value) (Value, error) {
+func slice(thread *Thread, x, lo, hi, step_ Value) (Value, error) {
 	sliceable, ok := x.(Sliceable)
 	if !ok {
 		return nil, fmt.Errorf("invalid slice operand %s", x.Type())
@@ -1337,6 +1414,29 @@ func slice(x, lo, hi, step_ Value) (Value, error) {
 
 		if start < end {
 			start = end // => empty result
+		}
+	}
+
+	// A slice of a list, or of a string, bytes or tuple with a step, is a new
+	// array of known length. (A string, bytes or tuple slice with step 1
+	// shares the operand's memory; a range slice is lazy.) Check the size
+	// before the copy is made.
+	switch x.(type) {
+	case *List:
+		if err := thread.chargeValues(sliceLen(start, end, step)); err != nil {
+			return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
+		}
+	case Tuple:
+		if step != 1 {
+			if err := thread.chargeValues(sliceLen(start, end, step)); err != nil {
+				return nil, excess(err, "excessive slice (%d elements)", sliceLen(start, end, step))
+			}
+		}
+	case String, Bytes:
+		if step != 1 {
+			if err := thread.chargeBytes(sliceLen(start, end, step)); err != nil {
+				return nil, excess(err, "excessive slice (%d bytes)", sliceLen(start, end, step))
+			}
 		}
 	}
 
@@ -1539,7 +1639,11 @@ func findParam(params []compile.Binding, name string) int {
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string-interpolation
-func interpolate(format string, x Value) (Value, error) {
+//
+// The result is bounded by the ceiling and the thread's budget as it is built
+// (a %s of a shared subgraph can expand exponentially), then charged.
+func interpolate(thread *Thread, format string, x Value) (Value, error) {
+	limit := thread.stringLimit()
 	buf := new(strings.Builder)
 	index := 0
 	nargs := 1
@@ -1548,8 +1652,8 @@ func interpolate(format string, x Value) (Value, error) {
 	}
 	for {
 		// Bound the interpolation result like repeat.
-		if buf.Len() >= maxAlloc {
-			return nil, fmt.Errorf("excessive string interpolation (over %d bytes)", maxAlloc)
+		if buf.Len() >= limit {
+			return nil, thread.refuseBytes(buf.Len(), "excessive string interpolation (over %d bytes)", maxAlloc)
 		}
 		i := strings.IndexByte(format, '%')
 		if i < 0 {
@@ -1609,7 +1713,7 @@ func interpolate(format string, x Value) (Value, error) {
 			if str, ok := AsString(arg); ok && c == 's' {
 				buf.WriteString(str)
 			} else {
-				writeValue(buf, arg, nil)
+				writeValueLimit(buf, arg, nil, limit)
 			}
 		case 'd', 'i', 'o', 'x', 'X':
 			i, err := NumberToInt(arg)
@@ -1663,6 +1767,9 @@ func interpolate(format string, x Value) (Value, error) {
 		return nil, fmt.Errorf("too many arguments for format string")
 	}
 
+	if err := thread.chargeBytes(buf.Len()); err != nil {
+		return nil, excess(err, "excessive string interpolation (over %d bytes)", maxAlloc)
+	}
 	return String(buf.String()), nil
 }
 
