@@ -975,3 +975,106 @@ func TestPricesAreSorted(t *testing.T) {
 		}
 	}
 }
+
+// ---- smaller properties ----
+
+// The cycle check of a string form is a set below pathSetDepth levels, so that
+// the form of a deep value is not quadratic in its depth.
+func TestValueWriter_CycleCheckUsesASetWhenDeep(t *testing.T) {
+	var v Value = MakeInt(1)
+	for i := 0; i < 5000; i++ {
+		v = NewList([]Value{v})
+	}
+	var buf strings.Builder
+	w := valueWriter{out: &buf, limit: maxAlloc}
+	w.write(v, 0)
+	if w.result != writeOK {
+		t.Fatalf("result %d", w.result)
+	}
+	if w.pathSet == nil {
+		t.Fatal("a 5000-deep value was checked for cycles by scanning a slice")
+	}
+	// A cycle is still found, at any depth.
+	l := NewList(nil)
+	cur := l
+	for i := 0; i < 100; i++ {
+		next := NewList(nil)
+		cur.elems = []Value{next}
+		cur = next
+	}
+	cur.elems = []Value{l}
+	if s := l.String(); !strings.Contains(s, "...") {
+		t.Errorf("a cycle through 100 lists is not marked: %.60s", s)
+	}
+}
+
+// Floats are totally ordered here (NaN == NaN, NaN > +Inf), and a cheaper path
+// of equality must not change that: v0.2.0 gives the same answers.
+func TestCompare_NaNIsTotallyOrderedInContainers(t *testing.T) {
+	r := runProg(t, 0, "a = float('nan')\nb = float('nan')\nif not ([a] == [b]): fail('list')\nif not ((a,) == (b,)): fail('tuple')\nif not ({1: a} == {1: b}): fail('dict')\nif [a] != [b]: fail('ne')\nif not ([float('inf')] < [a]): fail('order')\n")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+}
+
+// The exported work-charging insertion of a dict.
+func TestDict_SetKeyWork(t *testing.T) {
+	d := new(Dict)
+	th := &Thread{}
+	// 500 keys with the same bucket: each insertion walks the chain.
+	var keys []Value
+	for i := 0; len(keys) < 500; i++ {
+		s := fmt.Sprintf("k%x", i)
+		if hashString(s)&63 == 0 {
+			keys = append(keys, String(s))
+		}
+	}
+	for _, k := range keys {
+		if err := d.SetKeyWork(th, k, None); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if th.Steps == 0 {
+		t.Error("500 colliding insertions cost no step")
+	}
+	// A nil thread is not charged and does not fail.
+	d2 := new(Dict)
+	for _, k := range keys {
+		if err := d2.SetKeyWork(nil, k, None); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d2.Len() != 500 {
+		t.Fatalf("len %d", d2.Len())
+	}
+	// With the limit reached, the insertion stops with the error of the thread.
+	th2 := &Thread{}
+	th2.SetMaxExecutionSteps(3)
+	d3 := new(Dict)
+	var err error
+	for _, k := range keys {
+		if err = d3.SetKeyWork(th2, k, None); err != nil {
+			break
+		}
+	}
+	// (500 keys are 500*3 units = ~100 steps)
+	if err == nil {
+		t.Errorf("no refusal at a limit of 3 steps")
+	}
+	s := new(Set)
+	if err := s.InsertWork(&Thread{}, String("x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// x in l finds an early match after charging at most one chunk.
+func TestMembership_EarlyMatchChargesAChunk(t *testing.T) {
+	r := runProg(t, 0, "l = list(range(100000))\nmark()\nx = 3 in l\nmark()\n")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	base := runProg(t, 0, "l = list(range(100000))\nmark()\nx = 3\nmark()\n")
+	if extra := r.th.Steps - base.th.Steps; extra > 256/WorkPerStep+8 {
+		t.Errorf("a match at index 3 of 100000 cost %d steps", extra)
+	}
+}
