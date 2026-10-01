@@ -621,6 +621,15 @@ func TestIntHash_MixesAllWords(t *testing.T) {
 	if len(buckets) < 900 || max > 16 {
 		t.Errorf("4096 ints i<<32 fall into %d of 1024 buckets, the fullest holds %d", len(buckets), max)
 	}
+	// Ints that differ only in a high word, above the first: all the words count.
+	hs := map[uint32]bool{}
+	for i := 1; i <= 2000; i++ {
+		h, _ := MakeBigInt(new(big.Int).Lsh(big.NewInt(int64(i)), 200)).Hash()
+		hs[h] = true
+	}
+	if len(hs) < 1900 {
+		t.Errorf("2000 ints i<<200 have %d distinct hashes", len(hs))
+	}
 	// And in a dict: the longest chain is short.
 	d := new(Dict)
 	for i := 1; i <= 8000; i++ {

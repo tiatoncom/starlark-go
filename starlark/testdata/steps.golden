@@ -1,0 +1,98 @@
+d.items()	3442
+d.keys()	2192
+d.values()	3442
+d.clear()	163
+l.clear()	1569
+st.clear()	1569
+d == e	1257
+d | e	18981
+dict(d)	10647
+l.insert(0, 1)	1571
+l.pop(0)	1570
+l.remove(l[-1])	6261
+l.extend(m)	9381
+l.index(l[-1])	6261
+list(l)	9380
+tuple(l)	9380
+reversed(l)	9380
+enumerate(l)	21880
+zip(l, m)	28131
+sorted(l)	116893
+sorted(reversed(l))	180021
+max(l)	6256
+min(l)	6256
+any(l[:1]) (stops at once)	11
+all(l[1:])	9383
+set(l)	123877
+st | st	242625
+st & st	130125
+st == st2	136379
+st.issubset(m)	7282
+st.union(m)	242626
+-1 in l	6258
+-1 in t	6258
+-1 in st (a lookup)	8
+l == m	6257
+l < m	6257
+t == tuple(m)	15632
+ll == mm (nested)	6263
+strs == strs2 (equal long strings)	911
+l + m	6255
+l * 3	9380
+l[::-1]	3133
+str(l)	7600
+repr(bigl)	1567
+str(bn)	162
+big + 1	262
+big - big2	262
+big & big2	262
+bm * bm	8212
+abs(-big)	263
+hash(s)	16391
+float(digits)	1959
+bytes(s)	1031
+bytes(l)	10106
+s.count('a')	1032
+s.find('c')	1032
+s.rfind('c')	1032
+s.index('ab') (a match at once)	8
+s.partition('c')	1032
+s.rpartition('c')	1032
+'c' in s	1031
+s.startswith	6359
+s.endswith	6359
+s.upper()	18437
+s.lower()	16391
+s.title()	34821
+s.capitalize()	34821
+s.isalpha()	16391
+s.isalnum()	16391
+s.isdigit()	16391
+s.islower()	16391
+s.isupper()	16391
+s.isspace()	16391
+s.istitle()	16391
+(' ' * N + 'x').strip()	9771
+lstrip	9771
+rstrip	9771
+s.removeprefix	109
+s.removesuffix	110
+s.replace('a', 'cc')	69639
+s.replace('c', 'd')	1033
+sp.split()	94213
+sp.split(' ')	82694
+sp.rsplit(' ')	82694
+nl.splitlines()	82693
+' '.join(strs)	112
+'{}'.format(s)	2054
+'%s' % s	2053
+s + s	4101
+s * 3	6149
+s == w	3084
+s < w	1031
+set(strs) (hash of long strings)	230
+set(bk) (hash of long bytes)	230
+set(tl) (hash of long tuples)	56257
+set(bigs) (hash of big integers)	9980
+print(s)	3077
+fail(s)	1028

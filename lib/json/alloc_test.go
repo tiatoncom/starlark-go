@@ -303,3 +303,71 @@ func TestJSON_WorkIsChargedInSteps(t *testing.T) {
 		t.Errorf("small json calls cost %d steps", small.th.Steps-smallBase.th.Steps)
 	}
 }
+
+// A value with shared substructure writes an output exponential in its depth:
+// encode stops when the output outgrows the headroom of the thread, not after
+// it has written it. A DAG of 2^22 leaves is 8 MiB of text: with 1 MiB, refused.
+func TestJSON_EncodeOfASharedDAGIsStoppedAtTheHeadroom(t *testing.T) {
+	r := exec(t, budget1MiB, "t = [1]\nfor i in range(22):\n  t = [t, t]\ns = json.encode(t)\n")
+	if r.err == nil || !strings.Contains(r.err.Error(), budgetPrefix) {
+		t.Fatalf("err = %v", r.err)
+	}
+	// With room for it, the output is what it is.
+	r = exec(t, 64<<20, "t = [1]\nfor i in range(10):\n  t = [t, t]\ns = json.encode(t)\nn = len(s)\n")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+}
+
+// An integer of more than MaxIntDigits digits is not written, as it is not by
+// str(), and not read by decode.
+func TestJSON_BigIntegersHaveTheDigitLimit(t *testing.T) {
+	r := exec(t, 0, "x = 1 << 511\nfor i in range(6):\n  x = x * x\ns = json.encode(x)\n")
+	if r.err == nil || !strings.Contains(r.err.Error(), "decimal digits") {
+		t.Errorf("encode of a 32000-bit integer: %v", r.err)
+	}
+	r = exec(t, 0, "x = 1 << 511\nfor i in range(4):\n  x = x * x\ns = json.encode(x)\ny = json.decode(s)\n")
+	if r.err != nil {
+		t.Errorf("encode of a 8000-bit integer: %v", r.err)
+	}
+	r = exec(t, 0, "y = json.decode('1' * 5000)\n")
+	if r.err == nil || !strings.Contains(r.err.Error(), "digits") {
+		t.Errorf("decode of 5000 digits: %v", r.err)
+	}
+	r = exec(t, 0, "y = json.decode('1' * 4300)\n")
+	if r.err != nil {
+		t.Errorf("decode of 4300 digits: %v", r.err)
+	}
+}
+
+// One operation is stopped near the limit of steps, not at its end.
+func TestJSON_AnOperationIsStoppedNearTheLimit(t *testing.T) {
+	for _, op := range []string{"s = json.encode(x)", "y = json.decode(s)", "z = json.indent(s)"} {
+		th := &starlark.Thread{}
+		th.SetMaxExecutionSteps(50_000_000)
+		var base uint64
+		extra := starlark.StringDict{
+			"json": json.Module,
+			"limit": starlark.NewBuiltin("limit", func(th *starlark.Thread, _ *starlark.Builtin, _ starlark.Tuple, _ []starlark.Tuple) (starlark.Value, error) {
+				base = th.Steps
+				th.SetMaxExecutionSteps(th.Steps + 2000)
+				return starlark.None, nil
+			}),
+		}
+		_, err := starlark.ExecFileOptions(&syntax.FileOptions{TopLevelControl: true, GlobalReassign: true}, th, "t.star",
+			"x = [i for i in range(400000)]\ns = json.encode(x)\nlimit()\n"+op+"\n", extra)
+		if err == nil || !strings.Contains(err.Error(), "too many steps") {
+			t.Errorf("%s: err = %v", op, err)
+			continue
+		}
+		// 400000 numbers are ~100k steps: stopped within a chunk (256 steps) of the
+		// limit. (indent is charged whole before it runs, so it is refused, not
+		// stopped.)
+		if strings.HasPrefix(op, "z = ") {
+			continue
+		}
+		if over := th.Steps - (base + 2000); over > 600 {
+			t.Errorf("%s: stopped %d steps past the limit", op, over)
+		}
+	}
+}
