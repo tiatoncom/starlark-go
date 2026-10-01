@@ -150,6 +150,18 @@ min(lazy(N))	6258
 max(lazy(N))	6258
 all(lazy_str(N))	6259
 l += lazy(N)	6259
+'{}'.format(l)	7601
+sk.add(long key) (present)	203
+st.add(long key) (new)	204
+sk.discard(long key) (present)	398
+st.discard(long key) (absent)	105
+sk.remove(long key)	203
+sk.pop() (long key)	202
+st.difference(m)	130126
+st.intersection(m)	130126
+st.symmetric_difference(m)	155126
+st.update(m)	118756
+st.issuperset(m)	6258
 print(s)	3077
 fail(s)	1028
 small: d.items()	73
@@ -304,5 +316,17 @@ small: min(lazy(N))	133
 small: max(lazy(N))	133
 small: all(lazy_str(N))	134
 small: l += lazy(N)	134
+small: '{}'.format(l)	152
+small: sk.add(long key) (present)	203
+small: st.add(long key) (new)	203
+small: sk.discard(long key) (present)	398
+small: st.discard(long key) (absent)	105
+small: sk.remove(long key)	203
+small: sk.pop() (long key)	202
+small: st.difference(m)	2043
+small: st.intersection(m)	2043
+small: st.symmetric_difference(m)	2543
+small: st.update(m)	1631
+small: st.issuperset(m)	133
 small: print(s)	27
 small: fail(s)	11

@@ -33,6 +33,7 @@ for i in range(N // 10):
 e = dict(d)
 lk = 'k' * 100000
 sx = 'ab' * (N // 2)
+sk = set([lk])
 dk = {lk: 1}
 s = 'ab' * (K // 2)
 w = 'a' * K
@@ -211,6 +212,18 @@ var stepsOps = []struct{ name, op string }{
 	{"max(lazy(N))", "r = max(lazy(N))"},
 	{"all(lazy_str(N))", "r = all(lazy_str(N))"},
 	{"l += lazy(N)", "l += lazy(N)"},
+	{"'{}'.format(l)", "r = '{}'.format(l)"},
+	{"sk.add(long key) (present)", "sk.add(lk)"},
+	{"st.add(long key) (new)", "st.add(lk)"},
+	{"sk.discard(long key) (present)", "sk.discard(lk)"},
+	{"st.discard(long key) (absent)", "st.discard(lk)"},
+	{"sk.remove(long key)", "sk.remove(lk)"},
+	{"sk.pop() (long key)", "r = sk.pop()"},
+	{"st.difference(m)", "r = st.difference(m)"},
+	{"st.intersection(m)", "r = st.intersection(m)"},
+	{"st.symmetric_difference(m)", "r = st.symmetric_difference(m)"},
+	{"st.update(m)", "st.update(m)"},
+	{"st.issuperset(m)", "r = st.issuperset(m)"},
 	{"print(s)", "print(s)"},
 	{"fail(s)", "fail(s)"},
 }
