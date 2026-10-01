@@ -281,7 +281,7 @@ var refuseCases = []struct {
 	{name: "str[::-1]", src: "x = 'a' * {N}\nmark()\nr = x[::-1]", nBudget: 600000},
 	{name: "bytes[::-1]", src: "x = b'a' * {N}\nmark()\nr = x[::-1]", nBudget: 600000},
 	{name: "upper", src: "s = 'a' * {N}\nmark()\nr = s.upper()", nBudget: 600000},
-	{name: "lower", src: "s = 'a' * {N}\nmark()\nr = s.lower()", nBudget: 600000},
+	{name: "lower", src: "s = 'A' * {N}\nmark()\nr = s.lower()", nBudget: 600000},
 	{name: "title", src: "s = 'a' * {N}\nmark()\nr = s.title()", nBudget: 600000},
 	{name: "capitalize", src: "s = 'a' * {N}\nmark()\nr = s.capitalize()", nBudget: 600000},
 	{name: "split(sep)", src: "s = 'a,' * {N}\nmark()\nr = s.split(',')", nBudget: 200000},
