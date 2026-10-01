@@ -58,7 +58,7 @@ big & big2	262
 bm * bm	8212
 abs(-big)	263
 hash(s)	16391
-float(digits)	1959
+float(digits)	2055
 bytes(s)	1031
 bytes(l)	10106
 s.count('a')	1032
@@ -68,8 +68,8 @@ s.index('ab') (a match at once)	8
 s.partition('c')	1032
 s.rpartition('c')	1032
 'c' in s	1031
-s.startswith	6359
-s.endswith	6359
+s.startswith	6669
+s.endswith	6669
 s.upper()	18437
 s.lower()	16391
 s.title()	34821
@@ -81,17 +81,17 @@ s.islower()	16391
 s.isupper()	16391
 s.isspace()	16391
 s.istitle()	16391
-(' ' * N + 'x').strip()	9771
-lstrip	9771
-rstrip	9771
-s.removeprefix	109
-s.removesuffix	110
+(' ' * N + 'x').strip()	10249
+lstrip	10249
+rstrip	10249
+s.removeprefix	116
+s.removesuffix	117
 s.replace('a', 'cc')	69639
 s.replace('c', 'd')	1033
-sp.split()	94213
-sp.split(' ')	82694
-sp.rsplit(' ')	82694
-nl.splitlines()	82693
+sp.split()	125615
+sp.split(' ')	110256
+sp.rsplit(' ')	110256
+nl.splitlines()	110255
 ' '.join(strs)	112
 '{}'.format(s)	2054
 '%s' % s	2053
@@ -105,3 +105,110 @@ set(tl) (hash of long tuples)	56257
 set(bigs) (hash of big integers)	9980
 print(s)	3077
 fail(s)	1028
+small: d.items()	73
+small: d.keys()	48
+small: d.values()	73
+small: d.clear()	7
+small: l.clear()	38
+small: st.clear()	38
+small: d == e	32
+small: d | e	239
+small: dict(d)	141
+small: l.insert(0, 1)	40
+small: l.pop(0)	39
+small: l.remove(l[-1])	136
+small: l.remove(l[0]) (the memmove)	41
+small: l.extend(m)	193
+small: l.index(l[-1])	136
+small: list(l)	192
+small: tuple(l)	192
+small: reversed(l)	192
+small: enumerate(l)	442
+small: zip(l, m)	568
+small: sorted(l)	1594
+small: sorted(reversed(l))	2857
+small: max(l)	131
+small: min(l)	131
+small: any(l[:1]) (stops at once)	11
+small: all(l[1:])	195
+small: set(l)	1919
+small: st | st	3542
+small: st & st	2042
+small: st == st2	2171
+small: st.issubset(m)	165
+small: st.union(m)	3543
+small: -1 in l	133
+small: -1 in t	133
+small: -1 in st (a lookup)	8
+small: l == m	132
+small: l < m	132
+small: t == tuple(m)	319
+small: ll == mm (nested)	6263
+small: strs == strs2 (equal long strings)	911
+small: l + m	130
+small: l * 3	192
+small: l[::-1]	70
+small: str(l)	151
+small: repr(bigl)	1567
+small: str(bn)	162
+small: '%d' % bn	120
+small: big // bm	32687
+small: big % bm	32687
+small: big | big2	262
+small: big ^ big2	262
+small: big << 3	262
+small: big >> 3	262
+small: b'c' in bs	14
+small: big + 1	262
+small: big - big2	262
+small: big & big2	262
+small: bm * bm	8212
+small: abs(-big)	263
+small: hash(s)	132
+small: float(digits)	25
+small: bytes(s)	14
+small: bytes(l)	10106
+small: s.count('a')	15
+small: s.find('c')	15
+small: s.rfind('c')	15
+small: s.index('ab') (a match at once)	8
+small: s.partition('c')	15
+small: s.rpartition('c')	15
+small: 'c' in s	14
+small: s.startswith	64
+small: s.endswith	64
+small: s.upper()	145
+small: s.lower()	132
+small: s.title()	270
+small: s.capitalize()	270
+small: s.isalpha()	132
+small: s.isalnum()	132
+small: s.isdigit()	132
+small: s.islower()	132
+small: s.isupper()	132
+small: s.isspace()	132
+small: s.istitle()	132
+small: (' ' * N + 'x').strip()	85
+small: lstrip	85
+small: rstrip	85
+small: s.removeprefix	14
+small: s.removesuffix	15
+small: s.replace('a', 'cc')	537
+small: s.replace('c', 'd')	16
+small: sp.split()	962
+small: sp.split(' ')	846
+small: sp.rsplit(' ')	846
+small: nl.splitlines()	845
+small: ' '.join(strs)	112
+small: '{}'.format(s)	21
+small: '%s' % s	20
+small: s + s	36
+small: s * 3	51
+small: s == w	34
+small: s < w	14
+small: set(strs) (hash of long strings)	230
+small: set(bk) (hash of long bytes)	230
+small: set(tl) (hash of long tuples)	1132
+small: set(bigs) (hash of big integers)	9980
+small: print(s)	27
+small: fail(s)	11

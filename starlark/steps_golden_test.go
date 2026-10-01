@@ -20,8 +20,9 @@ import (
 const stepsGoldenFile = "testdata/steps.golden"
 
 // stepsSetup is the data the operations work on: N elements, 1 MiB of text.
-const stepsSetup = `
-N = 100000
+const stepsSetupTemplate = `
+N = $N
+K = $K
 l = list(range(N))
 m = list(range(N))
 t = tuple(l)
@@ -30,10 +31,10 @@ d = {}
 for i in range(N // 10):
     d[i] = i
 e = dict(d)
-s = 'ab' * (1 << 19)
-w = 'a' * (1 << 20)
-sp = 'ab ' * (1 << 18)
-nl = 'ab\n' * (1 << 18)
+s = 'ab' * (K // 2)
+w = 'a' * K
+sp = 'ab ' * (K // 3)
+nl = 'ab\n' * (K // 3)
 big = 1 << 511
 for i in range(9):
     big = big * big
@@ -115,7 +116,7 @@ var stepsOps = []struct{ name, op string }{
 	{"bm * bm", "r = bm * bm"},
 	{"abs(-big)", "r = abs(-big)"},
 	{"hash(s)", "r = hash(s)"},
-	{"float(digits)", "r = float('0.' + '1' * 100000)"},
+	{"float(digits)", "r = float('0.' + '1' * (K // 10))"},
 	{"bytes(s)", "r = bytes(s)"},
 	{"bytes(l)", "r = bytes([x % 256 for x in l[:1000]])"},
 	{"s.count('a')", "r = s.count('a')"},
@@ -125,8 +126,8 @@ var stepsOps = []struct{ name, op string }{
 	{"s.partition('c')", "r = s.partition('c')"},
 	{"s.rpartition('c')", "r = s.rpartition('c')"},
 	{"'c' in s", "r = 'c' in s"},
-	{"s.startswith", "r = s.startswith(w[:100000])"},
-	{"s.endswith", "r = s.endswith(w[:100000])"},
+	{"s.startswith", "r = s.startswith(w[:K // 10])"},
+	{"s.endswith", "r = s.endswith(w[:K // 10])"},
 	{"s.upper()", "r = s.upper()"},
 	{"s.lower()", "r = s.lower()"},
 	{"s.title()", "r = s.title()"},
@@ -138,11 +139,11 @@ var stepsOps = []struct{ name, op string }{
 	{"s.isupper()", "r = s.isupper()"},
 	{"s.isspace()", "r = s.isspace()"},
 	{"s.istitle()", "r = s.istitle()"},
-	{"(' ' * N + 'x').strip()", "r = (' ' * 500000 + 'x').strip()"},
-	{"lstrip", "r = (' ' * 500000 + 'x').lstrip()"},
-	{"rstrip", "r = ('x' + ' ' * 500000).rstrip()"},
-	{"s.removeprefix", "r = s.removeprefix(s[:100000])"},
-	{"s.removesuffix", "r = s.removesuffix(s[-100000:])"},
+	{"(' ' * N + 'x').strip()", "r = (' ' * (K // 2) + 'x').strip()"},
+	{"lstrip", "r = (' ' * (K // 2) + 'x').lstrip()"},
+	{"rstrip", "r = ('x' + ' ' * (K // 2)).rstrip()"},
+	{"s.removeprefix", "r = s.removeprefix(s[:K // 10])"},
+	{"s.removesuffix", "r = s.removesuffix(s[-K // 10:])"},
 	{"s.replace('a', 'cc')", "r = s.replace('a', 'cc')"},
 	{"s.replace('c', 'd')", "r = s.replace('c', 'd')"},
 	{"sp.split()", "r = sp.split()"},
@@ -164,7 +165,7 @@ var stepsOps = []struct{ name, op string }{
 	{"fail(s)", "fail(s)"},
 }
 
-func runSteps(t *testing.T, op string) (uint64, error) {
+func runSteps(t *testing.T, setup, op string) (uint64, error) {
 	t.Helper()
 	th := &Thread{Name: "steps"}
 	th.Print = func(*Thread, string) {}
@@ -173,23 +174,30 @@ func runSteps(t *testing.T, op string) (uint64, error) {
 		base = th.Steps
 		return None, nil
 	})}
-	_, err := ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, Set: true, TopLevelControl: true}, th, "t.star", stepsSetup+"\nreset()\n"+op+"\n", extra)
+	_, err := ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, Set: true, TopLevelControl: true}, th, "t.star", setup+"\nreset()\n"+op+"\n", extra)
 	return th.Steps - base, err
 }
 
+// The operations run at two scales: large, where every one is far past the
+// free window and the chunk of a meter, and small, where the work of many is
+// between the free window and one chunk and is charged by the last flush.
 func TestStepsGolden(t *testing.T) {
 	var got strings.Builder
-	steps := map[string]uint64{}
-	for _, o := range stepsOps {
-		n, err := runSteps(t, o.op)
-		if err != nil && o.name != "fail(s)" {
-			t.Errorf("%s: %v", o.name, err)
-			continue
-		}
-		steps[o.name] = n
-		fmt.Fprintf(&got, "%s\t%d\n", o.name, n)
-		if exempt := strings.Contains(o.name, "at once") || strings.Contains(o.name, "a lookup"); n < 50 && !exempt {
-			t.Errorf("%s: %d steps for a linear operation on a large operand", o.name, n)
+	for _, scale := range []struct {
+		name string
+		n, k int
+	}{{"", 100000, 1 << 20}, {"small: ", 2000, 8000}} {
+		setup := strings.NewReplacer("$N", fmt.Sprint(scale.n), "$K", fmt.Sprint(scale.k)).Replace(stepsSetupTemplate)
+		for _, o := range stepsOps {
+			n, err := runSteps(t, setup, o.op)
+			if err != nil && o.name != "fail(s)" {
+				t.Errorf("%s%s: %v", scale.name, o.name, err)
+				continue
+			}
+			fmt.Fprintf(&got, "%s%s\t%d\n", scale.name, o.name, n)
+			if exempt := strings.Contains(o.name, "at once") || strings.Contains(o.name, "a lookup"); n < 50 && !exempt && scale.name == "" {
+				t.Errorf("%s: %d steps for a linear operation on a large operand", o.name, n)
+			}
 		}
 	}
 	if os.Getenv("STARLARK_WRITE_STEPS") != "" {
