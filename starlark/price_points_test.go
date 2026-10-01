@@ -72,6 +72,8 @@ func TestPricePoints_WorkIsAtLeastAFunctionOfTheOperand(t *testing.T) {
 		{"list(s.codepoints()): six units an element", "s = 'a' * N\nreset()\nr = list(s.codepoints())", 6, 1},
 		{"enumerate(l): six units an element", "l = list(range(N))\nreset()\nr = enumerate(l)", 5, 1},
 		{"zip(l, l)", "l = list(range(N))\nreset()\nr = zip(l, l)", 5, 1},
+		{"lstrip with a cutset: a unit a character of it, and one for two trimmed", "a = 'a' * N\nc = 'é' * (N // 10) + 'a'\nreset()\nr = a.lstrip(c)", 1, 10},
+		{"strip(), whitespace: a unit for two characters", "a = ' ' * N + 'x'\nreset()\nr = a.strip()", 1, 2},
 		{"x < 1.5 on a big integer: constant", "x = 1 << 500\nreset()\nr = x < 1.5", 0, 1},
 	}
 	for _, c := range cases {

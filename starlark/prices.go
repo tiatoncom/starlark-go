@@ -4,18 +4,27 @@ import (
 	"math/bits"
 )
 
-// The price of every built-in function and method of this package, in units of
-// work (work.go).
+// The price of every built-in function and method of this package, and of the
+// operators, in units of work (work.go).
+//
+// The unit of work is about the time of one simple step of the interpreter
+// (8 ns nominal), and the invariant is one sentence: a program that has done W
+// units of work (Thread.Work) has used at most C * W nanoseconds, C being
+// workNanoseconds. Each step of the interpreter is a unit; a price is what an
+// operation costs beyond the steps that start it, by what it does in the worst
+// case: the elements it visits, compares, probes, hashes or copies, the bytes it
+// scans, and the memory it allocates, which is garbage as well (allocator and
+// collector time: allocBytesPerWork).
 //
 // A price is one of:
 //
 //	o1      the work does not depend on the size of the operands, or on
 //	        anything but the type: nothing is charged beyond the steps of the
 //	        call. (A test checks it: the same call on an operand of size n and
-//	        100n costs the same steps.)
+//	        100n costs the same work.)
 //	work    a function of the operands, computed BEFORE the call from sizes
 //	        that are known without looking at the data (lengths), charged by
-//	        Call: a call that does not fit in the remaining steps is refused,
+//	        Call: a call that does not fit in the work that is left is refused,
 //	        not run.
 //	inside  the work depends on the data (it stops at the first match, or it
 //	        hashes and compares elements): the function charges as it goes, to
@@ -25,30 +34,10 @@ import (
 // (TestEveryBuiltinHasAPrice) fails for a built-in that has none: a built-in
 // without a price is a built-in whose time nothing bounds.
 //
-// The units were measured on the reference machine (darwin/arm64, Go 1.26)
-// against the cost of one element comparison, ~8-10 ns:
-//
-//	primitive                            measured          price
-//	x in list[int] (per element)         9.7 ns            1 unit
-//	== of two int lists (per element)    8.0 ns            1 unit
-//	max(l) (per element)                 9.2 ns            1 unit
-//	any(l) (per element)                 3.9 ns            1 unit
-//	str element of a list compare        2.5 ns            1 unit
-//	sorted (per comparison, n log n)     7.8 ns            1 unit
-//	memmove of 16-byte slots             1 ns              workSlots: 1/4 unit
-//	find, count, in, ==, concat (bytes)  0.02-0.03 ns/B    workFast: 1/64 unit/B
-//	hash of a string (bytes)             0.07-0.10 ns/B    workFast
-//	upper/lower, is*, [::-1] (bytes)     0.8-2.3 ns/B      workSlow: 1/4 unit/B
-//	title/capitalize (bytes)             3.5 ns/B          2 x workSlow
-//	replace (per match)                  9 ns              2 units
-//	split (per field)                    28-38 ns          4 units
-//	elems()/codepoints() list (per elem) 26 ns             4 units
-//	dict keys/items/values (per entry)   34 ns             3 units
-//	hash table insert (per entry)        30 (warm)-340 ns 1 + log2(n) - 4 units, from 16 entries (insertWork)
-//	d == e (per entry)                   120 ns            lookup + compare
-//	allocation of memory (per byte)      0.25-0.4 ns       1 unit / 32 B
-//	int(str), str(int) (digits^2)        0.84 ns/1000      digits^2 / 4096
-//	big integer multiply (words^2)       ~1 ns a word      words^2 / 8
+// The prices are the measured costs of the primitives in the worst form that is
+// known, divided by the unit; steps-prices.md has the table of the
+// measurements (and calibrate_probes_test.go the programs of them), and
+// TestPrices_AtLeastTheMeasuredCost holds every priced operation to it.
 type price struct {
 	desc string // the formula, in words (the table of steps-prices.md)
 	// accounts is set for built-ins that charge the allocation budget

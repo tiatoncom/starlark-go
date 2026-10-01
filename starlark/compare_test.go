@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"math/rand"
 	"testing"
+
+	"go.starlark.net/syntax"
 )
 
 // cmpIntFloat is the comparison by rational numbers, which it replaced, for
@@ -90,5 +92,42 @@ func TestCompare_IntFloatDoesNotAllocate(t *testing.T) {
 	})
 	if n > 0 {
 		t.Errorf("%v allocations for 300 comparisons", n)
+	}
+}
+
+// The comparison of an integer and a float, as the interpreter and the built-ins
+// make it (Compare, <, in, max, sorted), makes no rational number either.
+func TestCompare_IntFloatThroughTheOperatorsDoesNotAllocate(t *testing.T) {
+	bigx := Value(MakeBigInt(new(big.Int).Lsh(big.NewInt(1), 100000)))
+	var f15, f25 Value = Float(1.5), Float(2.5) // (boxed once: the boxing of a float allocates)
+	ints := make([]Value, 20)
+	floats := make([]Value, 20)
+	for i := range ints {
+		ints[i], floats[i] = MakeInt(i), Float(float64(i))
+	}
+	n := testing.AllocsPerRun(100, func() {
+		for i := 0; i < 20; i++ {
+			Compare(syntax.LT, ints[i], f15)
+			Compare(syntax.GE, f25, ints[i])
+			Compare(syntax.EQL, bigx, f15)
+			Compare(syntax.LT, f15, bigx)
+			Equal(ints[i], floats[i])
+		}
+	})
+	if n > 0 {
+		t.Errorf("%v allocations for 100 comparisons of integers and floats", n)
+	}
+	l := make([]Value, 1000)
+	for i := range l {
+		l[i] = MakeInt(i)
+	}
+	list := NewList(l)
+	th := &Thread{}
+	var fm Value = Float(-1.5)
+	if n := testing.AllocsPerRun(20, func() {
+		Binary(syntax.IN, fm, list)
+		_, _ = Call(th, Universe["max"], Tuple{list, f15}, nil)
+	}); n > 30 { // (the call and its tuple: a few)
+		t.Errorf("%v allocations for a search and a max over 1000 integers by a float", n)
 	}
 }
