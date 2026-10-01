@@ -76,7 +76,6 @@ type Thread struct {
 	// enterFunction).
 	callDepth int
 	active    map[*compile.Funcode]int32
-	scanned   uint64 // frames looked at by enterFunction (for a test)
 
 	// formSink and formMeter are the sink and the meter of the string form
 	// that is being made (see buildForm), reused for the next.
@@ -2090,7 +2089,9 @@ func (thread *Thread) enterFunction(fn *Function, f *compile.Funcode) error {
 	below := thread.stack[:len(thread.stack)-1]
 	if thread.active == nil {
 		if len(below) <= recursionScanDepth {
-			thread.scanned += uint64(len(below))
+			if scanHook != nil {
+				scanHook("recursion", len(below))
+			}
 			for _, fr := range below {
 				if frfn, ok := fr.Callable().(*Function); ok && frfn.funcode == f {
 					return fmt.Errorf("function %s called recursively", fn.Name())
@@ -2101,7 +2102,9 @@ func (thread *Thread) enterFunction(fn *Function, f *compile.Funcode) error {
 		// The stack is deep now: count the active calls once, and keep the
 		// count from here on.
 		thread.active = make(map[*compile.Funcode]int32)
-		thread.scanned += uint64(len(below))
+		if scanHook != nil {
+			scanHook("recursion", len(below))
+		}
 		for _, fr := range below {
 			if frfn, ok := fr.Callable().(*Function); ok {
 				thread.active[frfn.funcode]++

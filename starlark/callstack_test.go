@@ -73,12 +73,13 @@ func TestCallStack_DepthThroughBuiltins(t *testing.T) {
 // function is active, however deep the stack is (not the depth: the product).
 func TestCallStack_RecursionCheckIsNotLinearInTheDepth(t *testing.T) {
 	const n = 5000
-	th, _, err := execDeep(t, chainProgram(n), 10000)
+	scans, err := countScans(t, strings.Replace(chainProgram(n), "result = f0()", "result = f0()", 1))
+	_ = scans
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound := uint64(n) * (recursionScanDepth + 2); th.scanned > bound {
-		t.Errorf("%d frames were looked at for %d calls, at most %d", th.scanned, n, bound)
+	if bound := n * (recursionScanDepth + 2); scans["recursion"] > bound {
+		t.Errorf("%d frames were looked at for %d calls, at most %d", scans["recursion"], n, bound)
 	}
 	// And the check still finds a recursion, deep or not.
 	deep := chainProgram(100) + "def loop(n):\n    return f0() if n == 0 else loop(n - 1)\n"

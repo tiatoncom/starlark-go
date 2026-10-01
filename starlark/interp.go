@@ -31,12 +31,13 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	if len(thread.stack) > thread.maxCallDepth() {
 		return nil, fmt.Errorf("Starlark stack overflow")
 	}
+	entered := false // the function is counted as active (see enterFunction)
 	if !f.Prog.Recursion {
 		// detect recursion
 		if err := thread.enterFunction(fn, f); err != nil {
 			return nil, err
 		}
-		defer thread.leaveFunction(f)
+		entered = true
 	}
 
 	fr := thread.frameAt(0)
@@ -58,6 +59,9 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 		// every call, and binds a default to every parameter: charge it, memory
 		// and work, before it is made.
 		if err := thread.chargeFrame(nspace); err != nil {
+			if entered {
+				thread.leaveFunction(f)
+			}
 			return nil, thread.evalError(err)
 		}
 	}
@@ -68,6 +72,9 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	// Digest arguments and set parameters.
 	err := setArgs(thread, locals, fn, args, kwargs)
 	if err != nil {
+		if entered {
+			thread.leaveFunction(f)
+		}
 		return nil, thread.evalError(err)
 	}
 
@@ -97,6 +104,9 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 		// ITERPOP the rest of the iterator stack.
 		for _, iter := range iterstack {
 			iter.Done()
+		}
+		if entered {
+			thread.leaveFunction(f)
 		}
 
 		fr.locals = nil

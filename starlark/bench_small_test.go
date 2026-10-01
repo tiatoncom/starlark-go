@@ -59,3 +59,34 @@ func BenchmarkSmall_sorted(b *testing.B) {
 func BenchmarkSmall_set_add(b *testing.B) {
 	benchProgram(b, "s = set([1, 2])", "    s.add(3)")
 }
+
+func BenchmarkSmall_percent_d(b *testing.B) {
+	benchProgram(b, "", "    x = '%d' % i")
+}
+func BenchmarkSmall_percent_s(b *testing.B) {
+	benchProgram(b, "s = 'abc'", "    x = 'n=%s' % s")
+}
+func BenchmarkSmall_str_int(b *testing.B) {
+	benchProgram(b, "", "    x = str(i)")
+}
+func BenchmarkSmall_repr_str(b *testing.B) {
+	benchProgram(b, "s = 'hello world'", "    x = repr(s)")
+}
+func BenchmarkSmall_format(b *testing.B) {
+	benchProgram(b, "", "    x = 'n={}'.format(i)")
+}
+func BenchmarkSmall_str_list(b *testing.B) {
+	benchProgram(b, "l = [1, 2, 3, 4, 5]", "    x = str(l)")
+}
+func BenchmarkSmall_join(b *testing.B) {
+	benchProgram(b, "l = ['a', 'b', 'c']", "    x = ','.join(l)")
+}
+func BenchmarkSmall_split(b *testing.B) {
+	benchProgram(b, "s = 'a,b,c,d'", "    x = s.split(',')")
+}
+func BenchmarkSmall_call(b *testing.B) {
+	benchProgram(b, "def g(a, b=2): return a", "    x = g(i)")
+}
+func BenchmarkSmall_call_kw(b *testing.B) {
+	benchProgram(b, "def g(a, b=2): return a", "    x = g(i, b=3)")
+}

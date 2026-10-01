@@ -961,21 +961,15 @@ func (x *Dict) unionM(m *meter, y *Dict) (*Dict, error) {
 }
 
 // SetKeyWork is SetKey, charging the work of the insertion (the hash of the key,
-// the walk of the chain of its bucket, the entry) to the steps of thread, as the
+// the walk of the chain of its bucket, the entry) to the work of thread, as the
 // built-ins of this package do: a built-in of the host that fills a dict from
-// keys of the script calls it. A nil thread is not charged.
+// keys of the script calls it (lib/json does, for the objects that it decodes:
+// the key is the script's, and the chain it walks is as long as the script made
+// it). A nil thread is not charged. The error of a refusal is the error to
+// return.
 func (d *Dict) SetKeyWork(thread *Thread, k, v Value) error {
 	m := thread.meter()
 	if err := d.ht.insertM(&m, k, v); err != nil {
-		return err
-	}
-	return m.flush()
-}
-
-// InsertWork is Insert, charging its work to thread (see Dict.SetKeyWork).
-func (s *Set) InsertWork(thread *Thread, k Value) error {
-	m := thread.meter()
-	if err := s.ht.insertM(&m, k, None); err != nil {
 		return err
 	}
 	return m.flush()
