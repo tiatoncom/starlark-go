@@ -186,11 +186,18 @@ var stepsOps = []struct{ name, op string }{
 	{"dk.popitem() (long key)", "r = dk.popitem()"},
 	{"dk.setdefault(long key) (present)", "r = dk.setdefault(lk)"},
 	{"dk.setdefault(long key) (new)", "r = d.setdefault(lk, 1)"},
-	{"list(sx.elems()) (unknown length)", "r = list(sx.elems())"},
-	{"tuple(sx.elems())", "r = tuple(sx.elems())"},
-	{"reversed(sx.elems())", "r = reversed(sx.elems())"},
-	{"enumerate(sx.elems())", "r = enumerate(sx.elems())"},
-	{"bytes(sx.elem_ords())", "r = bytes(sx.elem_ords())"},
+	{"list(lazy(N)) (unknown length)", "r = list(lazy(N))"},
+	{"tuple(lazy(N))", "r = tuple(lazy(N))"},
+	{"reversed(lazy(N))", "r = reversed(lazy(N))"},
+	{"enumerate(lazy(N))", "r = enumerate(lazy(N))"},
+	{"bytes(lazy_bytes(N))", "r = bytes(lazy_bytes(N))"},
+	{"set(lazy(N))", "r = set(lazy(N))"},
+	{"sorted(lazy(N))", "r = sorted(lazy(N))"},
+	{"zip(lazy(N), lazy(N))", "r = zip(lazy(N), lazy(N))"},
+	{"dict(lazy_pairs(N))", "r = dict(lazy_pairs(N))"},
+	{"l.extend(lazy(N))", "l.extend(lazy(N))"},
+	{"f(*lazy(N))", "def f(*a): return None\nf(*lazy(N))"},
+	{"list(sx.elems())", "r = list(sx.elems())"},
 	{"print(s)", "print(s)"},
 	{"fail(s)", "fail(s)"},
 }
@@ -200,10 +207,11 @@ func runSteps(t *testing.T, setup, op string) (uint64, error) {
 	th := &Thread{Name: "steps"}
 	th.Print = func(*Thread, string) {}
 	var base uint64
-	extra := StringDict{"reset": NewBuiltin("reset", func(th *Thread, _ *Builtin, _ Tuple, _ []Tuple) (Value, error) {
+	extra := lazyBuiltins() // iterables of unknown length
+	extra["reset"] = NewBuiltin("reset", func(th *Thread, _ *Builtin, _ Tuple, _ []Tuple) (Value, error) {
 		base = th.Steps
 		return None, nil
-	})}
+	})
 	_, err := ExecFileOptions(&syntax.FileOptions{GlobalReassign: true, Set: true, TopLevelControl: true}, th, "t.star", setup+"\nreset()\n"+op+"\n", extra)
 	return th.Steps - base, err
 }

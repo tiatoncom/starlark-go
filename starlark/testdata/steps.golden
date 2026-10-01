@@ -125,11 +125,18 @@ dk.pop(long key)	203
 dk.popitem() (long key)	202
 dk.setdefault(long key) (present)	203
 dk.setdefault(long key) (new)	205
-list(sx.elems()) (unknown length)	12507
-tuple(sx.elems())	9382
-reversed(sx.elems())	12507
-enumerate(sx.elems())	21882
-bytes(sx.elem_ords())	6452
+list(lazy(N)) (unknown length)	6153
+tuple(lazy(N))	6153
+reversed(lazy(N))	6153
+enumerate(lazy(N))	6153
+bytes(lazy_bytes(N))	6153
+set(lazy(N))	98880
+sorted(lazy(N))	7522
+zip(lazy(N), lazy(N))	12
+dict(lazy_pairs(N))	98880
+l.extend(lazy(N))	10
+f(*lazy(N))	3137
+list(sx.elems())	12507
 print(s)	3077
 fail(s)	1028
 small: d.items()	73
@@ -259,10 +266,17 @@ small: dk.pop(long key)	203
 small: dk.popitem() (long key)	202
 small: dk.setdefault(long key) (present)	203
 small: dk.setdefault(long key) (new)	204
-small: list(sx.elems()) (unknown length)	257
-small: tuple(sx.elems())	194
-small: reversed(sx.elems())	257
-small: enumerate(sx.elems())	444
-small: bytes(sx.elem_ords())	134
+small: list(lazy(N)) (unknown length)	9
+small: tuple(lazy(N))	9
+small: reversed(lazy(N))	9
+small: enumerate(lazy(N))	9
+small: bytes(lazy_bytes(N))	9
+small: set(lazy(N))	1422
+small: sorted(lazy(N))	161
+small: zip(lazy(N), lazy(N))	12
+small: dict(lazy_pairs(N))	1422
+small: l.extend(lazy(N))	10
+small: f(*lazy(N))	74
+small: list(sx.elems())	257
 small: print(s)	27
 small: fail(s)	11
