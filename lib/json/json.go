@@ -10,9 +10,11 @@ package json // import "go.starlark.net/lib/json"
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
+	"math/bits"
 	"reflect"
 	"slices"
 	"sort"
@@ -79,6 +81,16 @@ import (
 // It accepts one required positional parameter, the JSON string,
 // and two optional keyword-only string parameters, prefix and indent,
 // that specify a prefix of each new line, and the unit of indentation.
+//
+// Allocation: the string that encode, encode_indent and indent return, and the
+// value that decode returns, are charged to the thread's allocation budget
+// (starlark.Thread.SetMaxAllocBytes) before they are built, and each stops as
+// soon as its result would exceed the budget or the limit of one operation:
+// encode of a value with shared substructure (x = [x, x] repeated) has an
+// output exponential in the number of repetitions, and indent with a long
+// indent string has an output of depth times that string per line. A decoded
+// string is charged by its length, a list by 16 bytes per element, a dict by
+// 96 bytes per entry, a big integer by its digits.
 var Module = &starlarkstruct.Module{
 	Name: "json",
 	Members: starlark.StringDict{
@@ -97,6 +109,23 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 	buf := new(bytes.Buffer)
 
+	// The output of a value with shared substructure is exponential in the
+	// depth of the sharing (cycles are detected, shared children are not):
+	// stop as soon as it outgrows the headroom of the thread. Once it has,
+	// ChargeAlloc of its length is refused, which gives the error.
+	headroom := thread.AllocHeadroom()
+	var stop error
+	overflowed := func() bool {
+		if uint64(buf.Len()) <= headroom {
+			return false
+		}
+		stop = thread.ChargeAlloc(uint64(buf.Len()))
+		if stop == nil {
+			stop = errors.New("excessive size")
+		}
+		return true
+	}
+
 	var quoteSpace [128]byte
 	quote := func(s string) {
 		// Non-trivial escaping is handled by Go's encoding/json.
@@ -114,6 +143,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 	var emit func(x starlark.Value) error
 	emit = func(x starlark.Value) error {
+		if overflowed() {
+			return stop
+		}
 
 		// It is only necessary to push/pop the item when it might contain
 		// itself (i.e. the last three switch cases), but omitting it in the other
@@ -235,9 +267,82 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 
 	if err := emit(x); err != nil {
+		if stop != nil {
+			return nil, allocErr(b, stop)
+		}
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
 	}
+	if err := thread.ChargeAlloc(uint64(buf.Len())); err != nil {
+		return nil, allocErr(b, err)
+	}
 	return starlark.String(buf.String()), nil
+}
+
+// allocErr returns the error of a refused allocation of the built-in b: a
+// budget error as it is (it is recognized by type, and its text is fixed),
+// and any other with the name of b.
+func allocErr(b *starlark.Builtin, err error) error {
+	if _, ok := err.(*starlark.AllocBudgetError); ok {
+		return err
+	}
+	return fmt.Errorf("%s: %v", b.Name(), err)
+}
+
+func satAdd(a, b uint64) uint64 {
+	s, carry := bits.Add64(a, b, 0)
+	if carry != 0 {
+		return math.MaxUint64
+	}
+	return s
+}
+
+func satMul(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	if hi != 0 {
+		return math.MaxUint64
+	}
+	return lo
+}
+
+// indentSize returns an upper bound of the length of json.Indent(s, prefix,
+// indent): s itself, and for each element or bracket that starts a new line,
+// the newline, the prefix and as many copies of indent as the nesting depth.
+// The depth of a line is not bounded by anything but the length of s, so the
+// output is quadratic in len(s) for a deeply nested document, and a long
+// indent multiplies it.
+func indentSize(s, prefix, indent string) uint64 {
+	size := uint64(len(s))
+	depth := uint64(0)
+	newline := func() {
+		size = satAdd(size, satAdd(1+uint64(len(prefix)), satMul(depth, uint64(len(indent)))))
+	}
+	inString := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if c == '\\' {
+				i++ // skip the escaped byte
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			newline()
+		case ',':
+			newline()
+		case '}', ']':
+			if depth > 0 {
+				depth--
+			}
+			newline()
+		}
+	}
+	return size
 }
 
 func encodeIndent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
@@ -253,6 +358,9 @@ func encodeIndent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tu
 	str, err := encode(thread, b, args, nil)
 	if err != nil {
 		return nil, err
+	}
+	if err := thread.ChargeAlloc(indentSize(string(str.(starlark.String)), prefix, indent)); err != nil {
+		return nil, allocErr(b, err)
 	}
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, []byte(str.(starlark.String)), prefix, indent); err != nil {
@@ -306,6 +414,9 @@ func indent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 		return nil, err
 	}
 
+	if err := thread.ChargeAlloc(indentSize(str, prefix, indent)); err != nil {
+		return nil, allocErr(b, err)
+	}
 	buf := new(bytes.Buffer)
 	if err := json.Indent(buf, []byte(str), prefix, indent); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
@@ -339,6 +450,15 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	type failure string
 	fail := func(format string, args ...any) {
 		panic(failure(fmt.Sprintf(format, args...)))
+	}
+
+	// A refused allocation is not a syntax error: it is returned as the
+	// error even if there is a default.
+	type refusal struct{ err error }
+	charge := func(n uint64) {
+		if err := thread.ChargeAlloc(n); err != nil {
+			panic(refusal{allocErr(b, err)})
+		}
 	}
 
 	i := 0
@@ -406,6 +526,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			} else if err := json.Unmarshal([]byte(r), &r); err != nil {
 				fail("%s", err)
 			}
+			charge(uint64(len(r)))
 			return starlark.String(r)
 
 		case 'n':
@@ -435,6 +556,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			if b != ']' {
 				for {
 					elem := parse()
+					charge(16) // one list slot
 					elems = append(elems, elem)
 					b = next()
 					if b != ',' {
@@ -467,6 +589,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					}
 					i++ // ':'
 					value := parse()
+					charge(96)              // one dict entry
 					dict.SetKey(key, value) // can't fail
 					b = next()
 					if b != ',' {
@@ -526,6 +649,9 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					if !ok {
 						fail("invalid number: %s", num)
 					}
+					if x.BitLen() >= 32 { // a small integer is a word in the Value
+						charge(uint64(x.BitLen()+7) / 8)
+					}
 					return starlark.MakeBigInt(x)
 				}
 			}
@@ -536,6 +662,8 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	defer func() {
 		x := recover()
 		switch x := x.(type) {
+		case refusal:
+			v, err = nil, x.err
 		case failure:
 			if d != nil {
 				v = d
