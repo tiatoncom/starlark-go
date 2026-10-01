@@ -91,8 +91,18 @@ func TestCalibrate(t *testing.T) {
 		t.Skip("set STARLARK_CALIBRATE=1 to run the calibration (on a quiet machine)")
 	}
 	reps := 7
+	if v := os.Getenv("STARLARK_CALIBRATE_REPS"); v != "" {
+		fmt.Sscan(v, &reps)
+	}
+	started := os.Getenv("STARLARK_CALIBRATE_FROM") == ""
 	var results []probeResult
 	for _, p := range calibrationProbes {
+		if !started && strings.Contains(p.name, os.Getenv("STARLARK_CALIBRATE_FROM")) {
+			started = true
+		}
+		if !started {
+			continue
+		}
 		if f := os.Getenv("STARLARK_CALIBRATE_ONLY"); f != "" && !strings.Contains(p.name, f) {
 			continue
 		}

@@ -250,9 +250,31 @@ func Quote(s string, b bool) string {
 func AppendQuoted(buf []byte, s string) []byte {
 	const hex = "0123456789abcdef"
 	var runeTmp [utf8.UTFMax]byte
+	// A run of printable ASCII that needs no escape (the common case, and by
+	// far the largest) is copied as it is, without a decision for each byte.
+	if len(s) > 0 {
+		i := 0
+		for i < len(s) && plainASCII(s[i]) {
+			i++
+		}
+		if i > 0 {
+			buf = append(buf, s[:i]...)
+			s = s[i:]
+		}
+	}
 	for width := 0; len(s) > 0; s = s[width:] {
 		r := rune(s[0])
 		width = 1
+		if plainASCII(s[0]) {
+			// a run of plain bytes at once
+			j := 1
+			for j < len(s) && plainASCII(s[j]) {
+				j++
+			}
+			buf = append(buf, s[:j]...)
+			width = j
+			continue
+		}
 		if r >= utf8.RuneSelf {
 			r, width = utf8.DecodeRuneInString(s)
 		}
@@ -326,6 +348,15 @@ func QuoteLen(s string, b bool) int {
 	for width := 0; len(s) > 0; s = s[width:] {
 		r := rune(s[0])
 		width = 1
+		if plainASCII(s[0]) {
+			j := 1
+			for j < len(s) && plainASCII(s[j]) {
+				j++
+			}
+			n += j
+			width = j
+			continue
+		}
 		if r >= utf8.RuneSelf {
 			r, width = utf8.DecodeRuneInString(s)
 		}
@@ -347,4 +378,10 @@ func QuoteLen(s string, b bool) int {
 		}
 	}
 	return n
+}
+
+// plainASCII reports whether the byte is printable ASCII that quoting does not
+// change: not a quote, not a backslash, not a control character, not DEL.
+func plainASCII(b byte) bool {
+	return b >= ' ' && b < 0x7f && b != '"' && b != '\\'
 }
