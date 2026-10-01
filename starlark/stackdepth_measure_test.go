@@ -42,9 +42,9 @@ func depthCases() []depthCase {
 		{"250 parameters", func(i int) string { return fmt.Sprintf("def f%d(%s): return f%d()\n", i, params, i+1) }, "return 1"},
 		{"250 locals", func(i int) string { return fmt.Sprintf("def f%d():\n%s\n    return f%d()\n", i, locals, i+1) }, "return 1"},
 		{"through sorted(key=)", func(i int) string {
-			return fmt.Sprintf("def f%d(): return sorted([1, 2], key=lambda x: f%d())\n", i, i+1)
+			return fmt.Sprintf("def f%d(): return sorted([1], key=lambda x: f%d())\n", i, i+1)
 		}, "return [1]"},
-		{"through max(key=)", func(i int) string { return fmt.Sprintf("def f%d(): return max([1, 2], key=lambda x: f%d())\n", i, i+1) }, "return 1"},
+		{"through max(key=)", func(i int) string { return fmt.Sprintf("def f%d(): return max([1], key=lambda x: f%d())\n", i, i+1) }, "return 1"},
 		{"through a comprehension", func(i int) string { return fmt.Sprintf("def f%d(): return [f%d() for x in [1]][0]\n", i, i+1) }, "return 1"},
 		{"through str(f())", func(i int) string { return fmt.Sprintf("def f%d(): return str(f%d())\n", i, i+1) }, "return 1"},
 		{"through a keyword call f(**d)", func(i int) string { return fmt.Sprintf("def f%d(**k): return f%d(**k)\n", i, i+1) }, "return 1"},
