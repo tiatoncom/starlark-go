@@ -581,6 +581,29 @@ func TestAttack_TupleDAGFreeze(t *testing.T) {
 	}
 }
 
+// A leaf that counts its freezes.
+type freezeCounted struct{ n *int }
+
+func (c freezeCounted) String() string        { return "fc" }
+func (c freezeCounted) Type() string          { return "fc" }
+func (c freezeCounted) Freeze()               { *c.n++ }
+func (c freezeCounted) Truth() Bool           { return True }
+func (c freezeCounted) Hash() (uint32, error) { return 1, nil }
+
+// The same, with a depth where a walk of every path ends, and fails the test
+// instead of not returning: each distinct node is visited once.
+func TestAttack_TupleDAGFreezeVisitsEachNodeOnce(t *testing.T) {
+	n := 0
+	var v Value = Tuple{freezeCounted{&n}}
+	for i := 0; i < 22; i++ {
+		v = Tuple{v, v}
+	}
+	v.Freeze()
+	if n != 1 {
+		t.Errorf("the leaf of a DAG of 2^22 paths was frozen %d times, want 1", n)
+	}
+}
+
 // The hash of an int uses all its words.
 func TestIntHash_MixesAllWords(t *testing.T) {
 	// Ints that differ only above bit 32 must not all share a bucket.
@@ -1076,5 +1099,45 @@ func TestMembership_EarlyMatchChargesAChunk(t *testing.T) {
 	base := runProg(t, 0, "l = list(range(100000))\nmark()\nx = 3\nmark()\n")
 	if extra := r.th.Steps - base.th.Steps; extra > 256/WorkPerStep+8 {
 		t.Errorf("a match at index 3 of 100000 cost %d steps", extra)
+	}
+}
+
+// An allocation takes time: a unit of work (WorkPerStep of them make a step) per
+// allocBytesPerWork bytes above allocWorkFree, and a small one is free.
+func TestAllocationCostsSteps(t *testing.T) {
+	th := &Thread{}
+	if err := th.ChargeAlloc(allocWorkFree + 64*allocBytesPerWork - 1); err != nil {
+		t.Fatal(err)
+	}
+	if th.ExecutionSteps() != 0 {
+		t.Errorf("an allocation of less than %d units cost %d steps", FreeWork, th.ExecutionSteps())
+	}
+	th = &Thread{}
+	const size = 1 << 20
+	if err := th.ChargeAlloc(size); err != nil {
+		t.Fatal(err)
+	}
+	want := uint64((size - allocWorkFree) / allocBytesPerWork / WorkPerStep)
+	if got := th.ExecutionSteps(); got != want {
+		t.Errorf("1 MiB cost %d steps, want %d", got, want)
+	}
+	// A hundred times the size, a hundred times the steps.
+	th2 := &Thread{}
+	if err := th2.ChargeAlloc(100 * size); err != nil {
+		t.Fatal(err)
+	}
+	if got := th2.ExecutionSteps(); got < 99*want {
+		t.Errorf("100 MiB cost %d steps, 1 MiB cost %d", got, want)
+	}
+	// And a script: the steps of [0] * n grow with n.
+	steps := func(n int) uint64 {
+		r := runProg(t, 0, fmt.Sprintf("x = [0] * %d\n", n))
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		return r.th.ExecutionSteps()
+	}
+	if a, b := steps(10000), steps(1000000); b < 50*a/2 {
+		t.Errorf("[0]*1e6 cost %d steps, [0]*1e4 cost %d: an allocation is not charged as time", b, a)
 	}
 }
