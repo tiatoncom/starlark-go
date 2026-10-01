@@ -1,0 +1,38 @@
+encode(x)	16607
+encode(sx)	2369
+encode(d)	2876
+encode(nested)	4927
+encode(bn)	159
+encode(long string)	7037
+encode(string with escapes)	11335
+encode_indent(x)	27346
+encode_indent(d)	5158
+decode(s)	6258
+decode(sd)	3533
+decode(ss)	1258
+decode(floats)	6258
+decode(4000 digits)	259
+decode(long string)	7037
+decode(string with escapes)	7037
+indent(s)	10747
+indent(sd)	2290
+indent(ss)	1783
+small: encode(x)	136
+small: encode(sx)	26
+small: encode(d)	28
+small: encode(nested)	48
+small: encode(bn)	159
+small: encode(long string)	75
+small: encode(string with escapes)	119
+small: encode_indent(x)	205
+small: encode_indent(d)	41
+small: decode(s)	70
+small: decode(sd)	26
+small: decode(ss)	20
+small: decode(floats)	70
+small: decode(4000 digits)	259
+small: decode(long string)	75
+small: decode(string with escapes)	75
+small: indent(s)	77
+small: indent(sd)	21
+small: indent(ss)	20
