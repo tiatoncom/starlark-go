@@ -1206,10 +1206,11 @@ unknown:
 
 // It's always possible to overeat in small bites but we'll
 // try to stop someone swallowing the world in one gulp.
-// maxAlloc bounds the size of a single allocation made by one operation
-// (repeat, concatenation, list extension, string forms): elements for
-// lists/tuples, bytes for strings. It is a variable so package tests can
-// lower the limit.
+// maxAlloc is the ceiling of the result of one operation, whether or not the
+// thread has an allocation budget (see alloc.go): an operation whose result
+// would be this large is refused before it allocates. Its unit is the
+// element for lists, tuples, dicts and sets, and the byte for strings and
+// bytes. It is a variable so package tests can lower the limit.
 var maxAlloc = 1 << 30
 
 func tupleRepeat(thread *Thread, elems Tuple, n Int) (Tuple, error) {
