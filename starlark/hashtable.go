@@ -115,7 +115,7 @@ retry:
 				}
 				continue
 			}
-			if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
+			if eq, err := equalFast(m, k, e.key, CompareLimit); err != nil {
 				return err // e.g. excessively recursive tuple
 			} else if !eq {
 				continue
@@ -212,7 +212,7 @@ func (ht *hashtable) lookupM(m *meter, k Value) (v Value, found bool, err error)
 		for i := range p.entries {
 			e := &p.entries[i]
 			if e.hash == h {
-				if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
+				if eq, err := equalFast(m, k, e.key, CompareLimit); err != nil {
 					return nil, false, err // e.g. excessively recursive tuple
 				} else if eq {
 					return e.value, true, nil // found
@@ -265,7 +265,7 @@ func (ht *hashtable) countM(m *meter, iter Iterator) (int, error) {
 			for j := range p.entries {
 				e := &p.entries[j]
 				if e.hash == h {
-					if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
+					if eq, err := equalFast(m, k, e.key, CompareLimit); err != nil {
 						return 0, err
 					} else if eq {
 						bitIndex := i<<3 + j
@@ -340,7 +340,7 @@ func (ht *hashtable) deleteM(m *meter, k Value) (v Value, found bool, err error)
 		for i := range p.entries {
 			e := &p.entries[i]
 			if e.hash == h {
-				if eq, err := equalM(m, k, e.key, CompareLimit); err != nil {
+				if eq, err := equalFast(m, k, e.key, CompareLimit); err != nil {
 					return nil, false, err
 				} else if eq {
 					// Remove e from doubly-linked list.

@@ -125,8 +125,16 @@ func (m *meter) add(n uint64) error {
 	if m == nil || m.thread == nil {
 		return nil
 	}
-	m.units = satAdd(m.units, n)
-	if m.units >= FreeWork && m.units-m.charged*WorkPerStep >= flushWork {
+	m.units += n // (the units of one operation cannot overflow: they are sizes of memory that exists)
+	if m.units < FreeWork {
+		return nil // the common case: a small operation
+	}
+	return m.addSlow()
+}
+
+// addSlow is add past the free window: charge when a chunk has built up.
+func (m *meter) addSlow() error {
+	if m.units-m.charged*WorkPerStep >= flushWork {
 		return m.flush()
 	}
 	return nil
@@ -134,12 +142,13 @@ func (m *meter) add(n uint64) error {
 
 // flush charges the work recorded so far.
 func (m *meter) flush() error {
-	if m == nil || m.thread == nil {
+	if m == nil || m.units < FreeWork || m.thread == nil {
 		return nil
 	}
-	if m.units < FreeWork {
-		return nil
-	}
+	return m.flushSlow()
+}
+
+func (m *meter) flushSlow() error {
 	if steps := m.units / WorkPerStep; steps > m.charged {
 		n := steps - m.charged
 		m.charged = steps

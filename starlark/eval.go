@@ -801,19 +801,23 @@ func Unary(op syntax.Token, x Value) (Value, error) {
 }
 
 // hasElems reports whether x is equal to an element of elems, charging the
-// comparisons to m as they are made (x in l is linear in l, and stops at the
-// first match).
+// comparisons to m a chunk at a time, before the chunk is scanned (x in l is
+// linear in l, and stops at the first match).
 func hasElems(m *meter, elems []Value, x Value) (bool, error) {
-	for _, e := range elems {
-		if err := m.add(1); err != nil {
+	const chunk = 256
+	for i := 0; i < len(elems); {
+		end := min(i+chunk, len(elems))
+		if err := m.add(uint64(end - i)); err != nil {
 			return false, err
 		}
-		eq, err := equalM(m, e, x, CompareLimit)
-		if err != nil {
-			return false, err
-		}
-		if eq {
-			return true, m.flush()
+		for ; i < end; i++ {
+			eq, err := equalFast(m, elems[i], x, CompareLimit)
+			if err != nil {
+				return false, err
+			}
+			if eq {
+				return true, m.flush()
+			}
 		}
 	}
 	return false, m.flush()
@@ -1461,7 +1465,7 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 		// are left is refused, not run.
 		workErr = thread.chargeWork(builtin.price.work(builtin.recv, args, kwargs))
 	}
-	isBuiltin = isBuiltin && !builtin.accounts
+	isBuiltin = isBuiltin && !(builtin.price != nil && builtin.price.accounts)
 	var allocBefore uint64
 	if isBuiltin {
 		allocBefore = thread.allocated

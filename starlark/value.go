@@ -831,16 +831,13 @@ type Builtin struct {
 	fn   func(thread *Thread, fn *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	recv Value // for bound methods (e.g. "".startswith)
 
-	// accounts is set for built-ins of this package that charge the
-	// allocation budget themselves, or return a value that already exists
-	// (the argument, an element, a substring that shares memory): Call does
-	// not charge their result. It is not exported, so a built-in of the host
-	// is never exempt: Call charges what it returns. See alloc.go.
-	accounts bool
-
-	// price is the work of the built-in in units (see prices.go): a built-in
-	// of this package has one, a built-in of the host has none and is not
-	// charged by Call (the host charges its own work with ChargeSteps).
+	// price is the work of the built-in in units (see prices.go), and whether
+	// it accounts for its own memory: a built-in of this package has one, a
+	// built-in of the host has none. Call charges the work of the price before
+	// the call, and the shallow size of the result after it, unless the price
+	// says that the built-in charged it itself or returned a value that
+	// exists already (alloc.go). The host charges the work of its own
+	// built-ins with ChargeSteps and ChargeAlloc.
 	price *price
 }
 
@@ -884,7 +881,7 @@ func NewBuiltin(name string, fn func(thread *Thread, fn *Builtin, args Tuple, kw
 //
 //	"abc".index("a")
 func (b *Builtin) BindReceiver(recv Value) *Builtin {
-	return &Builtin{name: b.name, fn: b.fn, recv: recv, accounts: b.accounts, price: b.price}
+	return &Builtin{name: b.name, fn: b.fn, recv: recv, price: b.price}
 }
 
 // A *Dict represents a Starlark dictionary.

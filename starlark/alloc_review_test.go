@@ -463,7 +463,7 @@ func TestExistingValues_AreNotChargedByCall(t *testing.T) {
 	// A host cannot mark its built-in: the field is not exported, and a bound
 	// copy of a host built-in is not marked either.
 	bound := host.BindReceiver(None)
-	if bound.accounts {
+	if bound.price != nil {
 		t.Errorf("a bound host built-in is marked")
 	}
 }
@@ -481,13 +481,13 @@ func TestAccountedBuiltins_AreTheDeclaredSet(t *testing.T) {
 	}
 	got := map[string]bool{}
 	for name, v := range Universe {
-		if b, ok := v.(*Builtin); ok && b.accounts {
+		if b, ok := v.(*Builtin); ok && b.price != nil && b.price.accounts {
 			got[name] = true
 		}
 	}
 	for prefix, tbl := range map[string]map[string]*Builtin{"dict.": dictMethods, "list.": listMethods, "set.": setMethods, "string.": stringMethods, "bytes.": bytesMethods} {
 		for name, b := range tbl {
-			if b.accounts {
+			if b.price != nil && b.price.accounts {
 				got[prefix+name] = true
 			}
 		}

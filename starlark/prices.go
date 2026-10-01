@@ -50,10 +50,16 @@ import (
 //	int(str), str(int) (digits^2)        0.84 ns/1000      digits^2 / 4096
 //	big integer multiply (words^2)       ~1 ns a word      words^2 / 8
 type price struct {
-	desc   string // the formula, in words (the table of steps-prices.md)
-	o1     bool
-	inside bool
-	work   func(recv Value, args Tuple, kwargs []Tuple) uint64
+	desc string // the formula, in words (the table of steps-prices.md)
+	// accounts is set for built-ins that charge the allocation budget
+	// themselves, or return a value that already exists (the argument, an
+	// element, a substring that shares memory): Call does not charge their
+	// result (alloc.go). It is set from accountedBuiltins when the price is
+	// attached, so a built-in of the host, which has no price, is never exempt.
+	accounts bool
+	o1       bool
+	inside   bool
+	work     func(recv Value, args Tuple, kwargs []Tuple) uint64
 }
 
 func o1(desc string) price     { return price{desc: desc, o1: true} }
@@ -322,29 +328,45 @@ var operatorPrices = map[string]price{
 // attachPrices sets the price of every built-in of the tables. A built-in that
 // has no entry keeps a nil price (and TestEveryBuiltinHasAPrice fails).
 func attachPrices() {
-	attach := func(b *Builtin, table map[string]price, name string) {
+	attach := func(b *Builtin, tableName string, table map[string]price, name string) {
 		if p, ok := table[name]; ok {
+			p.accounts = accountedBuiltins[tableName+"."+name]
 			b.price = &p
 		}
 	}
 	for name, v := range Universe {
 		if b, ok := v.(*Builtin); ok {
-			attach(b, universePrices, name)
+			attach(b, "universe", universePrices, name)
 		}
 	}
 	for name, b := range dictMethods {
-		attach(b, dictPrices, name)
+		attach(b, "dict", dictPrices, name)
 	}
 	for name, b := range listMethods {
-		attach(b, listPrices, name)
+		attach(b, "list", listPrices, name)
 	}
 	for name, b := range setMethods {
-		attach(b, setPrices, name)
+		attach(b, "set", setPrices, name)
 	}
 	for name, b := range stringMethods {
-		attach(b, stringPrices, name)
+		attach(b, "string", stringPrices, name)
 	}
 	for name, b := range bytesMethods {
-		attach(b, bytesPrices, name)
+		attach(b, "bytes", bytesPrices, name)
 	}
+}
+
+// accountedBuiltins is the closed set of built-ins whose result Call does not
+// charge to the allocation budget: they return a value that exists already
+// (dict.get, min, a substring that shares memory) or charge what they allocate
+// themselves (str, bytes, replace, lower, upper). A new built-in is charged by
+// Call unless it is listed here (TestAccountedBuiltins_AreTheDeclaredSet).
+var accountedBuiltins = map[string]bool{
+	"universe.bytes": true, "universe.getattr": true, "universe.max": true, "universe.min": true,
+	"universe.str": true, "universe.type": true,
+	"dict.get": true, "dict.pop": true, "dict.setdefault": true,
+	"list.pop": true, "set.pop": true,
+	"string.strip": true, "string.lstrip": true, "string.rstrip": true,
+	"string.removeprefix": true, "string.removesuffix": true,
+	"string.lower": true, "string.upper": true, "string.replace": true,
 }

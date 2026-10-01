@@ -27,16 +27,6 @@ import (
 	"go.starlark.net/syntax"
 )
 
-// accounted marks b as a built-in that charges the allocation budget itself,
-// or returns a value that already exists (the argument, an element, a
-// substring that shares memory), so that Call does not charge its result.
-// The set is closed: only the built-ins of this package are marked, and the
-// mark cannot be set from outside the package. See alloc.go.
-func accounted(b *Builtin) *Builtin {
-	b.accounts = true
-	return b
-}
-
 // Universe defines the set of universal built-ins, such as None, True, and len.
 //
 // The Go application may add or remove items from the
@@ -55,21 +45,21 @@ func init() {
 		"any":       NewBuiltin("any", any_),
 		"all":       NewBuiltin("all", all),
 		"bool":      NewBuiltin("bool", bool_),
-		"bytes":     accounted(NewBuiltin("bytes", bytes_)),
+		"bytes":     NewBuiltin("bytes", bytes_),
 		"chr":       NewBuiltin("chr", chr),
 		"dict":      NewBuiltin("dict", dict),
 		"dir":       NewBuiltin("dir", dir),
 		"enumerate": NewBuiltin("enumerate", enumerate),
 		"fail":      NewBuiltin("fail", fail),
 		"float":     NewBuiltin("float", float),
-		"getattr":   accounted(NewBuiltin("getattr", getattr)),
+		"getattr":   NewBuiltin("getattr", getattr),
 		"hasattr":   NewBuiltin("hasattr", hasattr),
 		"hash":      NewBuiltin("hash", hash),
 		"int":       NewBuiltin("int", int_),
 		"len":       NewBuiltin("len", len_),
 		"list":      NewBuiltin("list", list),
-		"max":       accounted(NewBuiltin("max", minmax)),
-		"min":       accounted(NewBuiltin("min", minmax)),
+		"max":       NewBuiltin("max", minmax),
+		"min":       NewBuiltin("min", minmax),
 		"ord":       NewBuiltin("ord", ord),
 		"print":     NewBuiltin("print", print),
 		"range":     NewBuiltin("range", range_),
@@ -77,9 +67,9 @@ func init() {
 		"reversed":  NewBuiltin("reversed", reversed),
 		"set":       NewBuiltin("set", set),
 		"sorted":    NewBuiltin("sorted", sorted),
-		"str":       accounted(NewBuiltin("str", str)),
+		"str":       NewBuiltin("str", str),
 		"tuple":     NewBuiltin("tuple", tuple),
-		"type":      accounted(NewBuiltin("type", type_)),
+		"type":      NewBuiltin("type", type_),
 		"zip":       NewBuiltin("zip", zip),
 	}
 	attachPrices()
@@ -94,12 +84,12 @@ var (
 
 	dictMethods = map[string]*Builtin{
 		"clear":      NewBuiltin("clear", dict_clear),
-		"get":        accounted(NewBuiltin("get", dict_get)),
+		"get":        NewBuiltin("get", dict_get),
 		"items":      NewBuiltin("items", dict_items),
 		"keys":       NewBuiltin("keys", dict_keys),
-		"pop":        accounted(NewBuiltin("pop", dict_pop)),
+		"pop":        NewBuiltin("pop", dict_pop),
 		"popitem":    NewBuiltin("popitem", dict_popitem),
-		"setdefault": accounted(NewBuiltin("setdefault", dict_setdefault)),
+		"setdefault": NewBuiltin("setdefault", dict_setdefault),
 		"update":     NewBuiltin("update", dict_update),
 		"values":     NewBuiltin("values", dict_values),
 	}
@@ -110,7 +100,7 @@ var (
 		"extend": NewBuiltin("extend", list_extend),
 		"index":  NewBuiltin("index", list_index),
 		"insert": NewBuiltin("insert", list_insert),
-		"pop":    accounted(NewBuiltin("pop", list_pop)),
+		"pop":    NewBuiltin("pop", list_pop),
 		"remove": NewBuiltin("remove", list_remove),
 	}
 
@@ -133,23 +123,23 @@ var (
 		"istitle":        NewBuiltin("istitle", string_istitle),
 		"isupper":        NewBuiltin("isupper", string_isupper),
 		"join":           NewBuiltin("join", string_join),
-		"lower":          accounted(NewBuiltin("lower", string_lower)),
-		"lstrip":         accounted(NewBuiltin("lstrip", string_strip)), // sic
+		"lower":          NewBuiltin("lower", string_lower),
+		"lstrip":         NewBuiltin("lstrip", string_strip), // sic
 		"partition":      NewBuiltin("partition", string_partition),
-		"removeprefix":   accounted(NewBuiltin("removeprefix", string_removefix)),
-		"removesuffix":   accounted(NewBuiltin("removesuffix", string_removefix)),
-		"replace":        accounted(NewBuiltin("replace", string_replace)),
+		"removeprefix":   NewBuiltin("removeprefix", string_removefix),
+		"removesuffix":   NewBuiltin("removesuffix", string_removefix),
+		"replace":        NewBuiltin("replace", string_replace),
 		"rfind":          NewBuiltin("rfind", string_rfind),
 		"rindex":         NewBuiltin("rindex", string_rindex),
 		"rpartition":     NewBuiltin("rpartition", string_partition),    // sic
 		"rsplit":         NewBuiltin("rsplit", string_split),            // sic
-		"rstrip":         accounted(NewBuiltin("rstrip", string_strip)), // sic
+		"rstrip":         NewBuiltin("rstrip", string_strip), // sic
 		"split":          NewBuiltin("split", string_split),
 		"splitlines":     NewBuiltin("splitlines", string_splitlines),
 		"startswith":     NewBuiltin("startswith", string_startswith),
-		"strip":          accounted(NewBuiltin("strip", string_strip)),
+		"strip":          NewBuiltin("strip", string_strip),
 		"title":          NewBuiltin("title", string_title),
-		"upper":          accounted(NewBuiltin("upper", string_upper)),
+		"upper":          NewBuiltin("upper", string_upper),
 	}
 
 	setMethods = map[string]*Builtin{
@@ -160,7 +150,7 @@ var (
 		"intersection":         NewBuiltin("intersection", set_intersection),
 		"issubset":             NewBuiltin("issubset", set_issubset),
 		"issuperset":           NewBuiltin("issuperset", set_issuperset),
-		"pop":                  accounted(NewBuiltin("pop", set_pop)),
+		"pop":                  NewBuiltin("pop", set_pop),
 		"remove":               NewBuiltin("remove", set_remove),
 		"symmetric_difference": NewBuiltin("symmetric_difference", set_symmetric_difference),
 		"union":                NewBuiltin("union", set_union),
@@ -1317,8 +1307,7 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		}
 	}
 
-	m := thread.meter()
-	slice := &sortSlice{keys: keys, values: values, m: &m}
+	slice := &sortSlice{keys: keys, values: values, m: thread.meter()}
 	if reverse {
 		sort.Stable(sort.Reverse(slice))
 	} else {
@@ -1328,7 +1317,7 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		return nil, slice.stop
 	}
 	if slice.err == nil {
-		slice.err = m.flush()
+		slice.err = slice.m.flush()
 	}
 	return NewList(slice.values), slice.err
 }
@@ -1337,8 +1326,8 @@ type sortSlice struct {
 	keys   []Value // nil => values[i] is key
 	values []Value
 	err    error
-	m      *meter // charged with the comparisons (nil: none)
-	stop   error  // the error of m: the steps are used up
+	m      meter // charged with the comparisons
+	stop   error // the error of m: the steps are used up
 }
 
 func (s *sortSlice) Len() int { return len(s.values) }
@@ -1354,7 +1343,7 @@ func (s *sortSlice) Less(i, j int) bool {
 		s.stop = err
 		return false
 	}
-	ok, err := compareM(s.m, syntax.LT, keys[i], keys[j], CompareLimit)
+	ok, err := compareM(&s.m, syntax.LT, keys[i], keys[j], CompareLimit)
 	if err != nil {
 		s.err = err // (as before, the last error is the one reported)
 	}

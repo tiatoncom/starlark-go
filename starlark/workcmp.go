@@ -22,8 +22,10 @@ import (
 func hashM(m *meter, k Value) (uint32, error) {
 	switch k := k.(type) {
 	case String:
-		if err := m.add(workFast(len(k))); err != nil {
-			return 0, err
+		if len(k) >= 64 { // under 64 bytes the hash is under a unit
+			if err := m.add(workFast(len(k))); err != nil {
+				return 0, err
+			}
 		}
 		return hashString(string(k)), nil
 	case Bytes:
@@ -74,6 +76,31 @@ func (t Tuple) hashM(m *meter, depth int) (uint32, error) {
 	return x, nil
 }
 
+// equalFast is equalM for the pairs that a hash table and a membership test
+// compare most: two strings, two small ints. The work of the rest is in equalM.
+func equalFast(m *meter, x, y Value, depth int) (bool, error) {
+	switch x := x.(type) {
+	case String:
+		if y, ok := y.(String); ok {
+			if len(x) >= 64 && len(x) == len(y) {
+				if err := m.add(workFast(len(x))); err != nil {
+					return false, err
+				}
+			}
+			return x == y, nil
+		}
+	case Int:
+		if y, ok := y.(Int); ok {
+			if xs, xb := x.get(); xb == nil {
+				if ys, yb := y.get(); yb == nil {
+					return xs == ys, nil
+				}
+			}
+		}
+	}
+	return equalM(m, x, y, depth)
+}
+
 // equalM is EqualDepth, charging its work to m.
 func equalM(m *meter, x, y Value, depth int) (bool, error) {
 	return compareM(m, syntax.EQL, x, y, depth)
@@ -86,6 +113,26 @@ func equalM(m *meter, x, y Value, depth int) (bool, error) {
 func compareM(m *meter, op syntax.Token, x, y Value, depth int) (bool, error) {
 	if depth < 1 {
 		return false, fmt.Errorf("comparison exceeded maximum recursion depth")
+	}
+	// The common leaves first: small ints, and strings (the keys of a table).
+	switch x := x.(type) {
+	case String:
+		if y, ok := y.(String); ok && (op == syntax.EQL || op == syntax.NEQ) {
+			if len(x) == len(y) {
+				if err := m.add(workFast(len(x))); err != nil {
+					return false, err
+				}
+			}
+			return (x == y) == (op == syntax.EQL), nil
+		}
+	case Int:
+		if y, ok := y.(Int); ok {
+			if xs, xb := x.get(); xb == nil {
+				if ys, yb := y.get(); yb == nil {
+					return threeway(op, signum64(xs-ys)), nil // safe: int32 operands
+				}
+			}
+		}
 	}
 	if sameType(x, y) {
 		switch x := x.(type) {
@@ -222,10 +269,12 @@ func sliceCompareM(m *meter, op syntax.Token, x, y []Value, depth int) (bool, er
 
 	// Find first element that is not equal in both lists.
 	for i := 0; i < len(x) && i < len(y); i++ {
-		if err := m.add(1); err != nil { // one pair of elements
-			return false, err
+		if i&255 == 0 { // the pairs of a chunk are charged before they are compared
+			if err := m.add(uint64(min(256, len(x)-i, len(y)-i))); err != nil {
+				return false, err
+			}
 		}
-		if eq, err := compareM(m, syntax.EQL, x[i], y[i], depth-1); err != nil {
+		if eq, err := equalFast(m, x[i], y[i], depth-1); err != nil {
 			return false, err
 		} else if !eq {
 			switch op {
