@@ -1,0 +1,8 @@
+branchy full steps=11120 result="\"([(\\\"buzz\\\", 8), (\\\"even\\\", 11), (\\\"fizz\\\", 77), (\\\"fizzbuzz\\\", 8), (\\\"plain\\\", 13), (\\\"small\\\", 3)], 59, [118, 116, 112])\"" err=""
+branchy cut@5560 steps=5560 result="" err="Starlark computation cancelled: too many steps"
+chains full steps=1153 result="\"[6, (0, None), 2, (0, None), 2, (0, []), 2, (0, [1]), 2, (None, 1), 2, (None, 1), 2, (2, 1), 1, (2, 1), 6, (\\\"\\\", None), 2, (\\\"\\\", None), 2, (\\\"\\\", []), 2, (\\\"\\\", [1]), 2, (None, \\\"x\\\"), 2, (None, \\\"x\\\"), 2, (2, \\\"x\\\"), 1, (2, \\\"x\\\")]\"" err=""
+chains cut@576 steps=576 result="" err="Starlark computation cancelled: too many steps"
+failing full steps=121 result="" err="fail: boom 4"
+failing cut@60 steps=60 result="" err="Starlark computation cancelled: too many steps"
+toplevel_loop full steps=1473 result="\"207\"" err=""
+toplevel_loop cut@736 steps=736 result="" err="Starlark computation cancelled: too many steps"
