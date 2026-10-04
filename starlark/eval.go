@@ -59,6 +59,17 @@ type Thread struct {
 	// The precise meaning of "step" is not specified and may change.
 	Steps, maxSteps uint64
 
+	// Trace, if not nil, receives the trace events of the interpreter.
+	// See Tracer.
+	Trace *Tracer
+
+	// inTrace is set while a Trace hook runs: Call must not be reached then.
+	inTrace bool
+
+	// traceSkip is the CJMP (as pc+1) whose OnBranch event would only repeat
+	// the previous one: see traceBranch.
+	traceSkip uint32
+
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
 
@@ -1220,6 +1231,9 @@ func stringRepeat(s String, n Int) (String, error) {
 
 // Call calls the function fn with the specified positional and keyword arguments.
 func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
+	if thread.inTrace {
+		panic("starlark: Call from a Tracer hook (a hook must not execute Starlark on the thread it observes)")
+	}
 	c, ok := fn.(Callable)
 	if !ok {
 		return nil, fmt.Errorf("invalid call of non-function (%s)", fn.Type())

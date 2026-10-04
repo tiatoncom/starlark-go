@@ -71,6 +71,9 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	}
 
 	fr.locals = locals
+	if thread.Trace != nil {
+		thread.traceEnter(fn, locals)
+	}
 
 	if vmdebug {
 		fmt.Printf("Entering %s @ %s\n", f.Name, f.Position(0))
@@ -171,6 +174,9 @@ loop:
 				err = err2
 				break loop
 			}
+			if thread.Trace != nil {
+				thread.traceCompare(fn, pc, op, stack[sp:sp+2], ok)
+			}
 			stack[sp] = Bool(ok)
 			sp++
 
@@ -197,6 +203,9 @@ loop:
 			if err2 != nil {
 				err = err2
 				break loop
+			}
+			if binop == syntax.IN && thread.Trace != nil {
+				thread.traceCompare(fn, pc, binop, stack[sp:sp+2], bool(z.Truth()))
 			}
 			stack[sp] = z
 			sp++
@@ -525,7 +534,11 @@ loop:
 			}
 
 		case compile.CJMP:
-			if stack[sp-1].Truth() {
+			truth := bool(stack[sp-1].Truth())
+			if thread.Trace != nil {
+				thread.traceBranch(fn, fr.pc, pc, arg, stack[sp-1], truth)
+			}
+			if truth {
 				pc = arg
 			}
 			sp--
@@ -667,6 +680,9 @@ loop:
 			err = fmt.Errorf("unimplemented: %s", op)
 			break loop
 		}
+	}
+	if thread.Trace != nil {
+		thread.traceExit(fn, result, err)
 	}
 	// (deferred cleanup runs here)
 	return result, err
