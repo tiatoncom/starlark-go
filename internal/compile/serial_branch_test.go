@@ -23,8 +23,8 @@ func TestBranchSerialization(t *testing.T) {
 		gotFuncs := append([]*Funcode{got.Toplevel}, got.Functions...)
 		total := 0
 		for i, fn := range funcs {
-			want := fmt.Sprintf("%+v", positionsOf(fn.Branches))
-			have := fmt.Sprintf("%+v", positionsOf(gotFuncs[i].Branches))
+			want := fmt.Sprintf("%+v", positionsOf(fn))
+			have := fmt.Sprintf("%+v", positionsOf(gotFuncs[i]))
 			if want != have {
 				t.Errorf("%s: %s: decoded branches differ:\n got %s\nwant %s", key, fn.Name, have, want)
 			}
@@ -38,11 +38,12 @@ func TestBranchSerialization(t *testing.T) {
 
 // positionsOf renders branches with all their fields, positions as text (a
 // Position holds a pointer to its file name, which differs after decoding).
-func positionsOf(bs []Branch) []string {
-	out := make([]string, len(bs))
-	for i, b := range bs {
+func positionsOf(fn *Funcode) []string {
+	out := make([]string, len(fn.Branches))
+	for i, b := range fn.Branches {
+		m := fn.BranchMech[i]
 		out[i] = fmt.Sprintf("pc=%d %s#%d cond=%s chain=%s kw=%s kwvalid=%v neg=%v id=%d parent=%d echo=%v short=%d flip=%v cmp=%d",
-			b.PC, b.Kind, b.Operand, b.Cond, b.Chain, b.Keyword, b.Keyword.IsValid(), b.Negated, b.ChainID, b.ParentChain, b.Echo, b.Short, b.Flip, b.CmpPC)
+			b.PC, b.Kind, b.Operand, b.Cond, b.Chain, b.Keyword, b.Keyword.IsValid(), b.Negated, b.ChainID, b.ParentChain, m.Echo, m.Short, m.Flip, m.CmpPC)
 	}
 	return out
 }
@@ -60,17 +61,22 @@ func TestBranchSerializationFlags(t *testing.T) {
 		t.Fatal(err)
 	}
 	var echo, short, flip, cmp, neg, parent, chain, noKeyword int
-	for _, b := range function(t, got, "f").Branches {
-		if b.Echo {
+	gf := function(t, got, "f")
+	if len(gf.BranchMech) != len(gf.Branches) {
+		t.Fatalf("%d mechanics for %d branches", len(gf.BranchMech), len(gf.Branches))
+	}
+	for i, b := range gf.Branches {
+		m := gf.BranchMech[i]
+		if m.Echo {
 			echo++
 		}
-		if b.Short != ShortNone {
+		if m.Short != ShortNone {
 			short++
 		}
-		if b.Flip {
+		if m.Flip {
 			flip++
 		}
-		if b.CmpPC >= 0 {
+		if m.CmpPC >= 0 {
 			cmp++
 		}
 		if b.Negated {
@@ -89,14 +95,14 @@ func TestBranchSerializationFlags(t *testing.T) {
 	if echo == 0 || short == 0 || flip == 0 || cmp == 0 || neg == 0 || parent == 0 || chain == 0 || noKeyword == 0 {
 		t.Errorf("decoded table lacks a flag: echo=%d short=%d flip=%d cmp=%d neg=%d parent=%d chain=%d nokeyword=%d", echo, short, flip, cmp, neg, parent, chain, noKeyword)
 	}
-	want := fmt.Sprintf("%+v", positionsOf(function(t, prog, "f").Branches))
-	if have := fmt.Sprintf("%+v", positionsOf(function(t, got, "f").Branches)); have != want {
+	want := fmt.Sprintf("%+v", positionsOf(function(t, prog, "f")))
+	if have := fmt.Sprintf("%+v", positionsOf(function(t, got, "f"))); have != want {
 		t.Errorf("decoded branches differ:\n got %s\nwant %s", have, want)
 	}
-	for _, b := range function(t, got, "f").Branches {
-		if b.CmpPC >= 0 {
-			if g, ok := function(t, got, "f").BranchForCompare(uint32(b.CmpPC)); !ok || g.PC != b.PC {
-				t.Errorf("decoded program: BranchForCompare(%d) = %v, %v; want the branch at %d", b.CmpPC, g, ok, b.PC)
+	for i, b := range gf.Branches {
+		if cmpPC := gf.BranchMech[i].CmpPC; cmpPC >= 0 {
+			if g, ok := gf.BranchForCompare(uint32(cmpPC)); !ok || g.PC != b.PC {
+				t.Errorf("decoded program: BranchForCompare(%d) = %v, %v; want the branch at %d", cmpPC, g, ok, b.PC)
 			}
 		}
 	}

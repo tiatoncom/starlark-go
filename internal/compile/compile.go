@@ -334,6 +334,7 @@ type Funcode struct {
 	Code                  []byte          // the byte code
 	pclinetab             []uint16        // mapping from pc to linenum
 	Branches              []Branch        // conditional jumps with their source conditions, sorted by PC
+	BranchMech            []BranchMech    // the interpreter's flags of Branches, same index
 	cmpIndex              []cmpRef        // Branches with a CmpPC, sorted by CmpPC
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells

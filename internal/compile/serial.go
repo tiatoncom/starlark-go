@@ -221,7 +221,7 @@ func (e *encoder) function(fn *Funcode) {
 	e.int(fn.NumKwonlyParams)
 	e.int(b2i(fn.HasVarargs))
 	e.int(b2i(fn.HasKwargs))
-	e.branches(fn.Branches)
+	e.branches(fn.Branches, fn.BranchMech)
 }
 
 func b2i(b bool) int {
@@ -401,7 +401,7 @@ func (d *decoder) function() *Funcode {
 	numKwonlyParams := d.int()
 	hasVarargs := d.int() != 0
 	hasKwargs := d.int() != 0
-	branches := d.branches()
+	branches, mech := d.branches()
 	fn := &Funcode{
 		// Prog is filled in later.
 		Pos:             id.Pos,
@@ -418,6 +418,7 @@ func (d *decoder) function() *Funcode {
 		HasVarargs:      hasVarargs,
 		HasKwargs:       hasKwargs,
 		Branches:        branches,
+		BranchMech:      mech,
 	}
 	fn.indexBranches()
 	return fn
@@ -431,9 +432,10 @@ func (e *encoder) position(p syntax.Position) {
 // branches encodes the branch table: the count, then per branch
 // pc, kind, three positions (cond, chain, keyword), operand, negated,
 // chainid, parentchain, echo, short, flip, cmppc.
-func (e *encoder) branches(bs []Branch) {
+func (e *encoder) branches(bs []Branch, ms []BranchMech) {
 	e.int(len(bs))
-	for _, b := range bs {
+	for i, b := range bs {
+		m := ms[i]
 		e.int(int(b.PC))
 		e.int(int(b.Kind))
 		e.position(b.Cond)
@@ -443,10 +445,10 @@ func (e *encoder) branches(bs []Branch) {
 		e.int(b2i(b.Negated))
 		e.int(b.ChainID)
 		e.int(b.ParentChain)
-		e.int(b2i(b.Echo))
-		e.int(int(b.Short))
-		e.int(b2i(b.Flip))
-		e.int(b.CmpPC)
+		e.int(b2i(m.Echo))
+		e.int(int(m.Short))
+		e.int(b2i(m.Flip))
+		e.int(m.CmpPC)
 	}
 }
 
@@ -460,12 +462,13 @@ func (d *decoder) position() syntax.Position {
 	return syntax.MakePosition(d.filename, line, col)
 }
 
-func (d *decoder) branches() []Branch {
+func (d *decoder) branches() ([]Branch, []BranchMech) {
 	n := d.int()
 	if n == 0 {
-		return nil
+		return nil, nil
 	}
 	bs := make([]Branch, n)
+	ms := make([]BranchMech, n)
 	for i := range bs {
 		bs[i] = Branch{
 			PC:          uint32(d.int()),
@@ -477,11 +480,13 @@ func (d *decoder) branches() []Branch {
 			Negated:     d.bool(),
 			ChainID:     d.int(),
 			ParentChain: d.int(),
-			Echo:        d.bool(),
-			Short:       ShortCircuit(d.int()),
-			Flip:        d.bool(),
-			CmpPC:       d.int(),
+		}
+		ms[i] = BranchMech{
+			Echo:  d.bool(),
+			Short: ShortCircuit(d.int()),
+			Flip:  d.bool(),
+			CmpPC: d.int(),
 		}
 	}
-	return bs
+	return bs, ms
 }

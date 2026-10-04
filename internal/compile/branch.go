@@ -89,8 +89,23 @@ func (k BranchKind) String() string {
 // source follows is taken XOR Negated. The machine may see the tested value
 // after one "not"; Flip says so and the interpreter undoes it (see below).
 //
-// Echo, Short, Flip and CmpPC are for the interpreter, which reads them
-// instead of looking at the code:
+// The interpreter's own flags (Echo, Short, Flip, CmpPC; see BranchMech)
+// are not part of Branch: they live in Funcode.BranchMech, at the index of
+// the Branch in Funcode.Branches, out of the sight of a host.
+type Branch struct {
+	PC          uint32 // address of the CJMP instruction
+	Kind        BranchKind
+	Cond        syntax.Position
+	Chain       syntax.Position
+	Keyword     syntax.Position
+	Operand     int // number in the flat chain, or -1
+	Negated     bool
+	ChainID     int // number of the chain in the Funcode, or -1
+	ParentChain int // ChainID of the enclosing chain, or -1
+}
+
+// A BranchMech is what the interpreter reads about a Branch instead of
+// looking at the code. Funcode.BranchMech[i] belongs to Funcode.Branches[i].
 //
 //   - Echo: the CJMP tests the value of a chain that was compiled as a value
 //     (the instruction after its operands' tests). When a chain is
@@ -109,17 +124,7 @@ func (k BranchKind) String() string {
 //   - CmpPC: the address of the comparison (==, !=, <, <=, >, >=, in; "not
 //     in" is an "in") whose result this CJMP tests, or -1. The interpreter
 //     asks BranchForCompare after a comparison.
-type Branch struct {
-	PC          uint32 // address of the CJMP instruction
-	Kind        BranchKind
-	Cond        syntax.Position
-	Chain       syntax.Position
-	Keyword     syntax.Position
-	Operand     int // number in the flat chain, or -1
-	Negated     bool
-	ChainID     int // number of the chain in the Funcode, or -1
-	ParentChain int // ChainID of the enclosing chain, or -1
-
+type BranchMech struct {
 	Echo  bool
 	Short ShortCircuit
 	Flip  bool
@@ -136,10 +141,19 @@ const (
 	ShortFalsy                      // "and": a falsy value ends the chain
 )
 
-// BranchAt returns the Branch of the CJMP at pc, if there is one.
-func (fn *Funcode) BranchAt(pc uint32) (*Branch, bool) {
+// BranchIndexAt returns the index in Branches (and BranchMech) of the CJMP
+// at pc, if there is one.
+func (fn *Funcode) BranchIndexAt(pc uint32) (int, bool) {
 	i := sort.Search(len(fn.Branches), func(i int) bool { return fn.Branches[i].PC >= pc })
 	if i < len(fn.Branches) && fn.Branches[i].PC == pc {
+		return i, true
+	}
+	return 0, false
+}
+
+// BranchAt returns the Branch of the CJMP at pc, if there is one.
+func (fn *Funcode) BranchAt(pc uint32) (*Branch, bool) {
+	if i, ok := fn.BranchIndexAt(pc); ok {
 		return &fn.Branches[i], true
 	}
 	return nil, false
@@ -166,7 +180,7 @@ type cmpRef struct {
 // the decoder call it once the table is complete.
 func (fn *Funcode) indexBranches() {
 	fn.cmpIndex = nil
-	for i, b := range fn.Branches {
+	for i, b := range fn.BranchMech {
 		if b.CmpPC >= 0 {
 			fn.cmpIndex = append(fn.cmpIndex, cmpRef{uint32(b.CmpPC), i})
 		}
@@ -178,12 +192,19 @@ func (fn *Funcode) indexBranches() {
 type branchState struct {
 	cond    *condState        // the condition being compiled by ifelse, or nil
 	elifAt  syntax.Position   // ElsePos of the IfStmt whose else block is being compiled
-	table   []Branch          // branches of the instructions emitted so far; insn.br is index+1
+	table   []tableEntry      // branches of the instructions emitted so far; insn.br is index+1
 	pending uint32            // index+1 in table for the CJMP emitted next, or 0
 	chains  []chainInfo       // the chains met so far; Branch.ChainID is an index until the end
 	cmp     cmpMark           // the last comparison compiled under a condition
 	cmpAt   map[uint32]uint32 // table index+1 -> address of the comparison that feeds it
 	emitted []uint32          // table index+1 of each entry of fn.Branches
+}
+
+// A tableEntry is a branch and its mechanics before they are split into
+// Funcode.Branches and Funcode.BranchMech.
+type tableEntry struct {
+	br   Branch
+	mech BranchMech
 }
 
 type chainInfo struct {
@@ -288,11 +309,10 @@ walk:
 	if br == nil {
 		return
 	}
-	b := *br
-	b.Flip = flip
-	b.Echo = echo
-	b.Short = short
-	fcomp.table = append(fcomp.table, b)
+	fcomp.table = append(fcomp.table, tableEntry{
+		br:   *br,
+		mech: BranchMech{Echo: echo, Short: short, Flip: flip, CmpPC: -1},
+	})
 	fcomp.pending = uint32(len(fcomp.table))
 	if bin, ok := key.(*syntax.BinaryExpr); ok && isComparison(bin.Op) {
 		if m := fcomp.cmp; m.blk != nil && m.x == bin.X && m.y == bin.Y {
@@ -337,9 +357,10 @@ func (fcomp *fcomp) noteCompareAddr(br uint32, pc uint32) {
 // recordBranch adds the branch of the instruction at pc to the table of fn.
 // Instructions are generated in address order, so the table stays sorted.
 func (fcomp *fcomp) recordBranch(br uint32, pc uint32) {
-	b := fcomp.table[br-1]
-	b.PC = pc
-	fcomp.fn.Branches = append(fcomp.fn.Branches, b)
+	e := fcomp.table[br-1]
+	e.br.PC = pc
+	fcomp.fn.Branches = append(fcomp.fn.Branches, e.br)
+	fcomp.fn.BranchMech = append(fcomp.fn.BranchMech, e.mech)
 	fcomp.emitted = append(fcomp.emitted, br)
 }
 
@@ -354,7 +375,7 @@ func (fcomp *fcomp) finishBranches() {
 	fn := fcomp.fn
 	for i := range fn.Branches {
 		if cmp, ok := fcomp.cmpAt[fcomp.emitted[i]]; ok {
-			fn.Branches[i].CmpPC = int(cmp)
+			fn.BranchMech[i].CmpPC = int(cmp)
 		}
 	}
 	order := make([]int, len(fcomp.chains))
@@ -396,7 +417,7 @@ func (fcomp *fcomp) newCondState(kind BranchKind, keyword syntax.Position, cond 
 		start := syntax.Start(cond)
 		cs.leaves = append(cs.leaves, leaf{inner, Branch{
 			Kind: kind, Cond: start, Chain: start, Keyword: keyword,
-			Operand: -1, Negated: neg != isNotIn(inner), ChainID: -1, ParentChain: -1, CmpPC: -1,
+			Operand: -1, Negated: neg != isNotIn(inner), ChainID: -1, ParentChain: -1,
 		}})
 	}
 	return cs
@@ -471,7 +492,7 @@ func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryE
 		}
 		cs.leaves = append(cs.leaves, leaf{inner, Branch{
 			Kind: kind, Cond: syntax.Start(o), Chain: start, Keyword: keyword,
-			Operand: i, Negated: odd != isNotIn(inner), ChainID: id, ParentChain: parent, CmpPC: -1,
+			Operand: i, Negated: odd != isNotIn(inner), ChainID: id, ParentChain: parent,
 		}})
 	}
 }

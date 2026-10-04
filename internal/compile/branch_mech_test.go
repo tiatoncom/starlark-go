@@ -53,14 +53,15 @@ func TestBranchMechanics(t *testing.T) {
 		src := "def f(a, b, c, d, e):\n    if " + test.cond + ":\n        pass\n"
 		fn := function(t, compileSrc(t, src), "f")
 		var got []string
-		for _, b := range fn.Branches {
+		for i, b := range fn.Branches {
+			m := fn.BranchMech[i]
 			s := func(v bool, name string) string {
 				if v {
 					return name
 				}
 				return "-"
 			}
-			got = append(got, fmt.Sprintf("%s#%d %s/%s/%s/%s", b.Kind, b.Operand, s(b.Echo, "echo"), shortName(b.Short), s(b.Flip, "flip"), s(b.CmpPC >= 0, "cmp")))
+			got = append(got, fmt.Sprintf("%s#%d %s/%s/%s/%s", b.Kind, b.Operand, s(m.Echo, "echo"), shortName(m.Short), s(m.Flip, "flip"), s(m.CmpPC >= 0, "cmp")))
 		}
 		sort.Strings(got)
 		want := append([]string(nil), test.want...)
@@ -78,33 +79,33 @@ func TestBranchCompareIndex(t *testing.T) {
 	check := func(name string, fn *Funcode) int {
 		n := 0
 		for i := range fn.Branches {
-			b := &fn.Branches[i]
-			if b.CmpPC < 0 {
+			b, m := &fn.Branches[i], fn.BranchMech[i]
+			if m.CmpPC < 0 {
 				continue
 			}
 			n++
-			switch op := Opcode(fn.Code[b.CmpPC]); op {
+			switch op := Opcode(fn.Code[m.CmpPC]); op {
 			case EQL, NEQ, LT, LE, GT, GE, IN:
 			default:
-				t.Errorf("%s: CmpPC %d of the branch at %d is %s", name, b.CmpPC, b.PC, op)
+				t.Errorf("%s: CmpPC %d of the branch at %d is %s", name, m.CmpPC, b.PC, op)
 			}
-			if b.CmpPC >= int(b.PC) && Opcode(fn.Code[b.CmpPC]) != IN {
+			if m.CmpPC >= int(b.PC) && Opcode(fn.Code[m.CmpPC]) != IN {
 				// the comparison may be laid out after the jump (a chain
 				// compiled as a value), but only when the jump is a join
-				if !b.Echo {
-					t.Errorf("%s: CmpPC %d is after the jump at %d that is not an echo", name, b.CmpPC, b.PC)
+				if !m.Echo {
+					t.Errorf("%s: CmpPC %d is after the jump at %d that is not an echo", name, m.CmpPC, b.PC)
 				}
 			}
-			got, ok := fn.BranchForCompare(uint32(b.CmpPC))
+			got, ok := fn.BranchForCompare(uint32(m.CmpPC))
 			if !ok || got != b {
-				t.Errorf("%s: BranchForCompare(%d) = %v, %v; want the branch at %d", name, b.CmpPC, got, ok, b.PC)
+				t.Errorf("%s: BranchForCompare(%d) = %v, %v; want the branch at %d", name, m.CmpPC, got, ok, b.PC)
 			}
 		}
 		for pc := range fn.Code {
 			if _, ok := fn.BranchForCompare(uint32(pc)); ok {
 				found := false
-				for _, b := range fn.Branches {
-					found = found || b.CmpPC == pc
+				for _, m := range fn.BranchMech {
+					found = found || m.CmpPC == pc
 				}
 				if !found {
 					t.Errorf("%s: BranchForCompare(%d) found a branch that does not have CmpPC %d", name, pc, pc)

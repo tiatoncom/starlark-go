@@ -13,7 +13,7 @@ import (
 
 // A Branch describes one conditional jump of a function defined in Starlark:
 // which condition, or operand of an and/or chain, the jump tests.
-// See compile.Branch for the exact meaning of its fields.
+// See doc/trace.md for the exact meaning of its fields.
 type Branch = compile.Branch
 
 // A BranchKind says what construct a Branch belongs to.
@@ -27,17 +27,6 @@ const (
 	BranchCompIf   = compile.BranchCompIf
 	BranchAnd      = compile.BranchAnd
 	BranchOr       = compile.BranchOr
-)
-
-// A ShortCircuit is Branch.Short: which value of a duplicated operand of a
-// chain that is compiled as a value short-circuits the chain. The interpreter
-// reads it; a hook need not.
-type ShortCircuit = compile.ShortCircuit
-
-const (
-	ShortNone   = compile.ShortNone
-	ShortTruthy = compile.ShortTruthy
-	ShortFalsy  = compile.ShortFalsy
 )
 
 // A Tracer receives events of the interpreter. Every field may be nil.
@@ -71,19 +60,19 @@ type Tracer struct {
 	//
 	// When "not" is evaluated as a value (a "not" in front of a chain that is
 	// not the last operand: "not (a and b) and c") the jump sees the opposite
-	// truth; the interpreter undoes that (Branch.Flip), taken stays the truth
-	// of the expression and tested, whose value is gone, is Bool(taken).
+	// truth; the interpreter undoes that, taken stays the truth of the
+	// expression and tested, whose value is gone, is Bool(taken).
 	//
 	// When an and/or operand short-circuits, the later tests of the same
 	// chain that the interpreter makes on the same value are not reported
-	// (Branch.Echo): the chain's last event is the one that decided it.
+	// (echoes): the chain's last event is the one that decided it.
 	OnBranch func(thread *Thread, fn *Function, b Branch, tested Value, taken bool)
 
 	// OnCompare is called after a successful comparison (==, !=, <, <=,
 	// >, >=) or membership test (in, not in; op is then syntax.IN, the
 	// "not" is Branch.Negated and result the result of "in") whose result
-	// is tested by a conditional jump that has a Branch (Branch.CmpPC is
-	// the address of the comparison), with that Branch, before OnBranch of
+	// is tested by a conditional jump that has a Branch (the table knows the
+	// address of the comparison), with that Branch, before OnBranch of
 	// the same jump. The place of the comparison among the operands of a
 	// chain does not matter. A failed comparison raises an error and calls
 	// no hook.
@@ -142,20 +131,22 @@ func (thread *Thread) traceBranch(fn *Function, pc uint32, tested Value, truth, 
 	if tr.OnBranch == nil {
 		return false
 	}
-	b, ok := fn.funcode.BranchAt(pc)
+	f := fn.funcode
+	i, ok := f.BranchIndexAt(pc)
 	if !ok {
 		return false
 	}
-	if !(echo && b.Echo) {
-		taken := truth != b.Flip
-		if b.Flip {
+	b, m := &f.Branches[i], &f.BranchMech[i]
+	if !(echo && m.Echo) {
+		taken := truth != m.Flip
+		if m.Flip {
 			tested = Bool(taken)
 		}
 		thread.enterHook()
 		defer thread.leaveHook()
 		tr.OnBranch(thread, fn, *b, tested, taken)
 	}
-	return (b.Short == ShortTruthy && truth) || (b.Short == ShortFalsy && !truth)
+	return (m.Short == compile.ShortTruthy && truth) || (m.Short == compile.ShortFalsy && !truth)
 }
 
 func (thread *Thread) leaveHook() { thread.inTrace = false }
