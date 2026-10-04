@@ -333,6 +333,7 @@ type Funcode struct {
 	Doc                   string          // docstring of this function
 	Code                  []byte          // the byte code
 	pclinetab             []uint16        // mapping from pc to linenum
+	Branches              []Branch        // conditional jumps with their source conditions, sorted by PC
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells
 	FreeVars              []Binding       // for tracing
@@ -375,6 +376,8 @@ type fcomp struct {
 	pos   syntax.Position // current position of generated code
 	loops []loop
 	block *block
+
+	branchState // the branch table under construction
 }
 
 type loop struct {
@@ -401,6 +404,7 @@ type insn struct {
 	op        Opcode
 	arg       uint32
 	line, col int32
+	br        uint32 // CJMP only: index+1 in fcomp.table, or 0
 }
 
 // Position returns the source position for program counter pc.
@@ -791,6 +795,9 @@ func (fcomp *fcomp) generate(blocks []*block, codelen uint32) {
 			if Disassemble {
 				PrintOp(fcomp.fn, pc, insn.op, insn.arg)
 			}
+			if insn.br != 0 {
+				fcomp.recordBranch(insn.br, pc)
+			}
 			code = append(code, byte(insn.op))
 			pc++
 			if insn.op >= OpcodeArgMin {
@@ -949,6 +956,7 @@ func (fcomp *fcomp) condjump(op Opcode, t, f *block) {
 		panic("not a conditional jump: " + op.String())
 	}
 	fcomp.emit1(op, 0) // fill in address later
+	fcomp.attachBranch()
 	fcomp.block.cjmp = t
 	fcomp.jump(f)
 }
@@ -1078,13 +1086,14 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 		f := fcomp.newBlock()
 		done := fcomp.newBlock()
 
-		fcomp.ifelse(stmt.Cond, t, f)
+		fcomp.ifelseAt(fcomp.ifKind(stmt), stmt.If, stmt.Cond, t, f)
 
 		fcomp.block = t
 		fcomp.stmts(stmt.True)
 		fcomp.jump(done)
 
 		fcomp.block = f
+		fcomp.elifAt = stmt.ElsePos
 		fcomp.stmts(stmt.False)
 		fcomp.jump(done)
 
@@ -1201,7 +1210,7 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 
 		fcomp.jump(head)
 		fcomp.block = head
-		fcomp.ifelse(stmt.Cond, body, done)
+		fcomp.ifelseAt(BranchWhile, stmt.While, stmt.Cond, body, done)
 
 		fcomp.block = body
 		fcomp.loops = append(fcomp.loops, loop{break_: done, continue_: head})
@@ -1319,7 +1328,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 		f := fcomp.newBlock()
 		done := fcomp.newBlock()
 
-		fcomp.ifelse(e.Cond, t, f)
+		fcomp.ifelseAt(BranchCondExpr, e.If, e.Cond, t, f)
 
 		fcomp.block = t
 		fcomp.expr(e.True)
@@ -1406,6 +1415,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
+			fcomp.markCond(e.X)
 			fcomp.condjump(CJMP, done, y)
 
 			fcomp.block = y
@@ -1422,6 +1432,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
+			fcomp.markCond(e.X)
 			fcomp.condjump(CJMP, y, done)
 
 			fcomp.block = y
@@ -1768,7 +1779,7 @@ func (fcomp *fcomp) comprehension(comp *syntax.Comprehension, clauseIndex int) {
 	case *syntax.IfClause:
 		t := fcomp.newBlock()
 		done := fcomp.newBlock()
-		fcomp.ifelse(clause.Cond, t, done)
+		fcomp.ifelseAt(BranchCompIf, clause.If, clause.Cond, t, done)
 
 		fcomp.block = t
 		fcomp.comprehension(comp, clauseIndex+1)
@@ -1880,7 +1891,9 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if not x then goto t else goto f
 			//    =>
 			// if x then goto f else goto t
+			fcomp.negate()
 			fcomp.ifelse(cond.X, f, t)
+			fcomp.negate()
 			return
 		}
 
@@ -1892,6 +1905,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if x then ifelse(y, t, f) else goto f
 			fcomp.expr(cond.X)
 			y := fcomp.newBlock()
+			fcomp.markCond(cond.X)
 			fcomp.condjump(CJMP, y, f)
 
 			fcomp.block = y
@@ -1904,6 +1918,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if x then goto t else ifelse(y, t, f)
 			fcomp.expr(cond.X)
 			y := fcomp.newBlock()
+			fcomp.markCond(cond.X)
 			fcomp.condjump(CJMP, t, y)
 
 			fcomp.block = y
@@ -1916,6 +1931,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			copy := *cond
 			copy.Op = syntax.IN
 			fcomp.expr(&copy)
+			fcomp.markCondNot(cond)
 			fcomp.condjump(CJMP, f, t)
 			return
 		}
@@ -1923,5 +1939,6 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 
 	// general case
 	fcomp.expr(cond)
+	fcomp.markCond(cond)
 	fcomp.condjump(CJMP, t, f)
 }
