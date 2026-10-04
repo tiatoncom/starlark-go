@@ -29,6 +29,17 @@ const (
 	BranchOr       = compile.BranchOr
 )
 
+// A ShortCircuit is Branch.Short: which value of a duplicated operand of a
+// chain that is compiled as a value short-circuits the chain. The interpreter
+// reads it; a hook need not.
+type ShortCircuit = compile.ShortCircuit
+
+const (
+	ShortNone   = compile.ShortNone
+	ShortTruthy = compile.ShortTruthy
+	ShortFalsy  = compile.ShortFalsy
+)
+
 // A Tracer receives events of the interpreter. Every field may be nil.
 //
 // Hooks run on the interpreter's goroutine, inside the instruction that
@@ -43,32 +54,54 @@ type Tracer struct {
 	// OnBranch is called at each conditional jump that tests a condition
 	// of the source (see Branch), before the jump is made. tested is the
 	// value the jump tests (for an operand of and/or inside parentheses or
-	// a longer chain, the value of the operand), taken is tested.Truth():
-	// whether the jump is taken. Branch.Negated says whether taking it
-	// leads to what the source reads as the false side.
+	// a longer chain, the value of the operand).
+	//
+	// taken is "the condition is true": tested.Truth(), the truth of the
+	// expression itself whatever "not" the source puts around it. It is not
+	// "the jump was made". Branch.Negated says that an odd number of "not"
+	// (or "not in") lies between the construct and the expression, so the
+	// side of the condition that the source follows is taken XOR Negated:
+	// true is the "then" side (or, for an operand of a chain, the operand
+	// counts as true for the chain), false the "else" side.
+	//
+	//	if x:            taken = x       Negated=false   then-side iff taken
+	//	if not x:        taken = x       Negated=true    then-side iff !taken
+	//	if x not in y:   taken = x in y  Negated=true    then-side iff !taken
+	//	if not not x:    taken = x       Negated=false
+	//
+	// When "not" is evaluated as a value (a "not" in front of a chain that is
+	// not the last operand: "not (a and b) and c") the jump sees the opposite
+	// truth; the interpreter undoes that (Branch.Flip), taken stays the truth
+	// of the expression and tested, whose value is gone, is Bool(taken).
 	//
 	// When an and/or operand short-circuits, the later tests of the same
-	// chain that the interpreter makes on the same value are not reported:
-	// the chain's last event is the one that decided it.
+	// chain that the interpreter makes on the same value are not reported
+	// (Branch.Echo): the chain's last event is the one that decided it.
 	OnBranch func(thread *Thread, fn *Function, b Branch, tested Value, taken bool)
 
 	// OnCompare is called after a successful comparison (==, !=, <, <=,
 	// >, >=) or membership test (in, not in; op is then syntax.IN, the
-	// "not" is Branch.Negated) whose result is tested by the conditional
-	// jump that follows, with that jump's Branch, before OnBranch of the
-	// same jump. A failed comparison raises an error and calls no hook.
+	// "not" is Branch.Negated and result the result of "in") whose result
+	// is tested by a conditional jump that has a Branch (Branch.CmpPC is
+	// the address of the comparison), with that Branch, before OnBranch of
+	// the same jump. The place of the comparison among the operands of a
+	// chain does not matter. A failed comparison raises an error and calls
+	// no hook.
 	OnCompare func(thread *Thread, fn *Function, b Branch, op syntax.Token, x, y Value, result bool)
 
 	// OnEnter is called when a function defined in Starlark (or the
 	// toplevel of a file: see Function.IsToplevel) starts, after its
 	// arguments are bound to its parameters and before its first
 	// instruction. A call that is refused before that (recursion, wrong
-	// arguments) calls no hook.
+	// arguments) calls no hook. The args slice is valid until the hook
+	// returns; a hook that keeps the arguments must copy it.
 	OnEnter func(thread *Thread, fn *Function, call CallSite, args []Arg)
 
-	// OnExit is called when the function returns, or fails with err,
-	// with the result of CallInternal (err is not yet wrapped in an
-	// EvalError). It is not called when the function is left by a panic.
+	// OnExit is called when the function returns, or fails with err (an
+	// error in the body, the step limit, Cancel), with the result of
+	// CallInternal (err is not yet wrapped in an EvalError). It is called
+	// for every OnEnter, whichever way the function ends, and is not called
+	// when the function is left by a panic.
 	OnExit func(thread *Thread, fn *Function, result Value, err error)
 }
 
@@ -96,94 +129,46 @@ type Arg struct {
 // code that Program.Init and ExecFile run), not a def or lambda.
 func (fn *Function) IsToplevel() bool { return fn.funcode == fn.funcode.Prog.Toplevel }
 
-// enterHook marks the thread as running a hook and returns the function that
-// undoes it; a hook that calls Call panics (see Call).
+// enterHook marks the thread as running a hook, until leaveHook: a hook that
+// calls Call panics (see Call).
 func (thread *Thread) enterHook() { thread.inTrace = true }
 
-// traceBranch reports the CJMP at pc to OnBranch. next is the pc after the
-// instruction, arg its target. thread.traceSkip is the CJMP (as pc+1) that
-// the previous call decided not to report, 0 for none.
-func (thread *Thread) traceBranch(fn *Function, pc, next, arg uint32, tested Value, taken bool) {
+// traceBranch reports the CJMP at pc to OnBranch. tested is the value on top
+// of the stack and truth its truth. echo says that the previous traced CJMP
+// short-circuited a chain that is compiled as a value, so that a CJMP flagged
+// Echo only tests that outcome again. It returns echo for the next CJMP.
+func (thread *Thread) traceBranch(fn *Function, pc uint32, tested Value, truth, echo bool) bool {
 	tr := thread.Trace
-	skip := thread.traceSkip
-	thread.traceSkip = 0
 	if tr.OnBranch == nil {
-		return
+		return false
 	}
-	f := fn.funcode
-	b, ok := f.BranchAt(pc)
+	b, ok := fn.funcode.BranchAt(pc)
 	if !ok {
-		return
+		return false
 	}
-	if skip != pc+1 {
-		thread.callBranch(tr, fn, *b, tested, taken)
+	if !(echo && b.Echo) {
+		taken := truth != b.Flip
+		if b.Flip {
+			tested = Bool(taken)
+		}
+		thread.enterHook()
+		defer thread.leaveHook()
+		tr.OnBranch(thread, fn, *b, tested, taken)
 	}
-	// A short-circuit of a chain compiled as a value jumps (or falls) to
-	// the code that tests the same value again: the test of the operand
-	// that closes the chain, and of the chains around it. Those tests
-	// repeat what was just reported; do not report them.
-	if taken {
-		thread.traceSkip = echoAfter(f.Code, arg)
-	} else {
-		thread.traceSkip = echoAfter(f.Code, next)
-	}
-}
-
-func (thread *Thread) callBranch(tr *Tracer, fn *Function, b Branch, tested Value, taken bool) {
-	thread.enterHook()
-	defer thread.leaveHook()
-	tr.OnBranch(thread, fn, b, tested, taken)
+	return (b.Short == ShortTruthy && truth) || (b.Short == ShortFalsy && !truth)
 }
 
 func (thread *Thread) leaveHook() { thread.inTrace = false }
 
-// echoAfter returns, as pc+1, the CJMP that the code at pc reaches through
-// JMP, DUP and the NOP padding only, that is the CJMP that tests again the value on top of the
-// stack; 0 if the code at pc evaluates anything else first.
-func echoAfter(code []byte, pc uint32) uint32 {
-	for range 64 {
-		switch compile.Opcode(code[pc]) {
-		case compile.DUP, compile.NOP: // NOP: the padding of a jump's operand
-			pc++
-		case compile.JMP:
-			pc++
-			var target uint32
-			for s := uint(0); ; s += 7 {
-				b := code[pc]
-				pc++
-				target |= uint32(b&0x7f) << s
-				if b < 0x80 {
-					break
-				}
-			}
-			pc = target
-		case compile.CJMP:
-			return pc + 1
-		default:
-			return 0
-		}
-	}
-	return 0
-}
-
-// traceCompare reports a comparison to OnCompare (operands are its two operands,
-// still on the stack just above sp) when the code at pc (the
-// instruction after the comparison) is a conditional jump that has a Branch,
-// possibly after the DUP that precedes the test of a non-last operand of
-// and/or.
+// traceCompare reports the comparison at pc (operands are its two operands,
+// still on the stack just above sp) when a Branch records that the CJMP
+// of the Funcode tests its result.
 func (thread *Thread) traceCompare(fn *Function, pc uint32, op syntax.Token, operands []Value, result bool) {
 	tr := thread.Trace
 	if tr.OnCompare == nil {
 		return
 	}
-	code := fn.funcode.Code
-	if compile.Opcode(code[pc]) == compile.DUP {
-		pc++
-	}
-	if compile.Opcode(code[pc]) != compile.CJMP {
-		return
-	}
-	b, ok := fn.funcode.BranchAt(pc)
+	b, ok := fn.funcode.BranchForCompare(pc)
 	if !ok {
 		return
 	}
@@ -199,13 +184,13 @@ func (thread *Thread) traceEnter(fn *Function, locals []Value) {
 		return
 	}
 	f := fn.funcode
-	var args []Arg
-	if f.NumParams > 0 {
-		args = make([]Arg, f.NumParams)
-		for i := range args {
-			args[i] = Arg{Name: f.Locals[i].Name, Value: locals[i]}
-		}
+	// The slice lives in the thread and is reused by the next call: the hook
+	// may not keep it (see Tracer.OnEnter).
+	args := thread.traceArgs[:0]
+	for i := 0; i < f.NumParams; i++ {
+		args = append(args, Arg{Name: f.Locals[i].Name, Value: locals[i]})
 	}
+	thread.traceArgs = args
 	var call CallSite
 	switch n := len(thread.stack); {
 	case n >= 2:
@@ -219,6 +204,7 @@ func (thread *Thread) traceEnter(fn *Function, locals []Value) {
 	thread.enterHook()
 	defer thread.leaveHook()
 	tr.OnEnter(thread, fn, call, args)
+	clear(args) // do not keep the values alive
 }
 
 // traceExit reports the end of fn.

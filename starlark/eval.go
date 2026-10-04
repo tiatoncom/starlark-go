@@ -59,17 +59,6 @@ type Thread struct {
 	// The precise meaning of "step" is not specified and may change.
 	Steps, maxSteps uint64
 
-	// Trace, if not nil, receives the trace events of the interpreter.
-	// See Tracer.
-	Trace *Tracer
-
-	// inTrace is set while a Trace hook runs: Call must not be reached then.
-	inTrace bool
-
-	// traceSkip is the CJMP (as pc+1) whose OnBranch event would only repeat
-	// the previous one: see traceBranch.
-	traceSkip uint32
-
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
 
@@ -79,6 +68,16 @@ type Thread struct {
 
 	// proftime holds the accumulated execution time since the last profile event.
 	proftime time.Duration
+
+	// Trace, if not nil, receives the trace events of the interpreter.
+	// See Tracer.
+	Trace *Tracer
+
+	// inTrace is set while a Trace hook runs: Call must not be reached then.
+	inTrace bool
+
+	// traceArgs is the buffer behind the args of OnEnter, reused by each call.
+	traceArgs []Arg
 }
 
 // ExecutionSteps returns the current value of Steps.

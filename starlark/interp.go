@@ -107,6 +107,7 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	sp := 0
 	var pc uint32
 	var result Value
+	var traceEcho bool // the previous traced CJMP short-circuited a chain: see traceBranch
 	code := f.Code
 loop:
 	for {
@@ -175,7 +176,7 @@ loop:
 				break loop
 			}
 			if thread.Trace != nil {
-				thread.traceCompare(fn, pc, op, stack[sp:sp+2], ok)
+				thread.traceCompare(fn, fr.pc, op, stack[sp:sp+2], ok)
 			}
 			stack[sp] = Bool(ok)
 			sp++
@@ -205,7 +206,7 @@ loop:
 				break loop
 			}
 			if binop == syntax.IN && thread.Trace != nil {
-				thread.traceCompare(fn, pc, binop, stack[sp:sp+2], bool(z.Truth()))
+				thread.traceCompare(fn, fr.pc, binop, stack[sp:sp+2], bool(z.Truth()))
 			}
 			stack[sp] = z
 			sp++
@@ -536,7 +537,7 @@ loop:
 		case compile.CJMP:
 			truth := bool(stack[sp-1].Truth())
 			if thread.Trace != nil {
-				thread.traceBranch(fn, fr.pc, pc, arg, stack[sp-1], truth)
+				traceEcho = thread.traceBranch(fn, fr.pc, stack[sp-1], truth, traceEcho)
 			}
 			if truth {
 				pc = arg
