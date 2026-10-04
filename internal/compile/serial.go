@@ -201,6 +201,7 @@ func (e *encoder) function(fn *Funcode) {
 	e.int(fn.NumKwonlyParams)
 	e.int(b2i(fn.HasVarargs))
 	e.int(b2i(fn.HasKwargs))
+	e.branches(fn.Branches)
 }
 
 func b2i(b bool) int {
@@ -380,6 +381,7 @@ func (d *decoder) function() *Funcode {
 	numKwonlyParams := d.int()
 	hasVarargs := d.int() != 0
 	hasKwargs := d.int() != 0
+	branches := d.branches()
 	return &Funcode{
 		// Prog is filled in later.
 		Pos:             id.Pos,
@@ -395,5 +397,52 @@ func (d *decoder) function() *Funcode {
 		NumKwonlyParams: numKwonlyParams,
 		HasVarargs:      hasVarargs,
 		HasKwargs:       hasKwargs,
+		Branches:        branches,
 	}
+}
+
+func (e *encoder) position(p syntax.Position) {
+	e.int(int(p.Line))
+	e.int(int(p.Col))
+}
+
+// branches encodes the branch table: the count, then per branch
+// pc, kind, three positions (cond, chain, keyword), operand, negated.
+func (e *encoder) branches(bs []Branch) {
+	e.int(len(bs))
+	for _, b := range bs {
+		e.int(int(b.PC))
+		e.int(int(b.Kind))
+		e.position(b.Cond)
+		e.position(b.Chain)
+		e.position(b.Keyword)
+		e.int(b.Operand)
+		e.int(b2i(b.Negated))
+	}
+}
+
+func (d *decoder) position() syntax.Position {
+	line := int32(d.int())
+	col := int32(d.int())
+	return syntax.MakePosition(d.filename, line, col)
+}
+
+func (d *decoder) branches() []Branch {
+	n := d.int()
+	if n == 0 {
+		return nil
+	}
+	bs := make([]Branch, n)
+	for i := range bs {
+		bs[i] = Branch{
+			PC:      uint32(d.int()),
+			Kind:    BranchKind(d.int()),
+			Cond:    d.position(),
+			Chain:   d.position(),
+			Keyword: d.position(),
+			Operand: d.int(),
+			Negated: d.bool(),
+		}
+	}
+	return bs
 }
