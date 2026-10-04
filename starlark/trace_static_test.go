@@ -268,7 +268,7 @@ func TestFuncodesCopies(t *testing.T) {
 // TestFuncodeInfoPublicFields: the description of a function holds these
 // fields and nothing of the interpreter.
 func TestFuncodeInfoPublicFields(t *testing.T) {
-	want := []string{"Name", "Pos", "IsToplevel", "Branches"}
+	want := []string{"Name", "Pos", "IsToplevel", "Branches", "Chains"}
 	var have []string
 	typ := reflect.TypeOf(starlark.FuncodeInfo{})
 	for i := 0; i < typ.NumField(); i++ {

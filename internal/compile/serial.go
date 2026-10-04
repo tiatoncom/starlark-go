@@ -47,6 +47,8 @@ package compile
 //	haskwargs	varint (0 or 1)
 //	numbranches	varint
 //	branches	[]Branch
+//	numchains	varint
+//	chains		[]Chain
 //
 // Branch:                              # the branch table, sorted by pc
 //	pc		varint          # address of the CJMP
@@ -62,6 +64,12 @@ package compile
 //	short		varint          # 0=none 1=a truthy value ends a chain 2=a falsy one does
 //	flip		varint (0 or 1) # the CJMP sees the opposite truth of the tested expression
 //	cmppc		varint          # address of the comparison it tests, or -1
+//
+// Chain:                               # the chain table, indexed by chainid
+//	kind		varint          # BranchKind: 5=and 6=or
+//	start		Position
+//	parent		varint          # chainid of the enclosing chain, or -1
+//	parentoperand	varint          # number of the operand in the parent's flat list, or -1
 //
 // Position:
 //	line, col	varint          # the file is the program's
@@ -222,6 +230,7 @@ func (e *encoder) function(fn *Funcode) {
 	e.int(b2i(fn.HasVarargs))
 	e.int(b2i(fn.HasKwargs))
 	e.branches(fn.Branches, fn.BranchMech)
+	e.chains(fn.Chains)
 }
 
 func b2i(b bool) int {
@@ -402,6 +411,7 @@ func (d *decoder) function() *Funcode {
 	hasVarargs := d.int() != 0
 	hasKwargs := d.int() != 0
 	branches, mech := d.branches()
+	chains := d.chains()
 	fn := &Funcode{
 		// Prog is filled in later.
 		Pos:             id.Pos,
@@ -419,6 +429,7 @@ func (d *decoder) function() *Funcode {
 		HasKwargs:       hasKwargs,
 		Branches:        branches,
 		BranchMech:      mech,
+		Chains:          chains,
 	}
 	fn.indexBranches()
 	return fn
@@ -450,6 +461,35 @@ func (e *encoder) branches(bs []Branch, ms []BranchMech) {
 		e.int(b2i(m.Flip))
 		e.int(m.CmpPC)
 	}
+}
+
+// chains encodes the chain table: the count, then per chain
+// kind, start, parent, parentoperand.
+func (e *encoder) chains(cs []Chain) {
+	e.int(len(cs))
+	for _, c := range cs {
+		e.int(int(c.Kind))
+		e.position(c.Start)
+		e.int(c.Parent)
+		e.int(c.ParentOperand)
+	}
+}
+
+func (d *decoder) chains() []Chain {
+	n := d.int()
+	if n == 0 {
+		return nil
+	}
+	cs := make([]Chain, n)
+	for i := range cs {
+		cs[i] = Chain{
+			Kind:          BranchKind(d.int()),
+			Start:         d.position(),
+			Parent:        d.int(),
+			ParentOperand: d.int(),
+		}
+	}
+	return cs
 }
 
 // position decodes a Position; line 0 is the zero Position (no position).

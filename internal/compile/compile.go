@@ -46,7 +46,7 @@ var Disassemble = false
 const debug = false // make code generation verbose, for debugging the compiler
 
 // Increment this to force recompilation of saved bytecode files.
-const Version = 15
+const Version = 16
 
 type Opcode uint8
 
@@ -335,6 +335,7 @@ type Funcode struct {
 	pclinetab             []uint16        // mapping from pc to linenum
 	Branches              []Branch        // conditional jumps with their source conditions, sorted by PC
 	BranchMech            []BranchMech    // the interpreter's flags of Branches, same index
+	Chains                []Chain         // every and/or chain of the conditions, by ChainID; nil if none
 	cmpIndex              []cmpRef        // Branches with a CmpPC, sorted by CmpPC
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells

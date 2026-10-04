@@ -71,6 +71,8 @@ func (k BranchKind) String() string {
 // of "not (a and b) and c", of "(not (a and b)) and c" and of
 // "not not not (a and b) and c" are the same but for their positions.
 //
+// Funcode.Chains lists the chains by ChainID, also those without a Branch.
+//
 // ChainID numbers the chains of the Funcode in the order in which they start
 // in the source (a pre-order walk of the syntax tree, an outer chain before
 // the chain that starts at the same place inside it), from 0; ParentChain is
@@ -102,6 +104,24 @@ type Branch struct {
 	Negated     bool
 	ChainID     int // number of the chain in the Funcode, or -1
 	ParentChain int // ChainID of the enclosing chain, or -1
+}
+
+// A Chain is one and/or chain of the conditions of a Funcode: the table of the
+// chains that Branch.ChainID and Branch.ParentChain refer to by index
+// (Funcode.Chains[ChainID]). It lists every chain the compiler met, also one
+// that has no Branch of its own (all its operands are chains, or its code is
+// dead and was not emitted): the numbers of ChainID count them all.
+//
+// Kind is BranchAnd or BranchOr. Start is the start of the chain as it stands
+// (the Chain of its Branches): parentheses included, after a "not". Parent is
+// the ChainID of the chain in which this one stands as an operand, or -1.
+// ParentOperand is the number of that operand in the flat list of the parent
+// (see Branch.Operand), or -1 when Parent is -1.
+type Chain struct {
+	Kind          BranchKind
+	Start         syntax.Position
+	Parent        int
+	ParentOperand int
 }
 
 // A BranchMech is what the interpreter reads about a Branch instead of
@@ -208,8 +228,11 @@ type tableEntry struct {
 }
 
 type chainInfo struct {
-	start syntax.Position
-	depth int // number of chains around this one
+	start         syntax.Position
+	depth         int // number of chains around this one
+	kind          BranchKind
+	parent        int // index in chains of the enclosing chain, or -1
+	parentOperand int // operand of the enclosing chain, or -1
 }
 
 // A cmpMark remembers where the last comparison was emitted: the operands
@@ -396,6 +419,17 @@ func (fcomp *fcomp) finishBranches() {
 	for rank, id := range order {
 		number[id] = rank
 	}
+	if len(order) > 0 {
+		fn.Chains = make([]Chain, len(order))
+		for rank, id := range order {
+			c := fcomp.chains[id]
+			parent := -1
+			if c.parent >= 0 {
+				parent = number[c.parent]
+			}
+			fn.Chains[rank] = Chain{Kind: c.kind, Start: c.start, Parent: parent, ParentOperand: c.parentOperand}
+		}
+	}
 	for i := range fn.Branches {
 		b := &fn.Branches[i]
 		if b.ChainID >= 0 {
@@ -412,7 +446,7 @@ func (fcomp *fcomp) newCondState(kind BranchKind, keyword syntax.Position, cond 
 	cs := new(condState)
 	inner, stands, neg := peel(cond)
 	if chain, ok := inner.(*syntax.BinaryExpr); ok && isChainOp(chain.Op) {
-		cs.chain(fcomp, stands, chain, neg, -1, 0)
+		cs.chain(fcomp, stands, chain, neg, -1, -1, 0)
 	} else {
 		start := syntax.Start(cond)
 		cs.leaves = append(cs.leaves, leaf{inner, Branch{
@@ -454,8 +488,9 @@ func peel(e syntax.Expr) (inner, stands syntax.Expr, odd bool) {
 
 // chain registers the operands of the chain e, which stands as asStands
 // under an odd number of "not" if neg, inside the chain parent (-1 for none)
-// that is depth chains deep.
-func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryExpr, neg bool, parent, depth int) {
+// that is depth chains deep and stands there as its operand number
+// parentOperand (-1 for none).
+func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryExpr, neg bool, parent, parentOperand, depth int) {
 	// Flatten the left spine of one operator: ((a and b) and c).
 	var operands []syntax.Expr
 	var opPos []syntax.Position
@@ -476,7 +511,7 @@ func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryE
 		kind = BranchOr
 	}
 	id := len(fcomp.chains)
-	fcomp.chains = append(fcomp.chains, chainInfo{start, depth})
+	fcomp.chains = append(fcomp.chains, chainInfo{start, depth, kind, parent, parentOperand})
 	for i := 0; i < n; i++ {
 		// operands and opPos are in reverse order; operand 0 has no operator
 		o := operands[n-1-i]
@@ -487,7 +522,7 @@ func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryE
 		inner, stands, odd := peel(o)
 		odd = odd != neg
 		if c, ok := inner.(*syntax.BinaryExpr); ok && isChainOp(c.Op) {
-			cs.chain(fcomp, stands, c, odd, id, depth+1)
+			cs.chain(fcomp, stands, c, odd, id, i, depth+1)
 			continue
 		}
 		cs.leaves = append(cs.leaves, leaf{inner, Branch{

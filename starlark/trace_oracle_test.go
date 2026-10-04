@@ -112,6 +112,8 @@ type oracleChain struct {
 	depth  int
 	parent *oracleChain
 	rank   int
+	kind   string // "and" or "or"
+	slot   int    // operand number in the parent's flat list, -1 for none
 }
 
 type oracleLeaf struct {
@@ -166,7 +168,11 @@ func (r *oracleRender) node(n *oracleNode, c oracleCtx, rootKind string) {
 		r.leaves[n] = l
 		fmt.Fprintf(&r.sb, oracleLeafKinds[n.lk], fmt.Sprintf("v%d", n.v))
 	default:
-		ch := &oracleChain{stands: c.stands, depth: c.depth, parent: c.chain}
+		slot := -1
+		if c.chain != nil {
+			slot = c.operand
+		}
+		ch := &oracleChain{stands: c.stands, depth: c.depth, parent: c.chain, kind: n.t, slot: slot}
 		r.chains = append(r.chains, ch)
 		for i, k := range n.kids {
 			kw := 0
@@ -346,6 +352,7 @@ func TestTraceOracle(t *testing.T) {
 				t.Fatalf("%v\n%s", err, src)
 			}
 			static = newStaticIndex(prog)
+			checkOracleChains(t, prog, ord, tm.line, src)
 			thread.Trace = tr
 			for m := 0; m < 16; m++ {
 				got = got[:0]
@@ -403,4 +410,50 @@ func TestTraceOracle(t *testing.T) {
 		}
 	}
 	t.Logf("%d trees x 4 constructs x 16 inputs, bad=%d", seeds, bad)
+}
+
+// checkOracleChains: the Chains of the function f hold exactly the chains of
+// the tree the oracle rendered (all of them, those without a Branch too), by
+// ChainID, with the oracle's kind, start, parent and slot; and every Branch
+// points at an element of Chains.
+func checkOracleChains(t *testing.T, prog *starlark.Program, ord []*oracleChain, line int, src string) {
+	t.Helper()
+	var f *starlark.FuncodeInfo
+	for _, fi := range prog.Funcodes() {
+		if fi.Name == "f" {
+			fi := fi
+			f = &fi
+		}
+	}
+	if f == nil {
+		t.Fatalf("no function f in Funcodes()\n%s", src)
+	}
+	if len(f.Chains) != len(ord) {
+		t.Fatalf("%d Chains, the oracle has %d chains\n%s\n%+v", len(f.Chains), len(ord), src, f.Chains)
+	}
+	for i, c := range f.Chains {
+		o := ord[i]
+		parent := -1
+		if o.parent != nil {
+			parent = o.parent.rank
+		}
+		if c.ChainID != i || c.ParentChain != parent || c.ParentOperand != o.slot ||
+			c.Kind.String() != o.kind || int(c.Start.Line) != line || int(c.Start.Col) != o.stands {
+			t.Fatalf("Chains[%d] = %+v (start %s), the oracle: kind %s start %d parent %d slot %d\n%s", i, c, c.Start, o.kind, o.stands, parent, o.slot, src)
+		}
+		if c.ParentChain >= i {
+			t.Fatalf("Chains[%d]: the parent %d is not numbered before it\n%s", i, c.ParentChain, src)
+		}
+	}
+	for _, b := range f.Branches {
+		if b.ChainID >= len(f.Chains) || b.ParentChain >= len(f.Chains) {
+			t.Fatalf("Branch %+v points outside Chains (%d)\n%s", b, len(f.Chains), src)
+		}
+		if b.ChainID >= 0 {
+			c := f.Chains[b.ChainID]
+			if c.ParentChain != b.ParentChain || keyOf(c.Start) != keyOf(b.Chain) || c.Kind != b.Kind {
+				t.Fatalf("Branch %+v disagrees with Chains[%d] = %+v\n%s", b, b.ChainID, c, src)
+			}
+		}
+	}
 }

@@ -54,7 +54,7 @@ whose hooks is set costs one more comparison per event (`BranchyEmpty`, +5 %).
 
 The compiler records, for each conditional jump that tests a condition of the
 source, a `Branch` in `Funcode.Branches` (sorted by pc; saved with the compiled
-program, format version 15; a program of version 14 is refused). It is side data:
+program, format version 16; a program of version 15 or 14 is refused). It is side data:
 the interpreter reads the table, never the code, to tell what a jump or a
 comparison is. The `Branch` a host gets has these fields and no others:
 `PC`, `Kind`, `Cond`, `Chain`, `Keyword`, `Operand`, `Negated`, `ChainID`,
@@ -188,6 +188,15 @@ type FuncodeInfo struct {
 	Pos        syntax.Position // the def / lambda token: what Function.Position() reports
 	IsToplevel bool            // what Function.IsToplevel() reports
 	Branches   []Branch        // sorted by PC; nil when the function has no condition
+	Chains     []ChainInfo     // every and/or chain, by ChainID; nil when there is none
+}
+
+type ChainInfo struct {
+	ChainID       int             // the index in Chains
+	ParentChain   int             // ChainID of the chain around it, or -1
+	ParentOperand int             // its operand number in the parent's flat list, or -1
+	Kind          BranchKind      // BranchAnd or BranchOr
+	Start         syntax.Position // the Chain of its Branches
 }
 ```
 
@@ -198,8 +207,8 @@ type FuncodeInfo struct {
   closures of one def are one entry). The order depends on the source alone and
   is saved with the program, so a program read back by `CompiledProgram` lists
   the same functions in the same order, with the same `Branches` (the table is
-  part of the format since version 15; `Version` and the bytecode are
-  unchanged by this access).
+  part of the format since version 15, the chain table since 16; the bytecode
+  is unchanged by both).
 * **The same values as the hooks.** The `Branch` of an event is, field by field,
   an element of `Branches` of the entry whose `Pos` is `fn.Position()` (find it
   by `ChainID`, `Operand` and `Cond`; `PC` is the address). The tests check this
@@ -208,6 +217,31 @@ type FuncodeInfo struct {
   `Write` / `CompiledProgram`. A `Branch` in the table that the interpreter
   reports no event for (the closing jump of a chain that short-circuited, see
   Echo) is still there.
+* **Chains: all of them.** `Chains` lists every and/or chain of the conditions of
+  the function, in the order of `ChainID`: `Chains[i].ChainID == i`, the numbers
+  are exactly `0..n-1`, and the `ChainID` and `ParentChain` of every `Branch`,
+  and the `ParentChain` of every `ChainInfo`, index this slice. The parent of a
+  chain is numbered before it. Where the table of `Branches` has gaps (a number
+  that no `Branch` carries) `Chains` still names the chain, so the host needs no
+  count of its own:
+  * a chain whose operands are all chains of their own has no `Branch`
+    (`((a and b) or (c and d)) and ((e and f) or (g and h))`: seven chains,
+    numbers 0..6, the outer one is 0 and none of its operands is a leaf);
+  * a chain in dead code (after `return`, `break` or `continue`) is numbered
+    like any other,
+    and so shifts the numbers of the chains after it, but emits no jump, so it
+    has no `Branch`;
+  * `Kind` is `BranchAnd` or `BranchOr`; `Start` is the `Chain` of its
+    `Branch`es (parentheses included, after a `not`).
+  * `ParentOperand` is the slot of the chain in the parent: the number of the
+    operand in the parent's flat list, the number a `Branch` of that parent
+    carries in `Operand` (`a and (b or c) and d`: the chain `b or c` is operand
+    1 of its parent). `-1` for a chain that is not inside another; then
+    `ParentChain` is `-1` too.
+
+  The chain table is part of the saved format (version 16), so a program read
+  back by `CompiledProgram` gives the same `Chains` as the one compiled from
+  source.
 * **Positions across programs.** A `syntax.Position` holds a pointer to the file
   name, so two `Position`s from different compilations of one source are not
   `==`: compare `Filename()`, `Line` and `Col`.

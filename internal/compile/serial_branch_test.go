@@ -10,8 +10,8 @@ import (
 // TestBranchSerialization checks that the table survives Encode/Decode and
 // that the format version was raised for it.
 func TestBranchSerialization(t *testing.T) {
-	if Version != 15 {
-		t.Errorf("Version = %d, want 15 (the branch table is part of the format)", Version)
+	if Version != 16 {
+		t.Errorf("Version = %d, want 16 (the branch and chain tables are part of the format)", Version)
 	}
 	file := "testdata/branches.star"
 	for key, prog := range compileChunks(t, file) {
@@ -21,7 +21,7 @@ func TestBranchSerialization(t *testing.T) {
 		}
 		funcs := append([]*Funcode{prog.Toplevel}, prog.Functions...)
 		gotFuncs := append([]*Funcode{got.Toplevel}, got.Functions...)
-		total := 0
+		total, chains, bare := 0, 0, 0
 		for i, fn := range funcs {
 			want := fmt.Sprintf("%+v", positionsOf(fn))
 			have := fmt.Sprintf("%+v", positionsOf(gotFuncs[i]))
@@ -29,9 +29,17 @@ func TestBranchSerialization(t *testing.T) {
 				t.Errorf("%s: %s: decoded branches differ:\n got %s\nwant %s", key, fn.Name, have, want)
 			}
 			total += len(fn.Branches)
+			if want, have := chainsText(fn), chainsText(gotFuncs[i]); fmt.Sprint(want) != fmt.Sprint(have) {
+				t.Errorf("%s: %s: decoded chains differ:\n got %s\nwant %s", key, fn.Name, have, want)
+			}
+			chains += len(fn.Chains)
+			bare += chainsWithoutBranch(fn)
 		}
 		if total < 30 {
 			t.Errorf("%s: only %d branches in the sample", key, total)
+		}
+		if chains < 10 || bare == 0 {
+			t.Errorf("%s: %d chains in the sample, %d of them without a Branch", key, chains, bare)
 		}
 	}
 }
@@ -46,6 +54,26 @@ func positionsOf(fn *Funcode) []string {
 			b.PC, b.Kind, b.Operand, b.Cond, b.Chain, b.Keyword, b.Keyword.IsValid(), b.Negated, b.ChainID, b.ParentChain, m.Echo, m.Short, m.Flip, m.CmpPC)
 	}
 	return out
+}
+
+// chainsText renders the chain table with all its fields, positions as text.
+func chainsText(fn *Funcode) []string {
+	out := make([]string, len(fn.Chains))
+	for i, c := range fn.Chains {
+		out[i] = fmt.Sprintf("%d %s start=%s parent=%d slot=%d", i, c.Kind, c.Start, c.Parent, c.ParentOperand)
+	}
+	return out
+}
+
+// chainsWithoutBranch counts the chains that no Branch of fn names.
+func chainsWithoutBranch(fn *Funcode) int {
+	named := map[int]bool{}
+	for _, b := range fn.Branches {
+		if b.ChainID >= 0 {
+			named[b.ChainID] = true
+		}
+	}
+	return len(fn.Chains) - len(named)
 }
 
 // TestBranchSerializationFlags: each of the fields of the table that is not a
@@ -108,20 +136,22 @@ func TestBranchSerializationFlags(t *testing.T) {
 	}
 }
 
-// TestVersion14Rejected: a program of the format before the branch table
-// (Version 14, which has no table) is refused, not read with the table
-// of a later format.
-func TestVersion14Rejected(t *testing.T) {
+// TestVersionRejected: a program of an earlier format (14, before the branch
+// table; 15, before the chain table) is refused, not read with the tables of
+// a later format.
+func TestVersionRejected(t *testing.T) {
 	prog := compileSrc(t, "def f(a):\n    if a:\n        pass\n")
 	data := prog.Encode()
 	if v, n := binary.Varint(data[8:]); v != Version || n != 1 {
 		t.Fatalf("version in the data is %d (%d bytes), want %d in one byte", v, n, Version)
 	}
-	old := append([]byte(nil), data...)
-	binary.PutVarint(old[8:], 14)
-	_, err := DecodeProgram(old)
-	if err == nil || !strings.Contains(err.Error(), "version mismatch: read 14, want 15") {
-		t.Errorf("DecodeProgram of Version 14 = %v; want a version mismatch", err)
+	for _, v := range []int64{14, 15} {
+		old := append([]byte(nil), data...)
+		binary.PutVarint(old[8:], v)
+		_, err := DecodeProgram(old)
+		if want := fmt.Sprintf("version mismatch: read %d, want %d", v, Version); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("DecodeProgram of Version %d = %v; want %q", v, err, want)
+		}
 	}
 	if _, err := DecodeProgram(data); err != nil {
 		t.Errorf("DecodeProgram of the current version: %v", err)

@@ -14,6 +14,22 @@ type FuncodeInfo struct {
 	Pos        syntax.Position // position of the def or lambda token, as Function.Position reports it
 	IsToplevel bool            // the toplevel function of the file, as Function.IsToplevel reports it
 	Branches   []Branch        // the branch table of the function, sorted by PC; nil if it has no conditions
+	Chains     []ChainInfo     // every and/or chain of the conditions of the function, by ChainID; nil if it has none
+}
+
+// A ChainInfo is one and/or chain of the conditions of a function. Chains[i]
+// of a FuncodeInfo is the chain whose number is i: the ChainID and
+// ParentChain of its Branches (and the ParentChain of its ChainInfo) index
+// that slice. It lists every chain, also one that no Branch names: a chain
+// whose operands are all chains of their own, and a chain in dead code (after
+// a return), which the compiler numbers but emits no jump for. See
+// doc/trace.md.
+type ChainInfo struct {
+	ChainID       int             // number of the chain in the function: its index in Chains
+	ParentChain   int             // ChainID of the chain in which this one stands as an operand, or -1
+	ParentOperand int             // number of that operand in the flat list of the parent (Branch.Operand), or -1
+	Kind          BranchKind      // BranchAnd or BranchOr
+	Start         syntax.Position // start of the chain as it stands: parentheses included, after a "not"; the Chain of its Branches
 }
 
 // Funcodes returns the static description of every function of the program:
@@ -36,6 +52,18 @@ func (prog *Program) Funcodes() []FuncodeInfo {
 		info := FuncodeInfo{Name: f.Name, Pos: f.Pos, IsToplevel: f == c.Toplevel}
 		if len(f.Branches) > 0 {
 			info.Branches = append([]Branch(nil), f.Branches...)
+		}
+		if len(f.Chains) > 0 {
+			info.Chains = make([]ChainInfo, len(f.Chains))
+			for i, ch := range f.Chains {
+				info.Chains[i] = ChainInfo{
+					ChainID:       i,
+					ParentChain:   ch.Parent,
+					ParentOperand: ch.ParentOperand,
+					Kind:          ch.Kind,
+					Start:         ch.Start,
+				}
+			}
 		}
 		infos = append(infos, info)
 	}
