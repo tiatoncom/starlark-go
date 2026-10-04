@@ -173,6 +173,47 @@ any place: the first, a middle or the last operand of a chain, in a chain of its
 own, under `not`, and for `not in` (`op` is `in`, `result` is the result of `in`,
 `Negated` the `not`).
 
+## Static access to the table
+
+A host that marks up the source (an editor, a catalogue of conditions) needs the
+chain numbers, `Operand`, `Negated` and `Keyword` without running the function,
+and the same as the hooks will report. `Program.Funcodes` gives the table as the
+compiler made it:
+
+```go
+func (prog *Program) Funcodes() []FuncodeInfo
+
+type FuncodeInfo struct {
+	Name       string          // "lambda" for a lambda, "<toplevel>" for the toplevel
+	Pos        syntax.Position // the def / lambda token: what Function.Position() reports
+	IsToplevel bool            // what Function.IsToplevel() reports
+	Branches   []Branch        // sorted by PC; nil when the function has no condition
+}
+```
+
+* **Every function of the program**: the toplevel first, then the defs and
+  lambdas, nested ones included, in the order of the program's function pool
+  (the order in which the compiler numbers them: a nested function is listed
+  before the function around it, since it is finished first, and several
+  closures of one def are one entry). The order depends on the source alone and
+  is saved with the program, so a program read back by `CompiledProgram` lists
+  the same functions in the same order, with the same `Branches` (the table is
+  part of the format since version 15; `Version` and the bytecode are
+  unchanged by this access).
+* **The same values as the hooks.** The `Branch` of an event is, field by field,
+  an element of `Branches` of the entry whose `Pos` is `fn.Position()` (find it
+  by `ChainID`, `Operand` and `Cond`; `PC` is the address). The tests check this
+  against the oracle (`trace_oracle_test.go`, every event of 4000 random trees)
+  and on a program with a toplevel, nested defs and a lambda, also after
+  `Write` / `CompiledProgram`. A `Branch` in the table that the interpreter
+  reports no event for (the closing jump of a chain that short-circuited, see
+  Echo) is still there.
+* **Positions across programs.** A `syntax.Position` holds a pointer to the file
+  name, so two `Position`s from different compilations of one source are not
+  `==`: compare `Filename()`, `Line` and `Col`.
+* The slices are copies. The interpreter's flags (Echo, Short, Flip, CmpPC) are
+  not part of `FuncodeInfo` and not reachable from it.
+
 ## Calls
 
 `OnEnter` receives a `CallSite`: the position of the calling frame, or
@@ -192,4 +233,19 @@ nor `OnExit`. A function left by a Go panic has no `OnExit`.
   seen in one environment and is not related to this change. It is not touched
   here; if it stops `go test ./...`, run
   `go test -skip TestUnpackErrorBadType ./...`.
+* The `Span` of some nodes of `syntax` (upstream's) ends at the position of the
+  closing bracket, not after it, unlike `ParenExpr`, `CallExpr` and the rest,
+  whose `Span` end is the position after the last character. Probed on
+  `a[1]` (`IndexExpr`: end column 4, the `]` is at 4, after it is 5), `a[1:2]`
+  (`SliceExpr`: end column 6, after it is 7) and `()` (the `TupleExpr` with
+  `Lparen` set, which the parser makes only for the empty tuple: end column 2,
+  after it is 3). A non-empty tuple in parentheses is a `ParenExpr` around a
+  `TupleExpr` without `Lparen`: `(a, b)` is a `ParenExpr` ending after the `)`
+  (correct), its inner `TupleExpr` runs from `a` to after `b`; `(a,)` is a
+  `ParenExpr` ending after the `)` (correct), its inner `TupleExpr` ends after
+  `a`, the trailing comma not included. `ParenExpr` itself is right: its end is
+  `Rparen.add(")")`. A consumer that needs the end of an index, a slice or an
+  empty tuple adds one column; the fork does not change `syntax`, because
+  `Span` is public API of upstream and the branch table uses only `Start`.
+  (Probe: `ParseExpr` of each source, `Span()` of the root.)
 * `go vet` warns about `starlark/int_posix64.go:69` (upstream's `unsafe.Pointer`).

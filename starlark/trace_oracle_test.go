@@ -313,8 +313,10 @@ func TestTraceOracle(t *testing.T) {
 			src := fmt.Sprintf(tm.src, cond)
 			kwcol := strings.Index(tm.prefix, tm.kw) + 1
 			var got []oracleEvent
+			var static *staticIndex // the static table of the very program that runs
 			tr := &starlark.Tracer{
-				OnBranch: func(_ *starlark.Thread, _ *starlark.Function, b starlark.Branch, tested starlark.Value, taken bool) {
+				OnBranch: func(_ *starlark.Thread, fn *starlark.Function, b starlark.Branch, tested starlark.Value, taken bool) {
+					static.check(t, fn, b)
 					if b.Cond.Line != int32(tm.line) {
 						return
 					}
@@ -330,7 +332,8 @@ func TestTraceOracle(t *testing.T) {
 					}
 					got = append(got, e)
 				},
-				OnCompare: func(_ *starlark.Thread, _ *starlark.Function, b starlark.Branch, op syntax.Token, x, y starlark.Value, result bool) {
+				OnCompare: func(_ *starlark.Thread, fn *starlark.Function, b starlark.Branch, op syntax.Token, x, y starlark.Value, result bool) {
+					static.check(t, fn, b)
 					if b.Cond.Line != int32(tm.line) {
 						return
 					}
@@ -338,10 +341,11 @@ func TestTraceOracle(t *testing.T) {
 						chainCol: 0, kwCol: 0, negated: false, taken: false, chainID: 0, parent: 0})
 				},
 			}
-			thread, globals, err := execTraced(t, src, nil, nil)
+			thread, globals, prog, err := execTracedProgram(t, src)
 			if err != nil {
 				t.Fatalf("%v\n%s", err, src)
 			}
+			static = newStaticIndex(prog)
 			thread.Trace = tr
 			for m := 0; m < 16; m++ {
 				got = got[:0]
