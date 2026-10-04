@@ -45,6 +45,26 @@ package compile
 //	numkwonlyparams	varint
 //	hasvarargs	varint (0 or 1)
 //	haskwargs	varint (0 or 1)
+//	numbranches	varint
+//	branches	[]Branch
+//
+// Branch:                              # the branch table, sorted by pc
+//	pc		varint          # address of the CJMP
+//	kind		varint          # BranchKind: 0=if 1=elif 2=while 3=cond_expr 4=comp_if 5=and 6=or
+//	cond		Position
+//	chain		Position
+//	keyword		Position        # line 0, col 0 = no position
+//	operand		varint          # number in the flat chain, or -1
+//	negated		varint (0 or 1)
+//	chainid		varint          # number of the chain in the function, or -1
+//	parentchain	varint          # chainid of the enclosing chain, or -1
+//	echo		varint (0 or 1) # the CJMP can repeat the test just reported
+//	short		varint          # 0=none 1=a truthy value ends a chain 2=a falsy one does
+//	flip		varint (0 or 1) # the CJMP sees the opposite truth of the tested expression
+//	cmppc		varint          # address of the comparison it tests, or -1
+//
+// Position:
+//	line, col	varint          # the file is the program's
 //
 // Ident:
 //	filename	string
@@ -382,7 +402,7 @@ func (d *decoder) function() *Funcode {
 	hasVarargs := d.int() != 0
 	hasKwargs := d.int() != 0
 	branches := d.branches()
-	return &Funcode{
+	fn := &Funcode{
 		// Prog is filled in later.
 		Pos:             id.Pos,
 		Name:            id.Name,
@@ -399,6 +419,8 @@ func (d *decoder) function() *Funcode {
 		HasKwargs:       hasKwargs,
 		Branches:        branches,
 	}
+	fn.indexBranches()
+	return fn
 }
 
 func (e *encoder) position(p syntax.Position) {
@@ -407,7 +429,8 @@ func (e *encoder) position(p syntax.Position) {
 }
 
 // branches encodes the branch table: the count, then per branch
-// pc, kind, three positions (cond, chain, keyword), operand, negated.
+// pc, kind, three positions (cond, chain, keyword), operand, negated,
+// chainid, parentchain, echo, short, flip, cmppc.
 func (e *encoder) branches(bs []Branch) {
 	e.int(len(bs))
 	for _, b := range bs {
@@ -418,12 +441,22 @@ func (e *encoder) branches(bs []Branch) {
 		e.position(b.Keyword)
 		e.int(b.Operand)
 		e.int(b2i(b.Negated))
+		e.int(b.ChainID)
+		e.int(b.ParentChain)
+		e.int(b2i(b.Echo))
+		e.int(int(b.Short))
+		e.int(b2i(b.Flip))
+		e.int(b.CmpPC)
 	}
 }
 
+// position decodes a Position; line 0 is the zero Position (no position).
 func (d *decoder) position() syntax.Position {
 	line := int32(d.int())
 	col := int32(d.int())
+	if line == 0 && col == 0 {
+		return syntax.Position{}
+	}
 	return syntax.MakePosition(d.filename, line, col)
 }
 
@@ -435,13 +468,19 @@ func (d *decoder) branches() []Branch {
 	bs := make([]Branch, n)
 	for i := range bs {
 		bs[i] = Branch{
-			PC:      uint32(d.int()),
-			Kind:    BranchKind(d.int()),
-			Cond:    d.position(),
-			Chain:   d.position(),
-			Keyword: d.position(),
-			Operand: d.int(),
-			Negated: d.bool(),
+			PC:          uint32(d.int()),
+			Kind:        BranchKind(d.int()),
+			Cond:        d.position(),
+			Chain:       d.position(),
+			Keyword:     d.position(),
+			Operand:     d.int(),
+			Negated:     d.bool(),
+			ChainID:     d.int(),
+			ParentChain: d.int(),
+			Echo:        d.bool(),
+			Short:       ShortCircuit(d.int()),
+			Flip:        d.bool(),
+			CmpPC:       d.int(),
 		}
 	}
 	return bs

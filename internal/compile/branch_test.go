@@ -39,7 +39,8 @@ func function(t *testing.T, prog *Program, name string) *Funcode {
 }
 
 // A wantBranch names expected positions by the source text that starts there
-// (the first occurrence of the text in the line of the condition).
+// (the first occurrence of the text in the line of the condition); keyword ""
+// is the zero Position. id and parent are the ChainID and ParentChain.
 type wantBranch struct {
 	kind    string
 	operand int
@@ -47,25 +48,33 @@ type wantBranch struct {
 	chain   string
 	keyword string
 	neg     bool
+	id      int
+	parent  int
 }
 
 func renderBranch(b Branch) string {
-	s := fmt.Sprintf("%s#%d cond=%d chain=%d kw=%d", b.Kind, b.Operand, b.Cond.Col, b.Chain.Col, b.Keyword.Col)
+	s := fmt.Sprintf("%s#%d cond=%d chain=%d kw=%d id=%d parent=%d", b.Kind, b.Operand, b.Cond.Col, b.Chain.Col, b.Keyword.Col, b.ChainID, b.ParentChain)
 	if b.Negated {
 		s += " neg"
+	}
+	if b.Keyword.IsValid() != (b.Keyword.Col != 0) {
+		s += " BAD-KEYWORD-VALIDITY"
 	}
 	return s
 }
 
 func renderWant(line string, w wantBranch) string {
 	col := func(needle string) int {
+		if needle == "" {
+			return 0
+		}
 		i := strings.Index(line, needle)
 		if i < 0 {
 			panic(fmt.Sprintf("%q not in %q", needle, line))
 		}
 		return i + 1
 	}
-	s := fmt.Sprintf("%s#%d cond=%d chain=%d kw=%d", w.kind, w.operand, col(w.cond), col(w.chain), col(w.keyword))
+	s := fmt.Sprintf("%s#%d cond=%d chain=%d kw=%d id=%d parent=%d", w.kind, w.operand, col(w.cond), col(w.chain), col(w.keyword), w.id, w.parent)
 	if w.neg {
 		s += " neg"
 	}
@@ -74,100 +83,140 @@ func renderWant(line string, w wantBranch) string {
 
 // TestBranchTable checks the table of one condition at a time: the kinds,
 // operand numbers, positions of the condition, of its chain, of the keyword
-// or operator, and Negated.
+// or operator, Negated, and the numbers of the chains.
 func TestBranchTable(t *testing.T) {
 	for _, test := range []struct {
 		cond string
 		want []wantBranch
 	}{
-		{"a", []wantBranch{{"if", -1, "a:", "a:", "if", false}}},
-		{"(a)", []wantBranch{{"if", -1, "(a)", "(a)", "if", false}}},
-		{"((a))", []wantBranch{{"if", -1, "((a))", "((a))", "if", false}}},
-		{"a == b", []wantBranch{{"if", -1, "a ==", "a ==", "if", false}}},
-		{"(a == b)", []wantBranch{{"if", -1, "(a ==", "(a ==", "if", false}}},
-		{"not a", []wantBranch{{"if", -1, "not a", "not a", "if", true}}},
-		{"not not a", []wantBranch{{"if", -1, "not not", "not not", "if", false}}},
-		{"not (a == b)", []wantBranch{{"if", -1, "not (", "not (", "if", true}}},
-		{"a in b", []wantBranch{{"if", -1, "a in", "a in", "if", false}}},
-		{"a not in b", []wantBranch{{"if", -1, "a not", "a not", "if", true}}},
-		{"not a not in b", []wantBranch{{"if", -1, "not a", "not a", "if", false}}},
+		{"a", []wantBranch{{"if", -1, "a:", "a:", "if", false, -1, -1}}},
+		{"(a)", []wantBranch{{"if", -1, "(a)", "(a)", "if", false, -1, -1}}},
+		{"((a))", []wantBranch{{"if", -1, "((a))", "((a))", "if", false, -1, -1}}},
+		{"a == b", []wantBranch{{"if", -1, "a ==", "a ==", "if", false, -1, -1}}},
+		{"(a == b)", []wantBranch{{"if", -1, "(a ==", "(a ==", "if", false, -1, -1}}},
+		{"not a", []wantBranch{{"if", -1, "not a", "not a", "if", true, -1, -1}}},
+		{"not not a", []wantBranch{{"if", -1, "not not", "not not", "if", false, -1, -1}}},
+		{"not (a == b)", []wantBranch{{"if", -1, "not (", "not (", "if", true, -1, -1}}},
+		{"a in b", []wantBranch{{"if", -1, "a in", "a in", "if", false, -1, -1}}},
+		{"a not in b", []wantBranch{{"if", -1, "a not", "a not", "if", true, -1, -1}}},
+		{"not a not in b", []wantBranch{{"if", -1, "not a", "not a", "if", false, -1, -1}}},
 
-		// chains
+		// chains: operand 0 has no operator, the others have the one before them
 		{"a and b and c", []wantBranch{
-			{"and", 0, "a and", "a and", "and b", false},
-			{"and", 1, "b and", "a and", "and b", false},
-			{"and", 2, "c:", "a and", "and c", false},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"and", 1, "b and", "a and", "and b", false, 0, -1},
+			{"and", 2, "c:", "a and", "and c", false, 0, -1},
 		}},
 		{"a or b or c", []wantBranch{
-			{"or", 0, "a or", "a or", "or b", false},
-			{"or", 1, "b or", "a or", "or b", false},
-			{"or", 2, "c:", "a or", "or c", false},
+			{"or", 0, "a or", "a or", "", false, 0, -1},
+			{"or", 1, "b or", "a or", "or b", false, 0, -1},
+			{"or", 2, "c:", "a or", "or c", false, 0, -1},
 		}},
 		{"a and b", []wantBranch{
-			{"and", 0, "a and", "a and", "and b", false},
-			{"and", 1, "b:", "a and", "and b", false},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"and", 1, "b:", "a and", "and b", false, 0, -1},
 		}},
 
 		// mixed and nested chains: the examples that fix the numbering contract
 		{"a and (b or c)", []wantBranch{
-			{"and", 0, "a and", "a and", "and (", false},
-			{"or", 0, "b or", "(b or c)", "or c", false},
-			{"or", 1, "c)", "(b or c)", "or c", false},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"or", 0, "b or", "(b or c)", "", false, 1, 0},
+			{"or", 1, "c)", "(b or c)", "or c", false, 1, 0},
 		}},
 		{"not (a and b)", []wantBranch{
-			{"and", 0, "a and", "(a and b)", "and b", true},
-			{"and", 1, "b)", "(a and b)", "and b", true},
+			{"and", 0, "a and", "(a and b)", "", true, 0, -1},
+			{"and", 1, "b)", "(a and b)", "and b", true, 0, -1},
 		}},
 		{"a or b and c", []wantBranch{
-			{"or", 0, "a or", "a or", "or b", false},
-			{"and", 0, "b and", "b and", "and c", false},
-			{"and", 1, "c:", "b and", "and c", false},
+			{"or", 0, "a or", "a or", "", false, 0, -1},
+			{"and", 0, "b and", "b and", "", false, 1, 0},
+			{"and", 1, "c:", "b and", "and c", false, 1, 0},
 		}},
 		{"a and b or c", []wantBranch{
-			{"and", 0, "a and", "a and", "and b", false},
-			{"and", 1, "b or", "a and", "and b", false},
-			{"or", 1, "c:", "a and", "or c", false},
+			{"and", 0, "a and", "a and", "", false, 1, 0},
+			{"and", 1, "b or", "a and", "and b", false, 1, 0},
+			{"or", 1, "c:", "a and", "or c", false, 0, -1},
 		}},
 		{"(a and b) or (c and d)", []wantBranch{
-			{"and", 0, "a and", "(a and b)", "and b", false},
-			{"and", 1, "b)", "(a and b)", "and b", false},
-			{"and", 0, "c and", "(c and d)", "and d", false},
-			{"and", 1, "d)", "(c and d)", "and d", false},
+			{"and", 0, "a and", "(a and b)", "", false, 1, 0},
+			{"and", 1, "b)", "(a and b)", "and b", false, 1, 0},
+			{"and", 0, "c and", "(c and d)", "", false, 2, 0},
+			{"and", 1, "d)", "(c and d)", "and d", false, 2, 0},
 		}},
 		{"a and (b and c)", []wantBranch{
-			{"and", 0, "a and", "a and", "and (", false},
-			{"and", 0, "b and", "(b and c)", "and c", false},
-			{"and", 1, "c)", "(b and c)", "and c", false},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"and", 0, "b and", "(b and c)", "", false, 1, 0},
+			{"and", 1, "c)", "(b and c)", "and c", false, 1, 0},
 		}},
 		{"((a and b))", []wantBranch{
-			{"and", 0, "a and", "((a and", "and b", false},
-			{"and", 1, "b))", "((a and", "and b", false},
+			{"and", 0, "a and", "((a and", "", false, 0, -1},
+			{"and", 1, "b))", "((a and", "and b", false, 0, -1},
 		}},
 
-		// not inside a chain
+		// two chains of the same kind that start at the same place: (Chain,
+		// Operand) is the same for b and c, ChainID is not
+		{"(a and b) and c", []wantBranch{
+			{"and", 0, "a and", "(a and b)", "", false, 1, 0},
+			{"and", 1, "b)", "(a and b)", "and b", false, 1, 0},
+			{"and", 1, "c:", "(a and b)", "and c", false, 0, -1},
+		}},
+		{"((a and b) and c) and d", []wantBranch{
+			{"and", 0, "a and", "(a and b)", "", false, 2, 1},
+			{"and", 1, "b)", "(a and b)", "and b", false, 2, 1},
+			{"and", 1, "c)", "((a and b)", "and c", false, 1, 0},
+			{"and", 1, "d:", "((a and b)", "and d", false, 0, -1},
+		}},
+
+		// not inside a chain: the same record wherever the not stands
 		{"a and not b", []wantBranch{
-			{"and", 0, "a and", "a and", "and not", false},
-			{"and", 1, "not b", "a and", "and not", true},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"and", 1, "not b", "a and", "and not", true, 0, -1},
 		}},
 		{"not a and b", []wantBranch{
-			{"and", 0, "not a", "not a", "and b", false},
-			{"and", 1, "b:", "not a", "and b", false},
+			{"and", 0, "not a", "not a", "", true, 0, -1},
+			{"and", 1, "b:", "not a", "and b", false, 0, -1},
 		}},
 		{"a and not (b or c)", []wantBranch{
-			{"and", 0, "a and", "a and", "and not", false},
-			{"or", 0, "b or", "(b or c)", "or c", true},
-			{"or", 1, "c)", "(b or c)", "or c", true},
+			{"and", 0, "a and", "a and", "", false, 0, -1},
+			{"or", 0, "b or", "(b or c)", "", true, 1, 0},
+			{"or", 1, "c)", "(b or c)", "or c", true, 1, 0},
 		}},
 		{"not (a and not b)", []wantBranch{
-			{"and", 0, "a and", "(a and", "and not", true},
-			{"and", 1, "not b", "(a and", "and not", true}, // "not b" is a value inside the parentheses
+			{"and", 0, "a and", "(a and", "", true, 0, -1},
+			{"and", 1, "not b", "(a and", "and not", false, 0, -1}, // two nots
 		}},
 
-		// comparisons as operands
+		// a chain under a not that the compiler does not take off
+		{"not (a and b) and c", []wantBranch{
+			{"and", 0, "a and", "(a and b)", "", true, 1, 0},
+			{"and", 1, "b)", "(a and b)", "and b", true, 1, 0},
+			{"and", 1, "c:", "not (a", "and c", false, 0, -1},
+		}},
+		{"(a and not (b and c))", []wantBranch{
+			{"and", 0, "a and", "(a and", "", false, 0, -1},
+			{"and", 0, "b and", "(b and c)", "", true, 1, 0},
+			{"and", 1, "c)", "(b and c)", "and c", true, 1, 0},
+		}},
+		{"(not a or not (b and c))", []wantBranch{
+			{"or", 0, "not a", "(not a", "", true, 0, -1},
+			{"and", 0, "b and", "(b and c)", "", true, 1, 0},
+			{"and", 1, "c)", "(b and c)", "and c", true, 1, 0},
+		}},
+		{"not (not (a and b))", []wantBranch{
+			{"and", 0, "a and", "(a and b)", "", false, 0, -1},
+			{"and", 1, "b)", "(a and b)", "and b", false, 0, -1},
+		}},
+		{"not not (a and b) and not not c", []wantBranch{
+			{"and", 0, "a and", "(a and b)", "", false, 1, 0},
+			{"and", 1, "b)", "(a and b)", "and b", false, 1, 0},
+			{"and", 1, "not not c", "not not (", "and not not", false, 0, -1},
+		}},
+
+		// comparisons as operands; "not in" counts wherever it stands
 		{"a == 1 and b not in c or d in e", []wantBranch{
-			{"and", 0, "a ==", "a ==", "and b", false},
-			{"and", 1, "b not", "a ==", "and b", false}, // compiled as a value: no swap
-			{"or", 1, "d in", "a ==", "or d", false},
+			{"and", 0, "a ==", "a ==", "", false, 1, 0},
+			{"and", 1, "b not", "a ==", "and b", true, 1, 0},
+			{"or", 1, "d in", "a ==", "or d", false, 0, -1},
 		}},
 	} {
 		src := "def f(a, b, c, d, e):\n    if " + test.cond + ":\n        pass\n"
@@ -225,8 +274,8 @@ func TestBranchKinds(t *testing.T) {
 	got := map[key]string{}
 	for _, b := range function(t, compileSrc(t, src), "f").Branches {
 		got[key{int(b.Keyword.Line), int(b.Keyword.Col)}] = b.Kind.String()
-		if b.Operand != -1 || b.Chain != b.Cond {
-			t.Errorf("%v: simple condition has Operand %d, Chain %v, Cond %v", b.Kind, b.Operand, b.Chain, b.Cond)
+		if b.Operand != -1 || b.Chain != b.Cond || b.ChainID != -1 || b.ParentChain != -1 {
+			t.Errorf("%v: simple condition has Operand %d, Chain %v, Cond %v, ChainID %d, ParentChain %d", b.Kind, b.Operand, b.Chain, b.Cond, b.ChainID, b.ParentChain)
 		}
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {

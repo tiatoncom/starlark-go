@@ -41,44 +41,100 @@ func (k BranchKind) String() string {
 // Keyword is the position of its keyword (if, elif, while, the "if" of a
 // conditional expression or of a comprehension clause), and Cond is
 // syntax.Start of the very node the compiler hands to ifelse, parentheses
-// and a leading "not" included.
+// and a leading "not" included. ChainID and ParentChain are -1.
 //
 // A condition that is an and/or chain has one Branch per operand that is
-// evaluated by a CJMP of its own. The chain is flat: "a and b and c" has the
+// tested by a CJMP of its own. The chain is flat: "a and b and c" has the
 // operands a, b, c (numbered from 0, left to right) although the tree is left
 // associative. Kind is BranchAnd or BranchOr, Operand is the operand's number,
-// Cond is syntax.Start of the operand, Chain is syntax.Start of the whole
-// chain and Keyword is the position of the operator that joins the operand
-// to the previous one (the first operator for operand 0).
+// Cond is syntax.Start of the operand (its own "not" included), Chain is
+// syntax.Start of the whole chain, and Keyword is the position of the
+// "and" / "or" that joins the operand to the previous one. Operand 0 has no
+// such operator: its Keyword is the zero Position (IsValid reports false).
+// The keyword of the construct (if, while ...) belongs to the Branch of the
+// construct itself and is not repeated on the operands.
 //
 // A chain of the other operator, or a chain in parentheses, standing as an
 // operand is a chain of its own: operands numbered from 0, its own Chain.
 // Chain is the start of the inner expression as it stands as an operand,
-// parentheses included, i.e. the Cond of the operand of the outer chain. In
-// the outer chain such an inner chain is one operand and has no Branch of its
-// own: its outcome is told by the Branches of the inner chain, the one of its
-// last operand being the test that the outer chain makes. Under "not" the
-// chain starts at the expression after the "not" (parentheses included).
-// Examples:
+// parentheses included, i.e. the Cond of the operand of the outer chain, and
+// after a "not" it is the expression after the "not" (parentheses included).
+// In the outer chain such an inner chain is one operand and has no Branch of
+// its own: its outcome is told by the Branches of the inner chain, the one of
+// its last operand being the test that the outer chain makes. Examples:
 //
 //	a and (b or c)  and: a#0, "(b or c)"#1 (no Branch); or (Chain "("): b#0, c#1
 //	not (a and b)   and (Chain "(", Negated): a#0, b#1
 //	a or b and c    or: a#0, "b and c"#1 (no Branch); and (Chain "b"): b#0, c#1
 //
+// Parentheses and "not" are looked through wherever they stand: the Branches
+// of "not (a and b) and c", of "(not (a and b)) and c" and of
+// "not not not (a and b) and c" are the same but for their positions.
+//
+// ChainID numbers the chains of the Funcode in the order in which they start
+// in the source (a pre-order walk of the syntax tree, an outer chain before
+// the chain that starts at the same place inside it), from 0; ParentChain is
+// the ChainID of the chain in which this Branch's chain stands as an operand,
+// or -1. (Chain, Operand) alone does not tell the operands of two chains that
+// start at the same place: "(a and b) and c" has two chains with the same
+// Kind and Chain.
+//
 // The operands of and/or outside a condition (x = a and b) have no Branch.
 //
-// Negated is true when an odd number of "not" / "not in" swaps lies between
-// the construct and the CJMP: the jump is then taken to the side that the
-// source reads as false. The CJMP jumps when the tested value is true.
+// Negated is true when an odd number of "not" / "not in" lies between the
+// construct and the tested expression, wherever the "not" stands (swapped by
+// the compiler or evaluated as a value), i.e. when the source reads the jump
+// as taking the false side. The hook is given the truth of the expression
+// itself: taken = tested.Truth(), and the side of the condition that the
+// source follows is taken XOR Negated. The machine may see the tested value
+// after one "not"; Flip says so and the interpreter undoes it (see below).
+//
+// Echo, Short, Flip and CmpPC are for the interpreter, which reads them
+// instead of looking at the code:
+//
+//   - Echo: the CJMP tests the value of a chain that was compiled as a value
+//     (the instruction after its operands' tests). When a chain is
+//     short-circuited its operand's CJMP has just reported the very value
+//     this CJMP tests again; the interpreter calls no hook for it then. When
+//     the last operand of the chain was evaluated, the CJMP is that
+//     operand's only test and is reported.
+//   - Short: the CJMP tests an operand that was duplicated (DUP) because its
+//     chain is compiled as a value; the outcome that short-circuits the chain
+//     (a truthy value for "or", a falsy one for "and") makes the next CJMP an
+//     echo.
+//   - Flip: an odd number of value-compiled "not" lies between the tested
+//     expression and the jump, so the jump sees the opposite truth. The
+//     hooks get the truth of the expression, and, as the value of the
+//     expression is gone, tested is Bool(taken).
+//   - CmpPC: the address of the comparison (==, !=, <, <=, >, >=, in; "not
+//     in" is an "in") whose result this CJMP tests, or -1. The interpreter
+//     asks BranchForCompare after a comparison.
 type Branch struct {
-	PC      uint32 // address of the CJMP instruction
-	Kind    BranchKind
-	Cond    syntax.Position
-	Chain   syntax.Position
-	Keyword syntax.Position
-	Operand int // number in the flat chain, or -1
-	Negated bool
+	PC          uint32 // address of the CJMP instruction
+	Kind        BranchKind
+	Cond        syntax.Position
+	Chain       syntax.Position
+	Keyword     syntax.Position
+	Operand     int // number in the flat chain, or -1
+	Negated     bool
+	ChainID     int // number of the chain in the Funcode, or -1
+	ParentChain int // ChainID of the enclosing chain, or -1
+
+	Echo  bool
+	Short ShortCircuit
+	Flip  bool
+	CmpPC int // address of the comparison this CJMP tests, or -1
 }
+
+// A ShortCircuit says which value of a duplicated operand short-circuits
+// the chain that is compiled as a value.
+type ShortCircuit uint8
+
+const (
+	ShortNone   ShortCircuit = iota // not such an operand
+	ShortTruthy                     // "or": a truthy value ends the chain
+	ShortFalsy                      // "and": a falsy value ends the chain
+)
 
 // BranchAt returns the Branch of the CJMP at pc, if there is one.
 func (fn *Funcode) BranchAt(pc uint32) (*Branch, bool) {
@@ -89,30 +145,76 @@ func (fn *Funcode) BranchAt(pc uint32) (*Branch, bool) {
 	return nil, false
 }
 
+// BranchForCompare returns the Branch whose CJMP tests the result of the
+// comparison at pc, if there is one.
+func (fn *Funcode) BranchForCompare(pc uint32) (*Branch, bool) {
+	idx := fn.cmpIndex
+	i := sort.Search(len(idx), func(i int) bool { return idx[i].cmp >= pc })
+	if i < len(idx) && idx[i].cmp == pc {
+		return &fn.Branches[idx[i].branch], true
+	}
+	return nil, false
+}
+
+// A cmpRef is an entry of the index of Funcode.Branches by CmpPC.
+type cmpRef struct {
+	cmp    uint32 // CmpPC
+	branch int    // index in Branches
+}
+
+// indexBranches builds the index by CmpPC from Branches. The compiler and
+// the decoder call it once the table is complete.
+func (fn *Funcode) indexBranches() {
+	fn.cmpIndex = nil
+	for i, b := range fn.Branches {
+		if b.CmpPC >= 0 {
+			fn.cmpIndex = append(fn.cmpIndex, cmpRef{uint32(b.CmpPC), i})
+		}
+	}
+	sort.Slice(fn.cmpIndex, func(i, j int) bool { return fn.cmpIndex[i].cmp < fn.cmpIndex[j].cmp })
+}
+
 // branchState is the part of fcomp that builds the branch table.
 type branchState struct {
-	cond    *condState      // the condition being compiled by ifelse, or nil
-	elifAt  syntax.Position // ElsePos of the IfStmt whose else block is being compiled
-	table   []Branch        // branches of the instructions emitted so far; insn.br is index+1
-	pending uint32          // index+1 in table for the CJMP emitted next, or 0
+	cond    *condState        // the condition being compiled by ifelse, or nil
+	elifAt  syntax.Position   // ElsePos of the IfStmt whose else block is being compiled
+	table   []Branch          // branches of the instructions emitted so far; insn.br is index+1
+	pending uint32            // index+1 in table for the CJMP emitted next, or 0
+	chains  []chainInfo       // the chains met so far; Branch.ChainID is an index until the end
+	cmp     cmpMark           // the last comparison compiled under a condition
+	cmpAt   map[uint32]uint32 // table index+1 -> address of the comparison that feeds it
+	emitted []uint32          // table index+1 of each entry of fn.Branches
+}
+
+type chainInfo struct {
+	start syntax.Position
+	depth int // number of chains around this one
+}
+
+// A cmpMark remembers where the last comparison was emitted: the operands
+// x, y identify its expression (the copy of "not in" that ifelse makes keeps
+// them), blk and idx its instruction.
+type cmpMark struct {
+	x, y syntax.Expr
+	blk  *block
+	idx  int
 }
 
 // A condState knows which expressions of one condition are the operands
 // (or the whole) tested by a CJMP.
 type condState struct {
 	leaves []leaf
-	neg    bool // parity of "not" / "not in" swaps of ifelse at this point
 }
 
 type leaf struct {
-	key syntax.Expr // the expression whose value a CJMP tests
+	key syntax.Expr // the expression whose value a CJMP tests, without "not" and parentheses
 	br  Branch
 }
 
 // ifelseAt is ifelse for a condition that the table describes.
 func (fcomp *fcomp) ifelseAt(kind BranchKind, keyword syntax.Position, cond syntax.Expr, t, f *block) {
 	saved := fcomp.cond
-	fcomp.cond = newCondState(kind, keyword, cond)
+	fcomp.cond = fcomp.newCondState(kind, keyword, cond)
 	fcomp.ifelse(cond, t, f)
 	fcomp.cond = saved
 }
@@ -125,32 +227,94 @@ func (fcomp *fcomp) ifKind(stmt *syntax.IfStmt) BranchKind {
 	return BranchIf
 }
 
-// negate records that ifelse swaps its successors (for "not", "not in").
-func (fcomp *fcomp) negate() {
-	if fcomp.cond != nil {
-		fcomp.cond.neg = !fcomp.cond.neg
+// markCond notes that the CJMP emitted next tests the value of v.
+func (fcomp *fcomp) markCond(v syntax.Expr) { fcomp.mark(v, false, ShortNone) }
+
+// markCondNot is markCond for the "x not in y" that ifelse swaps: the CJMP
+// tests the result of "x in y".
+func (fcomp *fcomp) markCondNot(v syntax.Expr) { fcomp.mark(v, true, ShortNone) }
+
+// markCondDup is markCond for the operand of the chain "x op y" that is
+// compiled as a value: the CJMP follows a DUP.
+func (fcomp *fcomp) markCondDup(v syntax.Expr, op syntax.Token) {
+	short := ShortFalsy
+	if op == syntax.OR {
+		short = ShortTruthy
 	}
+	fcomp.mark(v, false, short)
 }
 
-// markCond notes that the CJMP emitted next tests the value of v.
-func (fcomp *fcomp) markCond(v syntax.Expr) {
+// mark looks through what the compiler evaluates for v to the expression
+// the CJMP really tests, and counts the "not" instructions on the way (Flip).
+// swapped says that ifelse swapped the successors for a top-level "not in" v:
+// the jump sees the result of "in".
+func (fcomp *fcomp) mark(v syntax.Expr, swapped bool, short ShortCircuit) {
 	cs := fcomp.cond
 	if cs == nil {
 		return
 	}
-	if br := cs.find(v); br != nil {
-		b := *br
-		b.Negated = cs.neg
-		fcomp.table = append(fcomp.table, b)
-		fcomp.pending = uint32(len(fcomp.table))
+	var flip, echo bool
+	key := v
+walk:
+	for first := true; ; first = false {
+		switch x := key.(type) {
+		case *syntax.ParenExpr:
+			key = x.X
+		case *syntax.UnaryExpr:
+			if x.Op != syntax.NOT {
+				break walk
+			}
+			flip = !flip
+			key = x.X
+		case *syntax.BinaryExpr:
+			switch x.Op {
+			case syntax.AND, syntax.OR:
+				// evaluated as a value: the value of its last operand,
+				// possibly the value of an earlier one that short-circuited
+				echo = true
+				key = x.Y
+				continue
+			case syntax.NOT_IN:
+				if !(first && swapped) {
+					flip = !flip
+				}
+			}
+			break walk
+		default:
+			break walk
+		}
+	}
+	br := cs.find(key)
+	if br == nil {
+		return
+	}
+	b := *br
+	b.Flip = flip
+	b.Echo = echo
+	b.Short = short
+	fcomp.table = append(fcomp.table, b)
+	fcomp.pending = uint32(len(fcomp.table))
+	if bin, ok := key.(*syntax.BinaryExpr); ok && isComparison(bin.Op) {
+		if m := fcomp.cmp; m.blk != nil && m.x == bin.X && m.y == bin.Y {
+			m.blk.insns[m.idx].cmp = fcomp.pending
+		}
 	}
 }
 
-// markCondNot is markCond for a test whose successors are swapped ("not in").
-func (fcomp *fcomp) markCondNot(v syntax.Expr) {
-	fcomp.negate()
-	fcomp.markCond(v)
-	fcomp.negate()
+func isComparison(op syntax.Token) bool {
+	switch op {
+	case syntax.EQL, syntax.NEQ, syntax.LT, syntax.LE, syntax.GT, syntax.GE, syntax.IN, syntax.NOT_IN:
+		return true
+	}
+	return false
+}
+
+// noteCompare remembers the comparison e, whose instruction is the next one
+// emitted to the current block.
+func (fcomp *fcomp) noteCompare(e *syntax.BinaryExpr) {
+	if fcomp.cond != nil && isComparison(e.Op) {
+		fcomp.cmp = cmpMark{e.X, e.Y, fcomp.block, len(fcomp.block.insns)}
+	}
 }
 
 // attachBranch gives the CJMP just emitted its pending branch.
@@ -162,53 +326,115 @@ func (fcomp *fcomp) attachBranch() {
 	}
 }
 
+// noteCompareAddr is called by generate for the instruction at pc.
+func (fcomp *fcomp) noteCompareAddr(br uint32, pc uint32) {
+	if fcomp.cmpAt == nil {
+		fcomp.cmpAt = make(map[uint32]uint32)
+	}
+	fcomp.cmpAt[br] = pc
+}
+
 // recordBranch adds the branch of the instruction at pc to the table of fn.
 // Instructions are generated in address order, so the table stays sorted.
 func (fcomp *fcomp) recordBranch(br uint32, pc uint32) {
 	b := fcomp.table[br-1]
 	b.PC = pc
 	fcomp.fn.Branches = append(fcomp.fn.Branches, b)
+	fcomp.emitted = append(fcomp.emitted, br)
 }
 
-func newCondState(kind BranchKind, keyword syntax.Position, cond syntax.Expr) *condState {
-	cs := new(condState)
-	stripped := cond
-	for {
-		u, ok := stripped.(*syntax.UnaryExpr)
-		if !ok || u.Op != syntax.NOT {
-			break
+// finishBranches gives each branch the address of its comparison (the block
+// of the comparison can be laid out after the block of the jump), numbers the
+// chains of the function by where they start in the source and builds the
+// index by CmpPC. Chains are met in the order in
+// which the compiler visits the conditions, which is not the order of the
+// source when a conditional expression has conditions of its own in its
+// branches.
+func (fcomp *fcomp) finishBranches() {
+	fn := fcomp.fn
+	for i := range fn.Branches {
+		if cmp, ok := fcomp.cmpAt[fcomp.emitted[i]]; ok {
+			fn.Branches[i].CmpPC = int(cmp)
 		}
-		stripped = u.X
 	}
-	if chain := chainOf(stripped); chain != nil {
-		cs.chain(stripped, chain, syntax.Expr(chain) == stripped)
+	order := make([]int, len(fcomp.chains))
+	for i := range order {
+		order[i] = i
+	}
+	sort.Slice(order, func(i, j int) bool {
+		a, b := fcomp.chains[order[i]], fcomp.chains[order[j]]
+		if a.start.Line != b.start.Line {
+			return a.start.Line < b.start.Line
+		}
+		if a.start.Col != b.start.Col {
+			return a.start.Col < b.start.Col
+		}
+		return a.depth < b.depth
+	})
+	number := make([]int, len(order))
+	for rank, id := range order {
+		number[id] = rank
+	}
+	for i := range fn.Branches {
+		b := &fn.Branches[i]
+		if b.ChainID >= 0 {
+			b.ChainID = number[b.ChainID]
+		}
+		if b.ParentChain >= 0 {
+			b.ParentChain = number[b.ParentChain]
+		}
+	}
+	fn.indexBranches()
+}
+
+func (fcomp *fcomp) newCondState(kind BranchKind, keyword syntax.Position, cond syntax.Expr) *condState {
+	cs := new(condState)
+	inner, stands, neg := peel(cond)
+	if chain, ok := inner.(*syntax.BinaryExpr); ok && isChainOp(chain.Op) {
+		cs.chain(fcomp, stands, chain, neg, -1, 0)
 	} else {
 		start := syntax.Start(cond)
-		cs.leaves = append(cs.leaves, leaf{stripped, Branch{Kind: kind, Cond: start, Chain: start, Keyword: keyword, Operand: -1}})
+		cs.leaves = append(cs.leaves, leaf{inner, Branch{
+			Kind: kind, Cond: start, Chain: start, Keyword: keyword,
+			Operand: -1, Negated: neg != isNotIn(inner), ChainID: -1, ParentChain: -1, CmpPC: -1,
+		}})
 	}
 	return cs
 }
 
-// chainOf returns e, with parentheses peeled, if it is an and/or expression.
-func chainOf(e syntax.Expr) *syntax.BinaryExpr {
+func isChainOp(op syntax.Token) bool { return op == syntax.AND || op == syntax.OR }
+
+func isNotIn(e syntax.Expr) bool {
+	b, ok := e.(*syntax.BinaryExpr)
+	return ok && b.Op == syntax.NOT_IN
+}
+
+// peel strips parentheses and "not" off e. It returns the expression left,
+// the expression as it stands after the last "not" (e itself if there is
+// none), parentheses included, and whether the "not" are odd in number.
+func peel(e syntax.Expr) (inner, stands syntax.Expr, odd bool) {
+	stands = e
 	for {
 		switch x := e.(type) {
 		case *syntax.ParenExpr:
 			e = x.X
 			continue
-		case *syntax.BinaryExpr:
-			if x.Op == syntax.AND || x.Op == syntax.OR {
-				return x
+		case *syntax.UnaryExpr:
+			if x.Op == syntax.NOT {
+				e = x.X
+				stands = x.X
+				odd = !odd
+				continue
 			}
 		}
-		return nil
+		return e, stands, odd
 	}
 }
 
-// chain registers the operands of the chain e, which stands as asStands.
-// ifelseLevel says whether ifelse itself recurses into the last operand
-// (it does not for a chain in parentheses: that is compiled as a value).
-func (cs *condState) chain(asStands syntax.Expr, e *syntax.BinaryExpr, ifelseLevel bool) {
+// chain registers the operands of the chain e, which stands as asStands
+// under an odd number of "not" if neg, inside the chain parent (-1 for none)
+// that is depth chains deep.
+func (cs *condState) chain(fcomp *fcomp, asStands syntax.Expr, e *syntax.BinaryExpr, neg bool, parent, depth int) {
 	// Flatten the left spine of one operator: ((a and b) and c).
 	var operands []syntax.Expr
 	var opPos []syntax.Position
@@ -220,7 +446,6 @@ func (cs *condState) chain(asStands syntax.Expr, e *syntax.BinaryExpr, ifelseLev
 			continue
 		}
 		operands = append(operands, x.X)
-		opPos = append(opPos, x.OpPos)
 		break
 	}
 	n := len(operands)
@@ -229,47 +454,34 @@ func (cs *condState) chain(asStands syntax.Expr, e *syntax.BinaryExpr, ifelseLev
 	if e.Op == syntax.OR {
 		kind = BranchOr
 	}
+	id := len(fcomp.chains)
+	fcomp.chains = append(fcomp.chains, chainInfo{start, depth})
 	for i := 0; i < n; i++ {
-		// operands and opPos are in reverse order
-		o, pos := operands[n-1-i], opPos[n-1-i]
-		last := ifelseLevel && i == n-1
-		key := o
-		if last { // ifelse strips "not" off the last operand
-			for {
-				u, ok := key.(*syntax.UnaryExpr)
-				if !ok || u.Op != syntax.NOT {
-					break
-				}
-				key = u.X
-			}
+		// operands and opPos are in reverse order; operand 0 has no operator
+		o := operands[n-1-i]
+		var keyword syntax.Position
+		if i > 0 {
+			keyword = opPos[n-1-i]
 		}
-		if inner := chainOf(key); inner != nil {
-			cs.chain(key, inner, last && syntax.Expr(inner) == key)
+		inner, stands, odd := peel(o)
+		odd = odd != neg
+		if c, ok := inner.(*syntax.BinaryExpr); ok && isChainOp(c.Op) {
+			cs.chain(fcomp, stands, c, odd, id, depth+1)
 			continue
 		}
-		cs.leaves = append(cs.leaves, leaf{key, Branch{Kind: kind, Cond: syntax.Start(o), Chain: start, Keyword: pos, Operand: i}})
+		cs.leaves = append(cs.leaves, leaf{inner, Branch{
+			Kind: kind, Cond: syntax.Start(o), Chain: start, Keyword: keyword,
+			Operand: i, Negated: odd != isNotIn(inner), ChainID: id, ParentChain: parent, CmpPC: -1,
+		}})
 	}
 }
 
-// find returns the branch of the CJMP that tests the value of v: v itself
-// if it is an operand, else the last operand of the chain that v evaluates to.
-func (cs *condState) find(v syntax.Expr) *Branch {
-	for {
-		for i := range cs.leaves {
-			if cs.leaves[i].key == v {
-				return &cs.leaves[i].br
-			}
-		}
-		switch x := v.(type) {
-		case *syntax.ParenExpr:
-			v = x.X
-		case *syntax.BinaryExpr:
-			if x.Op != syntax.AND && x.Op != syntax.OR {
-				return nil
-			}
-			v = x.Y
-		default:
-			return nil
+// find returns the branch of the leaf key.
+func (cs *condState) find(key syntax.Expr) *Branch {
+	for i := range cs.leaves {
+		if cs.leaves[i].key == key {
+			return &cs.leaves[i].br
 		}
 	}
+	return nil
 }

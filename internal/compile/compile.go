@@ -334,6 +334,7 @@ type Funcode struct {
 	Code                  []byte          // the byte code
 	pclinetab             []uint16        // mapping from pc to linenum
 	Branches              []Branch        // conditional jumps with their source conditions, sorted by PC
+	cmpIndex              []cmpRef        // Branches with a CmpPC, sorted by CmpPC
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells
 	FreeVars              []Binding       // for tracing
@@ -405,6 +406,7 @@ type insn struct {
 	arg       uint32
 	line, col int32
 	br        uint32 // CJMP only: index+1 in fcomp.table, or 0
+	cmp       uint32 // comparison only: index+1 in fcomp.table of the CJMP that tests its result, or 0
 }
 
 // Position returns the source position for program counter pc.
@@ -670,6 +672,7 @@ func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.St
 		fmt.Fprintf(os.Stderr, "Function %s: (%d blocks, %d bytes)\n", name, len(blocks), pc)
 	}
 	fcomp.generate(blocks, pc)
+	fcomp.finishBranches()
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "code=%d maxstack=%d\n", fn.Code, fn.MaxStack)
@@ -797,6 +800,9 @@ func (fcomp *fcomp) generate(blocks []*block, codelen uint32) {
 			}
 			if insn.br != 0 {
 				fcomp.recordBranch(insn.br, pc)
+			}
+			if insn.cmp != 0 {
+				fcomp.noteCompareAddr(insn.cmp, pc)
 			}
 			code = append(code, byte(insn.op))
 			pc++
@@ -1415,7 +1421,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
-			fcomp.markCond(e.X)
+			fcomp.markCondDup(e.X, syntax.OR)
 			fcomp.condjump(CJMP, done, y)
 
 			fcomp.block = y
@@ -1432,7 +1438,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
-			fcomp.markCond(e.X)
+			fcomp.markCondDup(e.X, syntax.AND)
 			fcomp.condjump(CJMP, y, done)
 
 			fcomp.block = y
@@ -1449,6 +1455,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 			// all other strict binary operator (includes comparisons)
 			fcomp.expr(e.X)
 			fcomp.expr(e.Y)
+			fcomp.noteCompare(e)
 			fcomp.binop(e.OpPos, e.Op)
 		}
 
@@ -1891,9 +1898,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if not x then goto t else goto f
 			//    =>
 			// if x then goto f else goto t
-			fcomp.negate()
 			fcomp.ifelse(cond.X, f, t)
-			fcomp.negate()
 			return
 		}
 

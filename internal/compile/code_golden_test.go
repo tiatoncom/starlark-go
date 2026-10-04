@@ -107,3 +107,35 @@ func TestCodeBytesGolden(t *testing.T) {
 		t.Fatalf("Funcode.Code golden has %d lines, the compiler produced %d", len(wl), len(gl))
 	}
 }
+
+// TestCodeBytesGoldenNot pins the bytes of the functions of
+// testdata/branches_not.star (a "not" or a chain that is evaluated as a value,
+// comparisons at every place of a chain) to what the v0.2.0 compiler produced.
+// The golden was made by running the same sample through a checkout of v0.2.0;
+// it is never rewritten by this tree.
+func TestCodeBytesGoldenNot(t *testing.T) {
+	var buf bytes.Buffer
+	progs := compileChunks(t, "testdata/branches_not.star")
+	keys := make([]string, 0, len(progs))
+	for k := range progs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		prog := progs[k]
+		fmt.Fprintf(&buf, "%s toplevel %s\n", k, hex.EncodeToString(prog.Toplevel.Code))
+		for i, fn := range prog.Functions {
+			fmt.Fprintf(&buf, "%s fn%d %s %s\n", k, i, fn.Name, hex.EncodeToString(fn.Code))
+		}
+	}
+	want, err := os.ReadFile("testdata/code_v020_not.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != string(want) {
+		t.Errorf("Funcode.Code of branches_not.star differs from the v0.2.0 golden:\n got %.300s\nwant %.300s", got, want)
+	}
+	if len(progs) == 0 {
+		t.Error("no sample compiled")
+	}
+}
