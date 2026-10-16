@@ -13,10 +13,14 @@ package starlark_test
 // stops being a difference, or whose text moves, is red.
 
 import (
+	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"strings"
 	"testing"
+
+	"go.starlark.net/starlark"
 )
 
 const goldenCompat = "testdata/diff_compat_v020.golden"
@@ -48,6 +52,33 @@ type compatCase struct {
 func compatCases() []compatCase {
 	var cs []compatCase
 	cs = append(cs, errTextCompatCases()...)
+	cs = append(cs, digitsCompatCases()...)
+	return cs
+}
+
+// digitsCompatCases are the integers of more than MaxIntDigits decimal digits
+// that are converted to and from a string: v0.2.0 converted them (in time
+// quadratic in the digits: a few steps for seconds of CPU), this version refuses
+// the conversion with an error. (An integer longer than the bound is still an
+// integer: it is computed with, compared and hashed.)
+func digitsCompatCases() []compatCase {
+	var cs []compatCase
+	nines := func(n int) string { return strings.Repeat("9", n) }
+	// the refusal is an error of the call: the default of json.decode is not
+	// returned for it (B5: it was returned silently by an earlier state of
+	// this version)
+	jsonErr := "json.decode: number has more than 4300 digits"
+	for _, c := range []struct{ id, arg, def, want string }{
+		{"json.decode: an integer of 5000 digits", "'" + nines(5000) + "'", "", "int:" + nines(5000)},
+		{"json.decode: a negative integer of 5000 digits", "'-" + nines(5000) + "'", "", "int:-" + nines(5000)},
+		{"json.decode: an integer of 5000 digits in a list", "'[" + nines(5000) + ", 1]'", "", "list:[" + nines(5000) + ", 1]"},
+		{"json.decode: an integer of 5000 digits in an object", "'{\"a\": " + nines(5000) + "}'", "", "dict:{\"a\": " + nines(5000) + "}"},
+		{"json.decode: an integer of 5000 digits, with a default", "'" + nines(5000) + "'", ", default=7", "int:" + nines(5000)},
+		{"json.decode: an integer of 4301 digits, with a default", "'" + nines(4301) + "'", ", default=None", "int:" + nines(4301)},
+	} {
+		cs = append(cs, compatCase{ID: c.id, Src: "result = json.decode(" + c.arg + c.def + ")\n",
+			V020: compatOutcome{"ok", c.want}, Now: compatOutcome{"error", jsonErr}, Bound: boundDigits, StepsDiffer: true})
+	}
 	return cs
 }
 
@@ -82,6 +113,29 @@ func errTextCompatCases() []compatCase {
 		}
 		cs = append(cs, c)
 	}
+	// the string forms of an integer of 12000 digits (y = (10**4000 - 1) ** 3)
+	pre := "x = int('" + nines(4000) + "')\ny = x * x * x\n"
+	x, _ := new(big.Int).SetString(nines(4000), 10)
+	y := new(big.Int).Mul(new(big.Int).Mul(x, x), x)
+	ys := y.String()
+	strErr := "an integer of more than 4300 decimal digits is not converted to a string"
+	for _, c := range []struct{ id, expr, want, err string }{
+		{"str of an integer of 12000 digits", "len(str(y))", fmt.Sprint(len(ys)), "str: " + strErr},
+		{"repr of an integer of 12000 digits", "len(repr(y))", fmt.Sprint(len(ys)), "repr: " + strErr},
+		{"%d of an integer of 12000 digits", "len('%d' % y)", fmt.Sprint(len(ys)), strErr},
+		{"%s of an integer of 12000 digits", "len('%s' % y)", fmt.Sprint(len(ys)), "%: " + strErr},
+		{"format of an integer of 12000 digits", "len('{}'.format(y))", fmt.Sprint(len(ys)), "format: " + strErr},
+		{"str of a list with an integer of 12000 digits", "len(str([y]))", fmt.Sprint(len(ys) + 2), "str: " + strErr},
+		{"json.encode of an integer of 12000 digits", "len(json.encode(y))", fmt.Sprint(len(ys)), "json.encode: " + strErr},
+		{"int of a string of 5000 digits", "int('" + nines(5000) + "') > 0", "", "int: the string has more than 4300 digits: its conversion to an integer is not allowed"},
+	} {
+		want := compatOutcome{"ok", "int:" + c.want}
+		if c.want == "" {
+			want = compatOutcome{"ok", "bool:True"}
+		}
+		cs = append(cs, compatCase{ID: c.id, Src: pre + "result = " + c.expr + "\n",
+			V020: want, Now: compatOutcome{"error", c.err}, Bound: boundDigits, StepsDiffer: true})
+	}
 	return cs
 }
 
@@ -97,6 +151,72 @@ func TestWriteCompatGolden(t *testing.T) {
 		progs = append(progs, c.Src)
 	}
 	writeGolden(t, dir+"/"+goldenCompat, uniq(progs))
+	// the cases of the host
+	var b strings.Builder
+	for _, h := range compatHostCases() {
+		line, _ := json.Marshal(map[string]string{"id": h.ID, "out": h.Run()})
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(dir+"/"+goldenCompatHost, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const goldenCompatHost = "testdata/diff_compat_host_v020.golden"
+
+// A compatHost is a difference that a host sees through the Go API, not a
+// script: what it calls returns Run(), in v0.2.0 and now.
+type compatHost struct {
+	ID    string
+	Run   func() string
+	V020  string
+	Now   string
+	Bound string
+}
+
+// compatHostCases: the string form (Value.String, fmt) of a container that
+// holds an integer of more than MaxIntBits bits. The form of a value is the
+// host's to ask for, with no error to return it in: the integer is shown as its
+// size, "<int of N bits>", where v0.2.0 converted it (the conversion is
+// quadratic in the digits). A script that asks for the same gets the error of
+// the digits cases above.
+func compatHostCases() []compatHost {
+	z := new(big.Int).Exp(big.NewInt(10), big.NewInt(5000), nil) // 5001 digits, 16610 bits
+	zs := z.String()
+	bits := fmt.Sprintf("<int of %d bits>", z.BitLen())
+	n := starlark.MakeBigInt(z)
+	forms := []struct {
+		id string
+		v  func() starlark.Value
+		f  string // the form, with %s the integer
+	}{
+		{"list", func() starlark.Value { return starlark.NewList([]starlark.Value{n, starlark.MakeInt(1)}) }, "[%s, 1]"},
+		{"tuple", func() starlark.Value { return starlark.Tuple{starlark.MakeInt(1), n} }, "(1, %s)"},
+		{"dict", func() starlark.Value {
+			d := starlark.NewDict(1)
+			_ = d.SetKey(starlark.String("k"), n)
+			return d
+		}, `{"k": %s}`},
+		{"set", func() starlark.Value {
+			s := starlark.NewSet(1)
+			_ = s.Insert(n)
+			return s
+		}, "set([%s])"},
+	}
+	var hs []compatHost
+	for _, f := range forms {
+		f := f
+		hs = append(hs, compatHost{
+			ID:   "Value.String() of a " + f.id + " with an integer of 16610 bits",
+			Run:  func() string { return f.v().String() },
+			V020: fmt.Sprintf(f.f, zs),
+			// (the form ends at the integer: what follows it is not written)
+			Now:   strings.SplitN(f.f, "%s", 2)[0] + bits,
+			Bound: boundDigits,
+		})
+	}
+	return hs
 }
 
 // TestCompatibilityDivergencesFromV020: each kept difference from v0.2.0 is
@@ -137,12 +257,43 @@ func TestCompatibilityDivergencesFromV020(t *testing.T) {
 			t.Errorf("%s: prints differ", c.ID)
 		}
 	}
+	// the cases of the host
+	hostGolden := map[string]string{}
+	if data, err := os.ReadFile(goldenCompatHost); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var e map[string]string
+			if err := json.Unmarshal([]byte(line), &e); err != nil {
+				t.Fatal(err)
+			}
+			hostGolden[e["id"]] = e["out"]
+		}
+	}
+	for _, h := range compatHostCases() {
+		if ids[h.ID] {
+			t.Errorf("%s: two cases of one id", h.ID)
+		}
+		ids[h.ID] = true
+		if g, ok := hostGolden[h.ID]; !ok || g != h.V020 {
+			t.Errorf("%s: v0.2.0 gave %.100q (%d bytes), the case says %.100q (%d bytes)", h.ID, g, len(g), h.V020, len(h.V020))
+		}
+		if got := h.Run(); got != h.Now {
+			t.Errorf("%s: now %.100q (%d bytes), the case says %.100q", h.ID, got, len(got), h.Now)
+		}
+		if h.V020 == h.Now || h.Bound == "" {
+			t.Errorf("%s: not a difference, or no bound named", h.ID)
+		}
+	}
 	if len(ids) < 20 {
 		t.Errorf("only %d cases", len(ids))
 	}
 	var b strings.Builder
 	for _, c := range compatCases() {
 		fmt.Fprintf(&b, "\n  %-60s %s", c.ID, c.Bound[:min(len(c.Bound), 60)])
+	}
+	for _, h := range compatHostCases() {
+		fmt.Fprintf(&b, "\n  %-60s %s", h.ID, h.Bound[:min(len(h.Bound), 60)])
 	}
 	t.Logf("the Compatibility list (%d):%s", len(ids), b.String())
 }

@@ -951,10 +951,14 @@ func (x *Dict) Union(y *Dict) *Dict {
 func (x *Dict) unionM(m *meter, y *Dict) (*Dict, error) {
 	z := new(Dict)
 	z.ht.init(x.Len()) // a lower bound
-	if err := z.ht.addAllM(m, &x.ht); err != nil {
+	// Only a refusal of a limit is an error of the union. In v0.2.0 it could not
+	// fail ("can't fail"), and the error of the one thing that can, the equality
+	// of two keys that are tuples nested beyond the depth of a comparison, was
+	// dropped (the keys after it were not added): the union is that of v0.2.0.
+	if err := z.ht.addAllM(m, &x.ht); err != nil && isResourceError(err) {
 		return nil, err
 	}
-	if err := z.ht.addAllM(m, &y.ht); err != nil {
+	if err := z.ht.addAllM(m, &y.ht); err != nil && isResourceError(err) {
 		return nil, err
 	}
 	return z, nil
