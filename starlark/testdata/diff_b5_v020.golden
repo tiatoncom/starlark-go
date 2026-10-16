@@ -4598,7 +4598,6 @@
 {"src":"d = {1: 1}\ne = {1: 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":18}
 {"src":"d = {1: 1}\ne = {2: 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":18}
 {"src":"d = {1: 1}\ne = {1: 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":18}
-{"src":"d = {1: 1}\ne = {1: 1}\nresult = d | e\n","status":"ok","result":"dict:{1: 1}","steps":18}
 {"src":"d = {1: 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":20}
 {"src":"s = set([1])\nt = set([1])\nresult = s == t\n","status":"ok","result":"bool:True","steps":16}
 {"src":"s = set([1])\nt = set([2])\nresult = s == t\n","status":"ok","result":"bool:False","steps":16}
@@ -4619,7 +4618,6 @@
 {"src":"d = {'a': 1}\nresult = d.pop('a')\n","status":"ok","result":"int:1","steps":13}
 {"src":"d = {'a': 1}\ne = {'a': 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":18}
 {"src":"d = {'a': 1}\ne = {2: 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":18}
-{"src":"d = {'a': 1}\ne = {'a': 1}\nresult = d | e\n","status":"ok","result":"dict:{\"a\": 1}","steps":18}
 {"src":"d = {'a': 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":20}
 {"src":"s = set(['a'])\nt = set(['a'])\nresult = s == t\n","status":"ok","result":"bool:True","steps":16}
 {"src":"s = set(['a'])\nt = set([2])\nresult = s == t\n","status":"ok","result":"bool:False","steps":16}
@@ -4642,7 +4640,6 @@
 {"src":"d = {None: 1}\ne = {None: 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":18}
 {"src":"d = {None: 1}\ne = {2: 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":18}
 {"src":"d = {None: 1}\ne = {None: 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":18}
-{"src":"d = {None: 1}\ne = {None: 1}\nresult = d | e\n","status":"ok","result":"dict:{None: 1}","steps":18}
 {"src":"d = {None: 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":20}
 {"src":"s = set([None])\nt = set([None])\nresult = s == t\n","status":"ok","result":"bool:True","steps":16}
 {"src":"s = set([None])\nt = set([2])\nresult = s == t\n","status":"ok","result":"bool:False","steps":16}
@@ -4665,7 +4662,6 @@
 {"src":"d = {(1, 2): 1}\ne = {(1, 2): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {(1, 2): 1}\ne = {2: 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {(1, 2): 1}\ne = {(1, 2): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
-{"src":"d = {(1, 2): 1}\ne = {(1, 2): 1}\nresult = d | e\n","status":"ok","result":"dict:{(1, 2): 1}","steps":22}
 {"src":"d = {(1, 2): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":22}
 {"src":"s = set([(1, 2)])\nt = set([(1, 2)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":20}
 {"src":"s = set([(1, 2)])\nt = set([2])\nresult = s == t\n","status":"ok","result":"bool:False","steps":18}
@@ -4688,7 +4684,6 @@
 {"src":"d = {(1,): 1}\ne = {(1,): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {(1,): 1}\ne = {(2,): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {(1,): 1}\ne = {(1,): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
-{"src":"d = {(1,): 1}\ne = {(1,): 1}\nresult = d | e\n","status":"ok","result":"dict:{(1,): 1}","steps":20}
 {"src":"d = {(1,): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":21}
 {"src":"s = set([(1,)])\nt = set([(1,)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":18}
 {"src":"s = set([(1,)])\nt = set([(2,)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":18}
@@ -4713,7 +4708,6 @@
 {"src":"d = {('a',): 1}\ne = {('a',): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {('a',): 1}\ne = {(2,): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {('a',): 1}\ne = {('a',): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
-{"src":"d = {('a',): 1}\ne = {('a',): 1}\nresult = d | e\n","status":"ok","result":"dict:{(\"a\",): 1}","steps":20}
 {"src":"d = {('a',): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":21}
 {"src":"s = set([('a',)])\nt = set([('a',)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":18}
 {"src":"s = set([('a',)])\nt = set([(2,)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":18}
@@ -4738,7 +4732,6 @@
 {"src":"d = {(None,): 1}\ne = {(None,): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {(None,): 1}\ne = {(2,): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
 {"src":"d = {(None,): 1}\ne = {(None,): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":20}
-{"src":"d = {(None,): 1}\ne = {(None,): 1}\nresult = d | e\n","status":"ok","result":"dict:{(None,): 1}","steps":20}
 {"src":"d = {(None,): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":21}
 {"src":"s = set([(None,)])\nt = set([(None,)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":18}
 {"src":"s = set([(None,)])\nt = set([(2,)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":18}
@@ -4763,7 +4756,6 @@
 {"src":"d = {((1, 2),): 1}\ne = {((1, 2),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {((1, 2),): 1}\ne = {(2,): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {((1, 2),): 1}\ne = {((1, 2),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
-{"src":"d = {((1, 2),): 1}\ne = {((1, 2),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((1, 2),): 1}","steps":24}
 {"src":"d = {((1, 2),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":23}
 {"src":"s = set([((1, 2),)])\nt = set([((1, 2),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":22}
 {"src":"s = set([((1, 2),)])\nt = set([(2,)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":20}
@@ -4788,7 +4780,6 @@
 {"src":"d = {((1,),): 1}\ne = {((1,),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {((1,),): 1}\ne = {((2,),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {((1,),): 1}\ne = {((1,),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
-{"src":"d = {((1,),): 1}\ne = {((1,),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((1,),): 1}","steps":22}
 {"src":"d = {((1,),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":22}
 {"src":"s = set([((1,),)])\nt = set([((1,),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":20}
 {"src":"s = set([((1,),)])\nt = set([((2,),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":20}
@@ -4813,7 +4804,6 @@
 {"src":"d = {(('a',),): 1}\ne = {(('a',),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {(('a',),): 1}\ne = {((2,),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {(('a',),): 1}\ne = {(('a',),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
-{"src":"d = {(('a',),): 1}\ne = {(('a',),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((\"a\",),): 1}","steps":22}
 {"src":"d = {(('a',),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":22}
 {"src":"s = set([(('a',),)])\nt = set([(('a',),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":20}
 {"src":"s = set([(('a',),)])\nt = set([((2,),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":20}
@@ -4838,7 +4828,6 @@
 {"src":"d = {((None,),): 1}\ne = {((None,),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {((None,),): 1}\ne = {((2,),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
 {"src":"d = {((None,),): 1}\ne = {((None,),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":22}
-{"src":"d = {((None,),): 1}\ne = {((None,),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((None,),): 1}","steps":22}
 {"src":"d = {((None,),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":22}
 {"src":"s = set([((None,),)])\nt = set([((None,),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":20}
 {"src":"s = set([((None,),)])\nt = set([((2,),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":20}
@@ -4863,7 +4852,6 @@
 {"src":"d = {(((1, 2),),): 1}\ne = {(((1, 2),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {(((1, 2),),): 1}\ne = {((2,),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {(((1, 2),),): 1}\ne = {(((1, 2),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
-{"src":"d = {(((1, 2),),): 1}\ne = {(((1, 2),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((1, 2),),): 1}","steps":26}
 {"src":"d = {(((1, 2),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":24}
 {"src":"s = set([(((1, 2),),)])\nt = set([(((1, 2),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":24}
 {"src":"s = set([(((1, 2),),)])\nt = set([((2,),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":22}
@@ -4888,7 +4876,6 @@
 {"src":"d = {(((1,),),): 1}\ne = {(((1,),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {(((1,),),): 1}\ne = {(((2,),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {(((1,),),): 1}\ne = {(((1,),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
-{"src":"d = {(((1,),),): 1}\ne = {(((1,),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((1,),),): 1}","steps":24}
 {"src":"d = {(((1,),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":23}
 {"src":"s = set([(((1,),),)])\nt = set([(((1,),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":22}
 {"src":"s = set([(((1,),),)])\nt = set([(((2,),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":22}
@@ -4913,7 +4900,6 @@
 {"src":"d = {((('a',),),): 1}\ne = {((('a',),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {((('a',),),): 1}\ne = {(((2,),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {((('a',),),): 1}\ne = {((('a',),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
-{"src":"d = {((('a',),),): 1}\ne = {((('a',),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((\"a\",),),): 1}","steps":24}
 {"src":"d = {((('a',),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":23}
 {"src":"s = set([((('a',),),)])\nt = set([((('a',),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":22}
 {"src":"s = set([((('a',),),)])\nt = set([(((2,),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":22}
@@ -4938,7 +4924,6 @@
 {"src":"d = {(((None,),),): 1}\ne = {(((None,),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {(((None,),),): 1}\ne = {(((2,),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
 {"src":"d = {(((None,),),): 1}\ne = {(((None,),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":24}
-{"src":"d = {(((None,),),): 1}\ne = {(((None,),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((None,),),): 1}","steps":24}
 {"src":"d = {(((None,),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":23}
 {"src":"s = set([(((None,),),)])\nt = set([(((None,),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":22}
 {"src":"s = set([(((None,),),)])\nt = set([(((2,),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":22}
@@ -4963,7 +4948,6 @@
 {"src":"d = {((((1, 2),),),): 1}\ne = {((((1, 2),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {((((1, 2),),),): 1}\ne = {(((2,),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {((((1, 2),),),): 1}\ne = {((((1, 2),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
-{"src":"d = {((((1, 2),),),): 1}\ne = {((((1, 2),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((1, 2),),),): 1}","steps":28}
 {"src":"d = {((((1, 2),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":25}
 {"src":"s = set([((((1, 2),),),)])\nt = set([((((1, 2),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":26}
 {"src":"s = set([((((1, 2),),),)])\nt = set([(((2,),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":24}
@@ -4988,7 +4972,6 @@
 {"src":"d = {((((1,),),),): 1}\ne = {((((1,),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {((((1,),),),): 1}\ne = {((((2,),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {((((1,),),),): 1}\ne = {((((1,),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
-{"src":"d = {((((1,),),),): 1}\ne = {((((1,),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((1,),),),): 1}","steps":26}
 {"src":"d = {((((1,),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":24}
 {"src":"s = set([((((1,),),),)])\nt = set([((((1,),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":24}
 {"src":"s = set([((((1,),),),)])\nt = set([((((2,),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":24}
@@ -5013,7 +4996,6 @@
 {"src":"d = {(((('a',),),),): 1}\ne = {(((('a',),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {(((('a',),),),): 1}\ne = {((((2,),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {(((('a',),),),): 1}\ne = {(((('a',),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
-{"src":"d = {(((('a',),),),): 1}\ne = {(((('a',),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((\"a\",),),),): 1}","steps":26}
 {"src":"d = {(((('a',),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":24}
 {"src":"s = set([(((('a',),),),)])\nt = set([(((('a',),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":24}
 {"src":"s = set([(((('a',),),),)])\nt = set([((((2,),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":24}
@@ -5038,7 +5020,6 @@
 {"src":"d = {((((None,),),),): 1}\ne = {((((None,),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {((((None,),),),): 1}\ne = {((((2,),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
 {"src":"d = {((((None,),),),): 1}\ne = {((((None,),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":26}
-{"src":"d = {((((None,),),),): 1}\ne = {((((None,),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((None,),),),): 1}","steps":26}
 {"src":"d = {((((None,),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":24}
 {"src":"s = set([((((None,),),),)])\nt = set([((((None,),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":24}
 {"src":"s = set([((((None,),),),)])\nt = set([((((2,),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":24}
@@ -5063,7 +5044,6 @@
 {"src":"d = {(((((1, 2),),),),): 1}\ne = {(((((1, 2),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {(((((1, 2),),),),): 1}\ne = {((((2,),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {(((((1, 2),),),),): 1}\ne = {(((((1, 2),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
-{"src":"d = {(((((1, 2),),),),): 1}\ne = {(((((1, 2),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((1, 2),),),),): 1}","steps":30}
 {"src":"d = {(((((1, 2),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":26}
 {"src":"s = set([(((((1, 2),),),),)])\nt = set([(((((1, 2),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":28}
 {"src":"s = set([(((((1, 2),),),),)])\nt = set([((((2,),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":26}
@@ -5088,7 +5068,6 @@
 {"src":"d = {(((((1,),),),),): 1}\ne = {(((((1,),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {(((((1,),),),),): 1}\ne = {(((((2,),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {(((((1,),),),),): 1}\ne = {(((((1,),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
-{"src":"d = {(((((1,),),),),): 1}\ne = {(((((1,),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((1,),),),),): 1}","steps":28}
 {"src":"d = {(((((1,),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":25}
 {"src":"s = set([(((((1,),),),),)])\nt = set([(((((1,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":26}
 {"src":"s = set([(((((1,),),),),)])\nt = set([(((((2,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":26}
@@ -5113,7 +5092,6 @@
 {"src":"d = {((((('a',),),),),): 1}\ne = {((((('a',),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {((((('a',),),),),): 1}\ne = {(((((2,),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {((((('a',),),),),): 1}\ne = {((((('a',),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
-{"src":"d = {((((('a',),),),),): 1}\ne = {((((('a',),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((\"a\",),),),),): 1}","steps":28}
 {"src":"d = {((((('a',),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":25}
 {"src":"s = set([((((('a',),),),),)])\nt = set([((((('a',),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":26}
 {"src":"s = set([((((('a',),),),),)])\nt = set([(((((2,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":26}
@@ -5138,7 +5116,6 @@
 {"src":"d = {(((((None,),),),),): 1}\ne = {(((((None,),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {(((((None,),),),),): 1}\ne = {(((((2,),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
 {"src":"d = {(((((None,),),),),): 1}\ne = {(((((None,),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":28}
-{"src":"d = {(((((None,),),),),): 1}\ne = {(((((None,),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((None,),),),),): 1}","steps":28}
 {"src":"d = {(((((None,),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":25}
 {"src":"s = set([(((((None,),),),),)])\nt = set([(((((None,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":26}
 {"src":"s = set([(((((None,),),),),)])\nt = set([(((((2,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":26}
@@ -5163,7 +5140,6 @@
 {"src":"d = {((((((1, 2),),),),),): 1}\ne = {((((((1, 2),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {((((((1, 2),),),),),): 1}\ne = {(((((2,),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {((((((1, 2),),),),),): 1}\ne = {((((((1, 2),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
-{"src":"d = {((((((1, 2),),),),),): 1}\ne = {((((((1, 2),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((1, 2),),),),),): 1}","steps":32}
 {"src":"d = {((((((1, 2),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":27}
 {"src":"s = set([((((((1, 2),),),),),)])\nt = set([((((((1, 2),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":30}
 {"src":"s = set([((((((1, 2),),),),),)])\nt = set([(((((2,),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":28}
@@ -5188,7 +5164,6 @@
 {"src":"d = {((((((1,),),),),),): 1}\ne = {((((((1,),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {((((((1,),),),),),): 1}\ne = {((((((2,),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {((((((1,),),),),),): 1}\ne = {((((((1,),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
-{"src":"d = {((((((1,),),),),),): 1}\ne = {((((((1,),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((1,),),),),),): 1}","steps":30}
 {"src":"d = {((((((1,),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":26}
 {"src":"s = set([((((((1,),),),),),)])\nt = set([((((((1,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":28}
 {"src":"s = set([((((((1,),),),),),)])\nt = set([((((((2,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":28}
@@ -5213,7 +5188,6 @@
 {"src":"d = {(((((('a',),),),),),): 1}\ne = {(((((('a',),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {(((((('a',),),),),),): 1}\ne = {((((((2,),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {(((((('a',),),),),),): 1}\ne = {(((((('a',),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
-{"src":"d = {(((((('a',),),),),),): 1}\ne = {(((((('a',),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((\"a\",),),),),),): 1}","steps":30}
 {"src":"d = {(((((('a',),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":26}
 {"src":"s = set([(((((('a',),),),),),)])\nt = set([(((((('a',),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":28}
 {"src":"s = set([(((((('a',),),),),),)])\nt = set([((((((2,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":28}
@@ -5238,7 +5212,6 @@
 {"src":"d = {((((((None,),),),),),): 1}\ne = {((((((None,),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {((((((None,),),),),),): 1}\ne = {((((((2,),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
 {"src":"d = {((((((None,),),),),),): 1}\ne = {((((((None,),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":30}
-{"src":"d = {((((((None,),),),),),): 1}\ne = {((((((None,),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((None,),),),),),): 1}","steps":30}
 {"src":"d = {((((((None,),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":26}
 {"src":"s = set([((((((None,),),),),),)])\nt = set([((((((None,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":28}
 {"src":"s = set([((((((None,),),),),),)])\nt = set([((((((2,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":28}
@@ -5263,7 +5236,6 @@
 {"src":"d = {(((((((1, 2),),),),),),): 1}\ne = {(((((((1, 2),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {(((((((1, 2),),),),),),): 1}\ne = {((((((2,),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {(((((((1, 2),),),),),),): 1}\ne = {(((((((1, 2),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
-{"src":"d = {(((((((1, 2),),),),),),): 1}\ne = {(((((((1, 2),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((1, 2),),),),),),): 1}","steps":34}
 {"src":"d = {(((((((1, 2),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":28}
 {"src":"s = set([(((((((1, 2),),),),),),)])\nt = set([(((((((1, 2),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":32}
 {"src":"s = set([(((((((1, 2),),),),),),)])\nt = set([((((((2,),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":30}
@@ -5288,7 +5260,6 @@
 {"src":"d = {(((((((1,),),),),),),): 1}\ne = {(((((((1,),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {(((((((1,),),),),),),): 1}\ne = {(((((((2,),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {(((((((1,),),),),),),): 1}\ne = {(((((((1,),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
-{"src":"d = {(((((((1,),),),),),),): 1}\ne = {(((((((1,),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((1,),),),),),),): 1}","steps":32}
 {"src":"d = {(((((((1,),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":27}
 {"src":"s = set([(((((((1,),),),),),),)])\nt = set([(((((((1,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":30}
 {"src":"s = set([(((((((1,),),),),),),)])\nt = set([(((((((2,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":30}
@@ -5313,7 +5284,6 @@
 {"src":"d = {((((((('a',),),),),),),): 1}\ne = {((((((('a',),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {((((((('a',),),),),),),): 1}\ne = {(((((((2,),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {((((((('a',),),),),),),): 1}\ne = {((((((('a',),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
-{"src":"d = {((((((('a',),),),),),),): 1}\ne = {((((((('a',),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((\"a\",),),),),),),): 1}","steps":32}
 {"src":"d = {((((((('a',),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":27}
 {"src":"s = set([((((((('a',),),),),),),)])\nt = set([((((((('a',),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":30}
 {"src":"s = set([((((((('a',),),),),),),)])\nt = set([(((((((2,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":30}
@@ -5338,7 +5308,6 @@
 {"src":"d = {(((((((None,),),),),),),): 1}\ne = {(((((((None,),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {(((((((None,),),),),),),): 1}\ne = {(((((((2,),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
 {"src":"d = {(((((((None,),),),),),),): 1}\ne = {(((((((None,),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":32}
-{"src":"d = {(((((((None,),),),),),),): 1}\ne = {(((((((None,),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((None,),),),),),),): 1}","steps":32}
 {"src":"d = {(((((((None,),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":27}
 {"src":"s = set([(((((((None,),),),),),),)])\nt = set([(((((((None,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":30}
 {"src":"s = set([(((((((None,),),),),),),)])\nt = set([(((((((2,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":30}
@@ -5363,7 +5332,6 @@
 {"src":"d = {((((((((1, 2),),),),),),),): 1}\ne = {((((((((1, 2),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {((((((((1, 2),),),),),),),): 1}\ne = {(((((((2,),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {((((((((1, 2),),),),),),),): 1}\ne = {((((((((1, 2),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
-{"src":"d = {((((((((1, 2),),),),),),),): 1}\ne = {((((((((1, 2),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((1, 2),),),),),),),): 1}","steps":36}
 {"src":"d = {((((((((1, 2),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":29}
 {"src":"s = set([((((((((1, 2),),),),),),),)])\nt = set([((((((((1, 2),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":34}
 {"src":"s = set([((((((((1, 2),),),),),),),)])\nt = set([(((((((2,),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":32}
@@ -5388,7 +5356,6 @@
 {"src":"d = {((((((((1,),),),),),),),): 1}\ne = {((((((((1,),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {((((((((1,),),),),),),),): 1}\ne = {((((((((2,),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {((((((((1,),),),),),),),): 1}\ne = {((((((((1,),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
-{"src":"d = {((((((((1,),),),),),),),): 1}\ne = {((((((((1,),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((1,),),),),),),),): 1}","steps":34}
 {"src":"d = {((((((((1,),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":28}
 {"src":"s = set([((((((((1,),),),),),),),)])\nt = set([((((((((1,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":32}
 {"src":"s = set([((((((((1,),),),),),),),)])\nt = set([((((((((2,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":32}
@@ -5413,7 +5380,6 @@
 {"src":"d = {(((((((('a',),),),),),),),): 1}\ne = {(((((((('a',),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {(((((((('a',),),),),),),),): 1}\ne = {((((((((2,),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {(((((((('a',),),),),),),),): 1}\ne = {(((((((('a',),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
-{"src":"d = {(((((((('a',),),),),),),),): 1}\ne = {(((((((('a',),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((\"a\",),),),),),),),): 1}","steps":34}
 {"src":"d = {(((((((('a',),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":28}
 {"src":"s = set([(((((((('a',),),),),),),),)])\nt = set([(((((((('a',),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":32}
 {"src":"s = set([(((((((('a',),),),),),),),)])\nt = set([((((((((2,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":32}
@@ -5438,7 +5404,6 @@
 {"src":"d = {((((((((None,),),),),),),),): 1}\ne = {((((((((None,),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {((((((((None,),),),),),),),): 1}\ne = {((((((((2,),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
 {"src":"d = {((((((((None,),),),),),),),): 1}\ne = {((((((((None,),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":34}
-{"src":"d = {((((((((None,),),),),),),),): 1}\ne = {((((((((None,),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((None,),),),),),),),): 1}","steps":34}
 {"src":"d = {((((((((None,),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":28}
 {"src":"s = set([((((((((None,),),),),),),),)])\nt = set([((((((((None,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":32}
 {"src":"s = set([((((((((None,),),),),),),),)])\nt = set([((((((((2,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":32}
@@ -5463,7 +5428,6 @@
 {"src":"d = {(((((((((1, 2),),),),),),),),): 1}\ne = {(((((((((1, 2),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":38}
 {"src":"d = {(((((((((1, 2),),),),),),),),): 1}\ne = {((((((((2,),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {(((((((((1, 2),),),),),),),),): 1}\ne = {(((((((((1, 2),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
-{"src":"d = {(((((((((1, 2),),),),),),),),): 1}\ne = {(((((((((1, 2),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((1, 2),),),),),),),),): 1}","steps":38}
 {"src":"d = {(((((((((1, 2),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":30}
 {"src":"s = set([(((((((((1, 2),),),),),),),),)])\nt = set([(((((((((1, 2),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":36}
 {"src":"s = set([(((((((((1, 2),),),),),),),),)])\nt = set([((((((((2,),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":34}
@@ -5488,7 +5452,6 @@
 {"src":"d = {(((((((((1,),),),),),),),),): 1}\ne = {(((((((((1,),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {(((((((((1,),),),),),),),),): 1}\ne = {(((((((((2,),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {(((((((((1,),),),),),),),),): 1}\ne = {(((((((((1,),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
-{"src":"d = {(((((((((1,),),),),),),),),): 1}\ne = {(((((((((1,),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((1,),),),),),),),),): 1}","steps":36}
 {"src":"d = {(((((((((1,),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":29}
 {"src":"s = set([(((((((((1,),),),),),),),),)])\nt = set([(((((((((1,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":34}
 {"src":"s = set([(((((((((1,),),),),),),),),)])\nt = set([(((((((((2,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":34}
@@ -5513,7 +5476,6 @@
 {"src":"d = {((((((((('a',),),),),),),),),): 1}\ne = {((((((((('a',),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {((((((((('a',),),),),),),),),): 1}\ne = {(((((((((2,),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {((((((((('a',),),),),),),),),): 1}\ne = {((((((((('a',),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
-{"src":"d = {((((((((('a',),),),),),),),),): 1}\ne = {((((((((('a',),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((\"a\",),),),),),),),),): 1}","steps":36}
 {"src":"d = {((((((((('a',),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":29}
 {"src":"s = set([((((((((('a',),),),),),),),),)])\nt = set([((((((((('a',),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":34}
 {"src":"s = set([((((((((('a',),),),),),),),),)])\nt = set([(((((((((2,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":34}
@@ -5538,7 +5500,6 @@
 {"src":"d = {(((((((((None,),),),),),),),),): 1}\ne = {(((((((((None,),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {(((((((((None,),),),),),),),),): 1}\ne = {(((((((((2,),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
 {"src":"d = {(((((((((None,),),),),),),),),): 1}\ne = {(((((((((None,),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":36}
-{"src":"d = {(((((((((None,),),),),),),),),): 1}\ne = {(((((((((None,),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((None,),),),),),),),),): 1}","steps":36}
 {"src":"d = {(((((((((None,),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(True, 1)","steps":29}
 {"src":"s = set([(((((((((None,),),),),),),),),)])\nt = set([(((((((((None,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:True","steps":34}
 {"src":"s = set([(((((((((None,),),),),),),),),)])\nt = set([(((((((((2,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":34}
@@ -5563,7 +5524,6 @@
 {"src":"d = {((((((((((1, 2),),),),),),),),),): 1}\ne = {((((((((((1, 2),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":40}
 {"src":"d = {((((((((((1, 2),),),),),),),),),): 1}\ne = {(((((((((2,),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
 {"src":"d = {((((((((((1, 2),),),),),),),),),): 1}\ne = {((((((((((1, 2),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
-{"src":"d = {((((((((((1, 2),),),),),),),),),): 1}\ne = {((((((((((1, 2),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((1, 2),),),),),),),),),): 1}","steps":40}
 {"src":"d = {((((((((((1, 2),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":31}
 {"src":"s = set([((((((((((1, 2),),),),),),),),),)])\nt = set([((((((((((1, 2),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
 {"src":"s = set([((((((((((1, 2),),),),),),),),),)])\nt = set([(((((((((2,),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
@@ -5588,7 +5548,6 @@
 {"src":"d = {((((((((((1,),),),),),),),),),): 1}\ne = {((((((((((1,),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":38}
 {"src":"d = {((((((((((1,),),),),),),),),),): 1}\ne = {((((((((((2,),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
 {"src":"d = {((((((((((1,),),),),),),),),),): 1}\ne = {((((((((((1,),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
-{"src":"d = {((((((((((1,),),),),),),),),),): 1}\ne = {((((((((((1,),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((1,),),),),),),),),),): 1}","steps":38}
 {"src":"d = {((((((((((1,),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":30}
 {"src":"s = set([((((((((((1,),),),),),),),),),)])\nt = set([((((((((((1,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
 {"src":"s = set([((((((((((1,),),),),),),),),),)])\nt = set([((((((((((2,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
@@ -5613,7 +5572,6 @@
 {"src":"d = {(((((((((('a',),),),),),),),),),): 1}\ne = {(((((((((('a',),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":38}
 {"src":"d = {(((((((((('a',),),),),),),),),),): 1}\ne = {((((((((((2,),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
 {"src":"d = {(((((((((('a',),),),),),),),),),): 1}\ne = {(((((((((('a',),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
-{"src":"d = {(((((((((('a',),),),),),),),),),): 1}\ne = {(((((((((('a',),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((\"a\",),),),),),),),),),): 1}","steps":38}
 {"src":"d = {(((((((((('a',),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":30}
 {"src":"s = set([(((((((((('a',),),),),),),),),),)])\nt = set([(((((((((('a',),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
 {"src":"s = set([(((((((((('a',),),),),),),),),),)])\nt = set([((((((((((2,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
@@ -5638,7 +5596,6 @@
 {"src":"d = {((((((((((None,),),),),),),),),),): 1}\ne = {((((((((((None,),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":38}
 {"src":"d = {((((((((((None,),),),),),),),),),): 1}\ne = {((((((((((2,),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
 {"src":"d = {((((((((((None,),),),),),),),),),): 1}\ne = {((((((((((None,),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":38}
-{"src":"d = {((((((((((None,),),),),),),),),),): 1}\ne = {((((((((((None,),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((None,),),),),),),),),),): 1}","steps":38}
 {"src":"d = {((((((((((None,),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":30}
 {"src":"s = set([((((((((((None,),),),),),),),),),)])\nt = set([((((((((((None,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
 {"src":"s = set([((((((((((None,),),),),),),),),),)])\nt = set([((((((((((2,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":36}
@@ -5663,7 +5620,6 @@
 {"src":"d = {(((((((((((1, 2),),),),),),),),),),): 1}\ne = {(((((((((((1, 2),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":42}
 {"src":"d = {(((((((((((1, 2),),),),),),),),),),): 1}\ne = {((((((((((2,),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
 {"src":"d = {(((((((((((1, 2),),),),),),),),),),): 1}\ne = {(((((((((((1, 2),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
-{"src":"d = {(((((((((((1, 2),),),),),),),),),),): 1}\ne = {(((((((((((1, 2),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((1, 2),),),),),),),),),),): 1}","steps":42}
 {"src":"d = {(((((((((((1, 2),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":32}
 {"src":"s = set([(((((((((((1, 2),),),),),),),),),),)])\nt = set([(((((((((((1, 2),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
 {"src":"s = set([(((((((((((1, 2),),),),),),),),),),)])\nt = set([((((((((((2,),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
@@ -5688,7 +5644,6 @@
 {"src":"d = {(((((((((((1,),),),),),),),),),),): 1}\ne = {(((((((((((1,),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":40}
 {"src":"d = {(((((((((((1,),),),),),),),),),),): 1}\ne = {(((((((((((2,),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
 {"src":"d = {(((((((((((1,),),),),),),),),),),): 1}\ne = {(((((((((((1,),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
-{"src":"d = {(((((((((((1,),),),),),),),),),),): 1}\ne = {(((((((((((1,),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((1,),),),),),),),),),),): 1}","steps":40}
 {"src":"d = {(((((((((((1,),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":31}
 {"src":"s = set([(((((((((((1,),),),),),),),),),),)])\nt = set([(((((((((((1,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
 {"src":"s = set([(((((((((((1,),),),),),),),),),),)])\nt = set([(((((((((((2,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
@@ -5713,7 +5668,6 @@
 {"src":"d = {((((((((((('a',),),),),),),),),),),): 1}\ne = {((((((((((('a',),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":40}
 {"src":"d = {((((((((((('a',),),),),),),),),),),): 1}\ne = {(((((((((((2,),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
 {"src":"d = {((((((((((('a',),),),),),),),),),),): 1}\ne = {((((((((((('a',),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
-{"src":"d = {((((((((((('a',),),),),),),),),),),): 1}\ne = {((((((((((('a',),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((\"a\",),),),),),),),),),),): 1}","steps":40}
 {"src":"d = {((((((((((('a',),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":31}
 {"src":"s = set([((((((((((('a',),),),),),),),),),),)])\nt = set([((((((((((('a',),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
 {"src":"s = set([((((((((((('a',),),),),),),),),),),)])\nt = set([(((((((((((2,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
@@ -5738,7 +5692,6 @@
 {"src":"d = {(((((((((((None,),),),),),),),),),),): 1}\ne = {(((((((((((None,),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":40}
 {"src":"d = {(((((((((((None,),),),),),),),),),),): 1}\ne = {(((((((((((2,),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
 {"src":"d = {(((((((((((None,),),),),),),),),),),): 1}\ne = {(((((((((((None,),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":40}
-{"src":"d = {(((((((((((None,),),),),),),),),),),): 1}\ne = {(((((((((((None,),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((None,),),),),),),),),),),): 1}","steps":40}
 {"src":"d = {(((((((((((None,),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":31}
 {"src":"s = set([(((((((((((None,),),),),),),),),),),)])\nt = set([(((((((((((None,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
 {"src":"s = set([(((((((((((None,),),),),),),),),),),)])\nt = set([(((((((((((2,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":38}
@@ -5763,7 +5716,6 @@
 {"src":"d = {((((((((((((1, 2),),),),),),),),),),),): 1}\ne = {((((((((((((1, 2),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":44}
 {"src":"d = {((((((((((((1, 2),),),),),),),),),),),): 1}\ne = {(((((((((((2,),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
 {"src":"d = {((((((((((((1, 2),),),),),),),),),),),): 1}\ne = {((((((((((((1, 2),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
-{"src":"d = {((((((((((((1, 2),),),),),),),),),),),): 1}\ne = {((((((((((((1, 2),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((1, 2),),),),),),),),),),),): 1}","steps":44}
 {"src":"d = {((((((((((((1, 2),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":33}
 {"src":"s = set([((((((((((((1, 2),),),),),),),),),),),)])\nt = set([((((((((((((1, 2),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
 {"src":"s = set([((((((((((((1, 2),),),),),),),),),),),)])\nt = set([(((((((((((2,),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
@@ -5788,7 +5740,6 @@
 {"src":"d = {((((((((((((1,),),),),),),),),),),),): 1}\ne = {((((((((((((1,),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":42}
 {"src":"d = {((((((((((((1,),),),),),),),),),),),): 1}\ne = {((((((((((((2,),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
 {"src":"d = {((((((((((((1,),),),),),),),),),),),): 1}\ne = {((((((((((((1,),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
-{"src":"d = {((((((((((((1,),),),),),),),),),),),): 1}\ne = {((((((((((((1,),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((1,),),),),),),),),),),),): 1}","steps":42}
 {"src":"d = {((((((((((((1,),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":32}
 {"src":"s = set([((((((((((((1,),),),),),),),),),),),)])\nt = set([((((((((((((1,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
 {"src":"s = set([((((((((((((1,),),),),),),),),),),),)])\nt = set([((((((((((((2,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
@@ -5813,7 +5764,6 @@
 {"src":"d = {(((((((((((('a',),),),),),),),),),),),): 1}\ne = {(((((((((((('a',),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":42}
 {"src":"d = {(((((((((((('a',),),),),),),),),),),),): 1}\ne = {((((((((((((2,),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
 {"src":"d = {(((((((((((('a',),),),),),),),),),),),): 1}\ne = {(((((((((((('a',),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
-{"src":"d = {(((((((((((('a',),),),),),),),),),),),): 1}\ne = {(((((((((((('a',),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((\"a\",),),),),),),),),),),),): 1}","steps":42}
 {"src":"d = {(((((((((((('a',),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":32}
 {"src":"s = set([(((((((((((('a',),),),),),),),),),),),)])\nt = set([(((((((((((('a',),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
 {"src":"s = set([(((((((((((('a',),),),),),),),),),),),)])\nt = set([((((((((((((2,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
@@ -5838,7 +5788,6 @@
 {"src":"d = {((((((((((((None,),),),),),),),),),),),): 1}\ne = {((((((((((((None,),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":42}
 {"src":"d = {((((((((((((None,),),),),),),),),),),),): 1}\ne = {((((((((((((2,),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
 {"src":"d = {((((((((((((None,),),),),),),),),),),),): 1}\ne = {((((((((((((None,),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":42}
-{"src":"d = {((((((((((((None,),),),),),),),),),),),): 1}\ne = {((((((((((((None,),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((None,),),),),),),),),),),),): 1}","steps":42}
 {"src":"d = {((((((((((((None,),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":32}
 {"src":"s = set([((((((((((((None,),),),),),),),),),),),)])\nt = set([((((((((((((None,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
 {"src":"s = set([((((((((((((None,),),),),),),),),),),),)])\nt = set([((((((((((((2,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":40}
@@ -5863,7 +5812,6 @@
 {"src":"d = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\ne = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":46}
 {"src":"d = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\ne = {((((((((((((2,),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
 {"src":"d = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\ne = {(((((((((((((1, 2),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
-{"src":"d = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\ne = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((((1, 2),),),),),),),),),),),),): 1}","steps":46}
 {"src":"d = {(((((((((((((1, 2),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":34}
 {"src":"s = set([(((((((((((((1, 2),),),),),),),),),),),),)])\nt = set([(((((((((((((1, 2),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
 {"src":"s = set([(((((((((((((1, 2),),),),),),),),),),),),)])\nt = set([((((((((((((2,),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
@@ -5888,7 +5836,6 @@
 {"src":"d = {(((((((((((((1,),),),),),),),),),),),),): 1}\ne = {(((((((((((((1,),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":44}
 {"src":"d = {(((((((((((((1,),),),),),),),),),),),),): 1}\ne = {(((((((((((((2,),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
 {"src":"d = {(((((((((((((1,),),),),),),),),),),),),): 1}\ne = {(((((((((((((1,),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
-{"src":"d = {(((((((((((((1,),),),),),),),),),),),),): 1}\ne = {(((((((((((((1,),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((((1,),),),),),),),),),),),),): 1}","steps":44}
 {"src":"d = {(((((((((((((1,),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":33}
 {"src":"s = set([(((((((((((((1,),),),),),),),),),),),),)])\nt = set([(((((((((((((1,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
 {"src":"s = set([(((((((((((((1,),),),),),),),),),),),),)])\nt = set([(((((((((((((2,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
@@ -5913,7 +5860,6 @@
 {"src":"d = {((((((((((((('a',),),),),),),),),),),),),): 1}\ne = {((((((((((((('a',),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":44}
 {"src":"d = {((((((((((((('a',),),),),),),),),),),),),): 1}\ne = {(((((((((((((2,),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
 {"src":"d = {((((((((((((('a',),),),),),),),),),),),),): 1}\ne = {((((((((((((('a',),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
-{"src":"d = {((((((((((((('a',),),),),),),),),),),),),): 1}\ne = {((((((((((((('a',),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((((\"a\",),),),),),),),),),),),),): 1}","steps":44}
 {"src":"d = {((((((((((((('a',),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":33}
 {"src":"s = set([((((((((((((('a',),),),),),),),),),),),),)])\nt = set([((((((((((((('a',),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
 {"src":"s = set([((((((((((((('a',),),),),),),),),),),),),)])\nt = set([(((((((((((((2,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
@@ -5938,7 +5884,6 @@
 {"src":"d = {(((((((((((((None,),),),),),),),),),),),),): 1}\ne = {(((((((((((((None,),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":44}
 {"src":"d = {(((((((((((((None,),),),),),),),),),),),),): 1}\ne = {(((((((((((((2,),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
 {"src":"d = {(((((((((((((None,),),),),),),),),),),),),): 1}\ne = {(((((((((((((None,),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":44}
-{"src":"d = {(((((((((((((None,),),),),),),),),),),),),): 1}\ne = {(((((((((((((None,),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((((None,),),),),),),),),),),),),): 1}","steps":44}
 {"src":"d = {(((((((((((((None,),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":33}
 {"src":"s = set([(((((((((((((None,),),),),),),),),),),),),)])\nt = set([(((((((((((((None,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
 {"src":"s = set([(((((((((((((None,),),),),),),),),),),),),)])\nt = set([(((((((((((((2,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":42}
@@ -5963,7 +5908,6 @@
 {"src":"d = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":48}
 {"src":"d = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\ne = {(((((((((((((2,),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
 {"src":"d = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1, 2),),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":48}
-{"src":"d = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((((1, 2),),),),),),),),),),),),),): 1}","steps":48}
 {"src":"d = {((((((((((((((1, 2),),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":35}
 {"src":"s = set([((((((((((((((1, 2),),),),),),),),),),),),),)])\nt = set([((((((((((((((1, 2),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":46}
 {"src":"s = set([((((((((((((((1, 2),),),),),),),),),),),),),)])\nt = set([(((((((((((((2,),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
@@ -5988,7 +5932,6 @@
 {"src":"d = {((((((((((((((1,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1,),),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":46}
 {"src":"d = {((((((((((((((1,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((2,),),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
 {"src":"d = {((((((((((((((1,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1,),),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
-{"src":"d = {((((((((((((((1,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((1,),),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((((1,),),),),),),),),),),),),),): 1}","steps":46}
 {"src":"d = {((((((((((((((1,),),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":34}
 {"src":"s = set([((((((((((((((1,),),),),),),),),),),),),),)])\nt = set([((((((((((((((1,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
 {"src":"s = set([((((((((((((((1,),),),),),),),),),),),),),)])\nt = set([((((((((((((((2,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
@@ -6013,7 +5956,6 @@
 {"src":"d = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\ne = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":46}
 {"src":"d = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\ne = {((((((((((((((2,),),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
 {"src":"d = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\ne = {(((((((((((((('a',),),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
-{"src":"d = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\ne = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((((\"a\",),),),),),),),),),),),),),): 1}","steps":46}
 {"src":"d = {(((((((((((((('a',),),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":34}
 {"src":"s = set([(((((((((((((('a',),),),),),),),),),),),),),)])\nt = set([(((((((((((((('a',),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
 {"src":"s = set([(((((((((((((('a',),),),),),),),),),),),),),)])\nt = set([((((((((((((((2,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
@@ -6038,7 +5980,6 @@
 {"src":"d = {((((((((((((((None,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((None,),),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":46}
 {"src":"d = {((((((((((((((None,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((2,),),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
 {"src":"d = {((((((((((((((None,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((None,),),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":46}
-{"src":"d = {((((((((((((((None,),),),),),),),),),),),),),): 1}\ne = {((((((((((((((None,),),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{((((((((((((((None,),),),),),),),),),),),),),): 1}","steps":46}
 {"src":"d = {((((((((((((((None,),),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":34}
 {"src":"s = set([((((((((((((((None,),),),),),),),),),),),),),)])\nt = set([((((((((((((((None,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
 {"src":"s = set([((((((((((((((None,),),),),),),),),),),),),),)])\nt = set([((((((((((((((2,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":44}
@@ -6063,7 +6004,6 @@
 {"src":"d = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\ne = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\nresult = d != e\n","status":"ok","result":"bool:True","steps":50}
 {"src":"d = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\ne = {((((((((((((((2,),),),),),),),),),),),),),): 1}\nresult = d == e\n","status":"ok","result":"bool:False","steps":48}
 {"src":"d = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\ne = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 2}\nresult = d == e\n","status":"ok","result":"bool:False","steps":50}
-{"src":"d = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\ne = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\nresult = d | e\n","status":"ok","result":"dict:{(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}","steps":50}
 {"src":"d = {(((((((((((((((1, 2),),),),),),),),),),),),),),): 1}\ne = dict(d)\nresult = (d == e, len(e))\n","status":"ok","result":"tuple:(False, 1)","steps":36}
 {"src":"s = set([(((((((((((((((1, 2),),),),),),),),),),),),),),)])\nt = set([(((((((((((((((1, 2),),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":48}
 {"src":"s = set([(((((((((((((((1, 2),),),),),),),),),),),),),),)])\nt = set([((((((((((((((2,),),),),),),),),),),),),),)])\nresult = s == t\n","status":"ok","result":"bool:False","steps":46}

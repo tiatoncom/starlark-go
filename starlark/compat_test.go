@@ -53,6 +53,31 @@ func compatCases() []compatCase {
 	var cs []compatCase
 	cs = append(cs, errTextCompatCases()...)
 	cs = append(cs, digitsCompatCases()...)
+	cs = append(cs, unionCompatCases()...)
+	return cs
+}
+
+const boundDepth = "MaxValueDepth / глубина сравнения: v0.2.0 молча обрывал объединение, v0.3.0 отказывает"
+
+// unionCompatCases: the union d | e of dicts that have the same key, a tuple
+// nested more deeply than a comparison goes (10 levels). Comparing the keys is
+// refused ("comparison exceeded maximum recursion depth"); v0.2.0 dropped that
+// error, the union stopped there, and the keys of e after it were not added.
+func unionCompatCases() []compatCase {
+	var cs []compatCase
+	refused := compatOutcome{"error", "comparison exceeded maximum recursion depth"}
+	for _, k := range []int{10, 12} {
+		t := nest("tuple", k, "1")
+		cs = append(cs,
+			compatCase{ID: fmt.Sprintf("dict union with a tuple key nested %d deep", k), Bound: boundDepth, StepsDiffer: true,
+				Src:  fmt.Sprintf("d = {%s: 1}\ne = {%s: 1}\nresult = d | e\n", t, t),
+				V020: compatOutcome{"ok", fmt.Sprintf("dict:{%s: 1}", t)}, Now: refused},
+			// the keys after the failing one are lost in v0.2.0, and the value is not updated
+			compatCase{ID: fmt.Sprintf("dict union with a tuple key nested %d deep, more keys after it", k), Bound: boundDepth, StepsDiffer: true,
+				Src:  fmt.Sprintf("d = {%s: 1}\ne = {%s: 2, 'z': 3}\nresult = d | e\n", t, t),
+				V020: compatOutcome{"ok", fmt.Sprintf("dict:{%s: 1}", t)}, Now: refused},
+		)
+	}
 	return cs
 }
 
@@ -186,33 +211,49 @@ func compatHostCases() []compatHost {
 	zs := z.String()
 	bits := fmt.Sprintf("<int of %d bits>", z.BitLen())
 	n := starlark.MakeBigInt(z)
+	one := starlark.MakeInt(1)
+	dict := func(k, v starlark.Value) starlark.Value {
+		d := starlark.NewDict(1)
+		_ = d.SetKey(k, v)
+		return d
+	}
+	set := func(v starlark.Value) starlark.Value {
+		s := starlark.NewSet(1)
+		_ = s.Insert(v)
+		return s
+	}
+	// The form of this version ends at the integer, and every bracket that was
+	// open is closed: what follows the integer is not written (a dict whose key
+	// is the integer is closed without its value).
 	forms := []struct {
-		id string
-		v  func() starlark.Value
-		f  string // the form, with %s the integer
+		id  string
+		v   func() starlark.Value
+		was string // the form of v0.2.0, with %s the integer
+		now string // the form now, with %s the marker
 	}{
-		{"list", func() starlark.Value { return starlark.NewList([]starlark.Value{n, starlark.MakeInt(1)}) }, "[%s, 1]"},
-		{"tuple", func() starlark.Value { return starlark.Tuple{starlark.MakeInt(1), n} }, "(1, %s)"},
-		{"dict", func() starlark.Value {
-			d := starlark.NewDict(1)
-			_ = d.SetKey(starlark.String("k"), n)
-			return d
-		}, `{"k": %s}`},
-		{"set", func() starlark.Value {
-			s := starlark.NewSet(1)
-			_ = s.Insert(n)
-			return s
-		}, "set([%s])"},
+		{"list", func() starlark.Value { return starlark.NewList([]starlark.Value{n, one}) }, "[%s, 1]", "[%s]"},
+		{"list, the integer last", func() starlark.Value { return starlark.NewList([]starlark.Value{one, n}) }, "[1, %s]", "[1, %s]"},
+		{"tuple", func() starlark.Value { return starlark.Tuple{one, n} }, "(1, %s)", "(1, %s)"},
+		{"tuple of one", func() starlark.Value { return starlark.Tuple{n} }, "(%s,)", "(%s,)"},
+		{"dict", func() starlark.Value { return dict(starlark.String("k"), n) }, `{"k": %s}`, `{"k": %s}`},
+		{"dict with the integer as key", func() starlark.Value { return dict(n, one) }, `{%s: 1}`, `{%s}`},
+		{"set", func() starlark.Value { return set(n) }, "set([%s])", "set([%s])"},
+		{"list in a list", func() starlark.Value {
+			return starlark.NewList([]starlark.Value{starlark.NewList([]starlark.Value{one, n, one}), one})
+		}, "[[1, %s, 1], 1]", "[[1, %s]]"},
+		{"dict in a tuple in a list", func() starlark.Value {
+			return starlark.NewList([]starlark.Value{starlark.Tuple{dict(starlark.String("a"), starlark.NewList([]starlark.Value{n}))}, one})
+		}, `[({"a": [%s]},), 1]`, `[({"a": [%s]},)]`},
+		{"set in a dict", func() starlark.Value { return dict(one, set(n)) }, "{1: set([%s])}", "{1: set([%s])}"},
 	}
 	var hs []compatHost
 	for _, f := range forms {
 		f := f
 		hs = append(hs, compatHost{
-			ID:   "Value.String() of a " + f.id + " with an integer of 16610 bits",
-			Run:  func() string { return f.v().String() },
-			V020: fmt.Sprintf(f.f, zs),
-			// (the form ends at the integer: what follows it is not written)
-			Now:   strings.SplitN(f.f, "%s", 2)[0] + bits,
+			ID:    "Value.String() of a " + f.id + " with an integer of 16610 bits",
+			Run:   func() string { return f.v().String() },
+			V020:  fmt.Sprintf(f.was, zs),
+			Now:   fmt.Sprintf(f.now, bits),
 			Bound: boundDigits,
 		})
 	}

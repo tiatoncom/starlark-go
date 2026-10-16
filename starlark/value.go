@@ -951,14 +951,10 @@ func (x *Dict) Union(y *Dict) *Dict {
 func (x *Dict) unionM(m *meter, y *Dict) (*Dict, error) {
 	z := new(Dict)
 	z.ht.init(x.Len()) // a lower bound
-	// Only a refusal of a limit is an error of the union. In v0.2.0 it could not
-	// fail ("can't fail"), and the error of the one thing that can, the equality
-	// of two keys that are tuples nested beyond the depth of a comparison, was
-	// dropped (the keys after it were not added): the union is that of v0.2.0.
-	if err := z.ht.addAllM(m, &x.ht); err != nil && isResourceError(err) {
+	if err := z.ht.addAllM(m, &x.ht); err != nil {
 		return nil, err
 	}
-	if err := z.ht.addAllM(m, &y.ht); err != nil && isResourceError(err) {
+	if err := z.ht.addAllM(m, &y.ht); err != nil {
 		return nil, err
 	}
 	return z, nil
@@ -1871,6 +1867,9 @@ func (w *valueWriter) write(x Value, depth int) {
 				w.work(4)
 				w.write(elem, depth+1)
 				if w.result != writeOK {
+					if w.result == writeBigInt {
+						w.out.WriteByte(']') // (the form is closed; what follows the integer is not written)
+					}
 					return
 				}
 			}
@@ -1887,6 +1886,12 @@ func (w *valueWriter) write(x Value, depth int) {
 			w.work(4)
 			w.write(elem, depth+1)
 			if w.result != writeOK {
+				if w.result == writeBigInt {
+					if len(x) == 1 {
+						w.out.WriteByte(',')
+					}
+					w.out.WriteByte(')')
+				}
 				return
 			}
 		}
@@ -1917,9 +1922,16 @@ func (w *valueWriter) write(x Value, depth int) {
 				w.out.WriteString(sep)
 				w.work(8)
 				w.write(k, depth+1)
+				if w.result == writeBigInt { // a key: the form is closed without its value
+					w.out.WriteByte('}')
+					return
+				}
 				w.out.WriteString(": ")
 				w.write(v, depth+1)
 				if w.result != writeOK {
+					if w.result == writeBigInt {
+						w.out.WriteByte('}')
+					}
 					return
 				}
 				sep = ", "
@@ -1937,6 +1949,9 @@ func (w *valueWriter) write(x Value, depth int) {
 			w.work(4)
 			w.write(e.key, depth+1)
 			if w.result != writeOK {
+				if w.result == writeBigInt {
+					w.out.WriteString("])")
+				}
 				return
 			}
 		}

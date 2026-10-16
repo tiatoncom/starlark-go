@@ -136,7 +136,6 @@ func b5Corpus() []string {
 				fmt.Sprintf("d = {%s: 1}\ne = {%s: 1}\nresult = d != e\n", t, u),
 				fmt.Sprintf("d = {%s: 1}\ne = {%s: 1}\nresult = d == e\n", t, v),
 				fmt.Sprintf("d = {%s: 1}\ne = {%s: 2}\nresult = d == e\n", t, u),
-				fmt.Sprintf("d = {%s: 1}\ne = {%s: 1}\nresult = d | e\n", t, u),
 				fmt.Sprintf("d = {%s: 1}\ne = dict(d)\nresult = (d == e, len(e))\n", t),
 				fmt.Sprintf("s = set([%s])\nt = set([%s])\nresult = s == t\n", t, u),
 				fmt.Sprintf("s = set([%s])\nt = set([%s])\nresult = s == t\n", t, v),
@@ -168,6 +167,11 @@ func b5Corpus() []string {
 	}
 	return uniq(out)
 }
+
+// (The union d | e of two dicts with the same tuple key nested 10 deep or more
+// is not in the corpus: v0.2.0 dropped the error of comparing the keys and
+// stopped the union, and this version refuses. It is a line of the
+// Compatibility list, TestCompatibilityDivergencesFromV020.)
 
 // TestWriteB5Golden writes the golden file. It is run in a tree of v0.2.0, not
 // here: STARLARK_WRITE_GOLDEN=<directory of the tree's starlark package>.
