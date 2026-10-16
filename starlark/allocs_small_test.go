@@ -1,3 +1,11 @@
+//go:build !race
+
+// This file is not built under -race: it measures the allocations of the Go
+// runtime (testing.AllocsPerRun, runtime.MemStats), and the race detector's
+// runtime changes them (shadow memory, the allocations of sync and of maps), so
+// the numbers of v0.2.0 do not hold under it. The measurement is held by the
+// run without -race; the exclusion is declared in race_exclusions_test.go.
+
 package starlark_test
 
 // The allocations of the short paths: the mechanism that counts and bounds

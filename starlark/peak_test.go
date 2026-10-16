@@ -1,3 +1,12 @@
+//go:build !race
+
+// This file is not built under -race: its tests compare the bytes the Go
+// runtime allocated (runtime.MemStats TotalAlloc) with the bytes the fork
+// charged, and the race detector's runtime changes what is allocated, so the
+// ratios do not hold under it. The measurement is held by the run without
+// -race; the fork's own counters are tested under -race in the other files.
+// The exclusion is declared in race_exclusions_test.go.
+
 package starlark_test
 
 // "Operation, charged, peak": the memory an operation allocates is what it
