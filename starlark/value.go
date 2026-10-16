@@ -1817,7 +1817,17 @@ func (w *valueWriter) write(x Value, depth int) {
 			w.work(d * d / 4096)
 			// The decimal form has at most BitLen/3+1 digits.
 			n := big.BitLen()/3 + 2
-			w.leaf(n, workSlow(n), false, func() { w.out.WriteString(x.String()) }, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
+			emit := func() { w.out.WriteString(x.String()) }
+			if w.cut && !w.fits(n) {
+				// A form that is cut to a size (an error message) is whole
+				// if it fits, as in v0.2.0, and BitLen/3+2 only bounds the
+				// digits from above (3.32 bits a digit, in fact): the digits
+				// themselves decide. (The integer is of at most MaxIntDigits
+				// digits here, and the conversion was charged above.)
+				s := x.String()
+				n, emit = len(s), func() { w.out.WriteString(s) }
+			}
+			w.leaf(n, workSlow(n), false, emit, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
 		} else {
 			var tmp [24]byte
 			iSmall, _ := x.get()

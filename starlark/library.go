@@ -632,16 +632,27 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		// The conversion is quadratic in the digits: refuse a string of more
 		// than MaxIntDigits (or the same number of bits in another base), and
 		// charge the work of the rest.
-		if digits, base := intDigits(s, b); digits > 0 {
-			// Decimal digits are limited to MaxIntDigits; another base to the
-			// same number of bits (a power of two base is linear to convert, but
-			// the integer it makes is as long).
-			if base == 10 && digits > MaxIntDigits || base != 10 && digits*bits.Len(uint(base-1)) > 4*MaxIntDigits {
-				return nil, fmt.Errorf("int: the string has more than %d digits: its conversion to an integer is not allowed", MaxIntDigits)
-			}
-			d := uint64(digits)
-			if err := thread.chargeWork(d * d / 4096); err != nil {
-				return nil, err
+		// (A string whose answer is known without a conversion - "0000" in
+		// base 0, a second sign - is not one: it is answered as it was.)
+		if _, _, _, _, known := splitInt(s, b); !known {
+			if digits, base := intDigits(s, b); digits > 0 {
+				// Decimal digits are limited to MaxIntDigits; another base to the
+				// same number of bits (a power of two base is linear to convert, but
+				// the integer it makes is as long).
+				if base == 10 && digits > MaxIntDigits || base != 10 && digits*bits.Len(uint(base-1)) > 4*MaxIntDigits {
+					// A string that is not an integer of the base is an
+					// "invalid literal", as in v0.2.0, whatever its length: the
+					// bound is that of a conversion that would be made. (The
+					// check is linear.)
+					if !intLiteralValid(s, b) {
+						return nil, fmt.Errorf("int: invalid literal with base %d: %s", b, errStr(s))
+					}
+					return nil, fmt.Errorf("int: the string has more than %d digits: its conversion to an integer is not allowed", MaxIntDigits)
+				}
+				d := uint64(digits)
+				if err := thread.chargeWork(d * d / 4096); err != nil {
+					return nil, err
+				}
 			}
 		}
 		res := parseInt(s, b)
@@ -704,9 +715,57 @@ func intDigits(s string, base int) (int, int) {
 	return len(s), base
 }
 
+// intLiteralValid reports whether parseInt(s, base) would make an integer (it
+// does not make it), for an s that splitInt does not answer by itself: its
+// digits, after the sign and the base prefix that parseInt removes, are all
+// digits of the base.
+func intLiteralValid(s string, base int) bool {
+	_, digits, base, _, _ := splitInt(s, base)
+	if digits == "" {
+		return false
+	}
+	for i := 0; i < len(digits); i++ {
+		c := digits[i]
+		var d int
+		switch {
+		case '0' <= c && c <= '9':
+			d = int(c - '0')
+		case 'a' <= c && c <= 'z':
+			d = int(c-'a') + 10
+		case 'A' <= c && c <= 'Z':
+			d = int(c-'A') + 10
+		default:
+			return false
+		}
+		if d >= base {
+			return false
+		}
+	}
+	return true
+}
+
 func parseInt(s string, base int) Value {
+	neg, s, base, res, done := splitInt(s, base)
+	if done {
+		return res
+	}
+	// s has no sign or base prefix.
+	if i, ok := new(big.Int).SetString(s, base); ok {
+		res := MakeBigInt(i)
+		if neg {
+			res = zero.Sub(res)
+		}
+		return res
+	}
+
+	return nil
+}
+
+// splitInt is the first half of parseInt: it removes the sign and the base
+// prefix of s, and gives the digits and their base. If the answer is known
+// without them, done is set and res is it (nil: not an integer).
+func splitInt(s string, base int) (neg bool, digits string, b int, res Value, done bool) {
 	// remove sign
-	var neg bool
 	if s != "" {
 		if s[0] == '+' {
 			s = s[1:]
@@ -744,10 +803,10 @@ func parseInt(s string, base int) Value {
 			if base == 0 {
 				for i := 1; i < len(s); i++ {
 					if s[i] != '0' {
-						return nil
+						return neg, "", 0, nil, true
 					}
 				}
-				return zero
+				return neg, "", 0, zero, true
 			}
 		}
 	}
@@ -758,19 +817,10 @@ func parseInt(s string, base int) Value {
 	// we explicitly handled sign above.
 	// if a sign remains, it is invalid.
 	if s != "" && (s[0] == '-' || s[0] == '+') {
-		return nil
+		return neg, "", 0, nil, true
 	}
 
-	// s has no sign or base prefix.
-	if i, ok := new(big.Int).SetString(s, base); ok {
-		res := MakeBigInt(i)
-		if neg {
-			res = zero.Sub(res)
-		}
-		return res
-	}
-
-	return nil
+	return neg, s, base, nil, false
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#len
