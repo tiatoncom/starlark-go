@@ -46,7 +46,7 @@ var Disassemble = false
 const debug = false // make code generation verbose, for debugging the compiler
 
 // Increment this to force recompilation of saved bytecode files.
-const Version = 14
+const Version = 16
 
 type Opcode uint8
 
@@ -333,6 +333,10 @@ type Funcode struct {
 	Doc                   string          // docstring of this function
 	Code                  []byte          // the byte code
 	pclinetab             []uint16        // mapping from pc to linenum
+	Branches              []Branch        // conditional jumps with their source conditions, sorted by PC
+	BranchMech            []BranchMech    // the interpreter's flags of Branches, same index
+	Chains                []Chain         // every and/or chain of the conditions, by ChainID; nil if none
+	cmpIndex              []cmpRef        // Branches with a CmpPC, sorted by CmpPC
 	Locals                []Binding       // locals, parameters first
 	Cells                 []int           // indices of Locals that require cells
 	FreeVars              []Binding       // for tracing
@@ -399,6 +403,8 @@ type fcomp struct {
 	pos   syntax.Position // current position of generated code
 	loops []loop
 	block *block
+
+	branchState // the branch table under construction
 }
 
 type loop struct {
@@ -425,6 +431,8 @@ type insn struct {
 	op        Opcode
 	arg       uint32
 	line, col int32
+	br        uint32 // CJMP only: index+1 in fcomp.table, or 0
+	cmp       uint32 // comparison only: index+1 in fcomp.table of the CJMP that tests its result, or 0
 }
 
 // Position returns the source position for program counter pc.
@@ -690,6 +698,7 @@ func (pcomp *pcomp) function(name string, pos syntax.Position, stmts []syntax.St
 		fmt.Fprintf(os.Stderr, "Function %s: (%d blocks, %d bytes)\n", name, len(blocks), pc)
 	}
 	fcomp.generate(blocks, pc)
+	fcomp.finishBranches()
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "code=%d maxstack=%d\n", fn.Code, fn.MaxStack)
@@ -814,6 +823,12 @@ func (fcomp *fcomp) generate(blocks []*block, codelen uint32) {
 			}
 			if Disassemble {
 				PrintOp(fcomp.fn, pc, insn.op, insn.arg)
+			}
+			if insn.br != 0 {
+				fcomp.recordBranch(insn.br, pc)
+			}
+			if insn.cmp != 0 {
+				fcomp.noteCompareAddr(insn.cmp, pc)
 			}
 			code = append(code, byte(insn.op))
 			pc++
@@ -973,6 +988,7 @@ func (fcomp *fcomp) condjump(op Opcode, t, f *block) {
 		panic("not a conditional jump: " + op.String())
 	}
 	fcomp.emit1(op, 0) // fill in address later
+	fcomp.attachBranch()
 	fcomp.block.cjmp = t
 	fcomp.jump(f)
 }
@@ -1102,13 +1118,14 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 		f := fcomp.newBlock()
 		done := fcomp.newBlock()
 
-		fcomp.ifelse(stmt.Cond, t, f)
+		fcomp.ifelseAt(fcomp.ifKind(stmt), stmt.If, stmt.Cond, t, f)
 
 		fcomp.block = t
 		fcomp.stmts(stmt.True)
 		fcomp.jump(done)
 
 		fcomp.block = f
+		fcomp.elifAt = stmt.ElsePos
 		fcomp.stmts(stmt.False)
 		fcomp.jump(done)
 
@@ -1225,7 +1242,7 @@ func (fcomp *fcomp) stmt(stmt syntax.Stmt) {
 
 		fcomp.jump(head)
 		fcomp.block = head
-		fcomp.ifelse(stmt.Cond, body, done)
+		fcomp.ifelseAt(BranchWhile, stmt.While, stmt.Cond, body, done)
 
 		fcomp.block = body
 		fcomp.loops = append(fcomp.loops, loop{break_: done, continue_: head})
@@ -1343,7 +1360,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 		f := fcomp.newBlock()
 		done := fcomp.newBlock()
 
-		fcomp.ifelse(e.Cond, t, f)
+		fcomp.ifelseAt(BranchCondExpr, e.If, e.Cond, t, f)
 
 		fcomp.block = t
 		fcomp.expr(e.True)
@@ -1430,6 +1447,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
+			fcomp.markCondDup(e.X, syntax.OR)
 			fcomp.condjump(CJMP, done, y)
 
 			fcomp.block = y
@@ -1446,6 +1464,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 
 			fcomp.expr(e.X)
 			fcomp.emit(DUP)
+			fcomp.markCondDup(e.X, syntax.AND)
 			fcomp.condjump(CJMP, y, done)
 
 			fcomp.block = y
@@ -1462,6 +1481,7 @@ func (fcomp *fcomp) expr(e syntax.Expr) {
 			// all other strict binary operator (includes comparisons)
 			fcomp.expr(e.X)
 			fcomp.expr(e.Y)
+			fcomp.noteCompare(e)
 			fcomp.binop(e.OpPos, e.Op)
 		}
 
@@ -1792,7 +1812,7 @@ func (fcomp *fcomp) comprehension(comp *syntax.Comprehension, clauseIndex int) {
 	case *syntax.IfClause:
 		t := fcomp.newBlock()
 		done := fcomp.newBlock()
-		fcomp.ifelse(clause.Cond, t, done)
+		fcomp.ifelseAt(BranchCompIf, clause.If, clause.Cond, t, done)
 
 		fcomp.block = t
 		fcomp.comprehension(comp, clauseIndex+1)
@@ -1916,6 +1936,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if x then ifelse(y, t, f) else goto f
 			fcomp.expr(cond.X)
 			y := fcomp.newBlock()
+			fcomp.markCond(cond.X)
 			fcomp.condjump(CJMP, y, f)
 
 			fcomp.block = y
@@ -1928,6 +1949,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			// if x then goto t else ifelse(y, t, f)
 			fcomp.expr(cond.X)
 			y := fcomp.newBlock()
+			fcomp.markCond(cond.X)
 			fcomp.condjump(CJMP, t, y)
 
 			fcomp.block = y
@@ -1940,6 +1962,7 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 			copy := *cond
 			copy.Op = syntax.IN
 			fcomp.expr(&copy)
+			fcomp.markCondNot(cond)
 			fcomp.condjump(CJMP, f, t)
 			return
 		}
@@ -1947,5 +1970,6 @@ func (fcomp *fcomp) ifelse(cond syntax.Expr, t, f *block) {
 
 	// general case
 	fcomp.expr(cond)
+	fcomp.markCond(cond)
 	fcomp.condjump(CJMP, t, f)
 }

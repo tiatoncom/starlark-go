@@ -45,6 +45,34 @@ package compile
 //	numkwonlyparams	varint
 //	hasvarargs	varint (0 or 1)
 //	haskwargs	varint (0 or 1)
+//	numbranches	varint
+//	branches	[]Branch
+//	numchains	varint
+//	chains		[]Chain
+//
+// Branch:                              # the branch table, sorted by pc
+//	pc		varint          # address of the CJMP
+//	kind		varint          # BranchKind: 0=if 1=elif 2=while 3=cond_expr 4=comp_if 5=and 6=or
+//	cond		Position
+//	chain		Position
+//	keyword		Position        # line 0, col 0 = no position
+//	operand		varint          # number in the flat chain, or -1
+//	negated		varint (0 or 1)
+//	chainid		varint          # number of the chain in the function, or -1
+//	parentchain	varint          # chainid of the enclosing chain, or -1
+//	echo		varint (0 or 1) # the CJMP can repeat the test just reported
+//	short		varint          # 0=none 1=a truthy value ends a chain 2=a falsy one does
+//	flip		varint (0 or 1) # the CJMP sees the opposite truth of the tested expression
+//	cmppc		varint          # address of the comparison it tests, or -1
+//
+// Chain:                               # the chain table, indexed by chainid
+//	kind		varint          # BranchKind: 5=and 6=or
+//	start		Position
+//	parent		varint          # chainid of the enclosing chain, or -1
+//	parentoperand	varint          # number of the operand in the parent's flat list, or -1
+//
+// Position:
+//	line, col	varint          # the file is the program's
 //
 // Ident:
 //	filename	string
@@ -201,6 +229,8 @@ func (e *encoder) function(fn *Funcode) {
 	e.int(fn.NumKwonlyParams)
 	e.int(b2i(fn.HasVarargs))
 	e.int(b2i(fn.HasKwargs))
+	e.branches(fn.Branches, fn.BranchMech)
+	e.chains(fn.Chains)
 }
 
 func b2i(b bool) int {
@@ -380,7 +410,9 @@ func (d *decoder) function() *Funcode {
 	numKwonlyParams := d.int()
 	hasVarargs := d.int() != 0
 	hasKwargs := d.int() != 0
-	return &Funcode{
+	branches, mech := d.branches()
+	chains := d.chains()
+	fn := &Funcode{
 		// Prog is filled in later.
 		Pos:             id.Pos,
 		Name:            id.Name,
@@ -395,5 +427,106 @@ func (d *decoder) function() *Funcode {
 		NumKwonlyParams: numKwonlyParams,
 		HasVarargs:      hasVarargs,
 		HasKwargs:       hasKwargs,
+		Branches:        branches,
+		BranchMech:      mech,
+		Chains:          chains,
 	}
+	fn.indexBranches()
+	return fn
+}
+
+func (e *encoder) position(p syntax.Position) {
+	e.int(int(p.Line))
+	e.int(int(p.Col))
+}
+
+// branches encodes the branch table: the count, then per branch
+// pc, kind, three positions (cond, chain, keyword), operand, negated,
+// chainid, parentchain, echo, short, flip, cmppc.
+func (e *encoder) branches(bs []Branch, ms []BranchMech) {
+	e.int(len(bs))
+	for i, b := range bs {
+		m := ms[i]
+		e.int(int(b.PC))
+		e.int(int(b.Kind))
+		e.position(b.Cond)
+		e.position(b.Chain)
+		e.position(b.Keyword)
+		e.int(b.Operand)
+		e.int(b2i(b.Negated))
+		e.int(b.ChainID)
+		e.int(b.ParentChain)
+		e.int(b2i(m.Echo))
+		e.int(int(m.Short))
+		e.int(b2i(m.Flip))
+		e.int(m.CmpPC)
+	}
+}
+
+// chains encodes the chain table: the count, then per chain
+// kind, start, parent, parentoperand.
+func (e *encoder) chains(cs []Chain) {
+	e.int(len(cs))
+	for _, c := range cs {
+		e.int(int(c.Kind))
+		e.position(c.Start)
+		e.int(c.Parent)
+		e.int(c.ParentOperand)
+	}
+}
+
+func (d *decoder) chains() []Chain {
+	n := d.int()
+	if n == 0 {
+		return nil
+	}
+	cs := make([]Chain, n)
+	for i := range cs {
+		cs[i] = Chain{
+			Kind:          BranchKind(d.int()),
+			Start:         d.position(),
+			Parent:        d.int(),
+			ParentOperand: d.int(),
+		}
+	}
+	return cs
+}
+
+// position decodes a Position; line 0 is the zero Position (no position).
+func (d *decoder) position() syntax.Position {
+	line := int32(d.int())
+	col := int32(d.int())
+	if line == 0 && col == 0 {
+		return syntax.Position{}
+	}
+	return syntax.MakePosition(d.filename, line, col)
+}
+
+func (d *decoder) branches() ([]Branch, []BranchMech) {
+	n := d.int()
+	if n == 0 {
+		return nil, nil
+	}
+	bs := make([]Branch, n)
+	ms := make([]BranchMech, n)
+	for i := range bs {
+		bs[i] = Branch{
+			PC:          uint32(d.int()),
+			Kind:        BranchKind(d.int()),
+			Cond:        d.position(),
+			Chain:       d.position(),
+			Keyword:     d.position(),
+			Operand:     d.int(),
+			Negated:     d.bool(),
+			ChainID:     d.int(),
+			ParentChain: d.int(),
+		}
+		ms[i] = BranchMech{
+			Echo:  d.bool(),
+			Short: ShortCircuit(d.int()),
+			Flip:  d.bool(),
+			CmpPC: d.int(),
+		}
+	}
+	return bs, ms
 }

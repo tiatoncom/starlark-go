@@ -101,6 +101,16 @@ type Thread struct {
 
 	// proftime holds the accumulated execution time since the last profile event.
 	proftime time.Duration
+
+	// Trace, if not nil, receives the trace events of the interpreter.
+	// See Tracer.
+	Trace *Tracer
+
+	// inTrace is set while a Trace hook runs: Call must not be reached then.
+	inTrace bool
+
+	// traceArgs is the buffer behind the args of OnEnter, reused by each call.
+	traceArgs []Arg
 }
 
 // ExecutionSteps returns the current value of Steps.
@@ -1512,6 +1522,9 @@ func stringRepeat(thread *Thread, s String, n Int) (String, error) {
 // (including one implemented by the host) is still counted. If the budget is
 // exceeded the call fails with an *AllocBudgetError.
 func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
+	if thread.inTrace {
+		panic("starlark: Call from a Tracer hook (a hook must not execute Starlark on the thread it observes)")
+	}
 	c, ok := fn.(Callable)
 	if !ok {
 		return nil, fmt.Errorf("invalid call of non-function (%s)", fn.Type())
