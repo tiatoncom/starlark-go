@@ -291,6 +291,15 @@ func TestRunMutantRetriesAnUnusedVariableOfAPrice(t *testing.T) {
 	}
 }
 
+func TestDropTakesTheSelectorOfAField(t *testing.T) {
+	tree := NewTree(map[string]string{fAlloc: "x\nif err := c.thread.chargeOne(c.have, c.unit); err != nil {\n}\nthread.chargeWork(1)\n"})
+	g := &generator{tree: tree, group: "t"}
+	g.collect(fAlloc, reCallsThread, "error(nil)")
+	if len(g.muts) != 2 || g.muts[0].Before != "c.thread.chargeOne(c.have, c.unit)" || g.muts[1].Before != "thread.chargeWork(1)" {
+		t.Fatalf("%+v", g.muts)
+	}
+}
+
 func TestSelect(t *testing.T) {
 	var all []Mutant
 	for i := 0; i < 20; i++ {

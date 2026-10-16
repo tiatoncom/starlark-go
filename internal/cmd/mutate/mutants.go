@@ -213,8 +213,21 @@ func (g *generator) collect(file string, re *regexp.Regexp, repl string) {
 			g.missing = append(g.missing, fmt.Sprintf("%s:%d: no end of call", file, 1+strings.Count(s[:loc[0]], "\n")))
 			continue
 		}
-		g.add(file, loc[0], e, repl, "DROP "+s[loc[0]:e])
+		// The call of a method of a field (c.thread.chargeOne(...)) is dropped
+		// with the selector in front of it.
+		a := loc[0]
+		for a > 1 && s[a-1] == '.' && isIdentByte(s[a-2]) {
+			a--
+			for a > 0 && isIdentByte(s[a-1]) {
+				a--
+			}
+		}
+		g.add(file, a, e, repl, "DROP "+s[a:e])
 	}
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 // half rewrites the argument x of each call that re matches to (x)/2. For
