@@ -14,7 +14,7 @@
 //
 // What decides the result is explicit: the table of the group (table_struct.go,
 // or the generators of mutants.go for calls and prices), the stages (-stage
-// pkg|run|seconds, repeatable, else the table below), -skip, and the limits.
+// pkg;run;seconds[;skip], repeatable, else the table below), -skip, and the limits.
 // The numbering of the mutants of a group depends on the text of the declared
 // files only; the hash of that text is printed and written to the results
 // (-expect-tree refuses a tree other than the one a numbering was made for).
@@ -37,15 +37,25 @@ import (
 	"time"
 )
 
-// defaultSkip names the tests that measure time or write documents: their
-// result depends on the machine and not on the mutant.
-const defaultSkip = "TestWork_NoProbeCostsMoreThanC|TestMeasure|TestCalibrate|TestWritePricesDoc|TestBudgetIdioms"
+// defaultSkip is the -test.skip of every stage. The tests that measure time or
+// write a document (TestMeasure*, TestCalibrate, TestWritePricesDoc,
+// TestBudgetIdioms, TestWrite*Golden) skip themselves unless an environment
+// variable asks for them, so nothing needs to be named here.
+const defaultSkip = ""
 
-// defaultStages is the table of the stages by group.
+// slowTests are the tests of package starlark that take most of its time (about
+// 95 of 110 seconds on the reference machine, GOMAXPROCS=1). They run in the
+// last stage, so that a mutant killed by any other test does not pay for them.
+const slowTests = "TestPrices_AtLeastTheMeasuredCost|TestDeterminism_StepsAreTheSameInEveryProcess|TestAttacks_AreRefusedAtTheLimitOfWork|TestWork_NoProbeCostsMoreThanC|TestTraceOracle"
+
+// defaultStages is the table of the stages by group. The decider is the whole
+// test suite of both packages, in three stages; a mutant survives only if all
+// three pass. It is the same for every group.
 func defaultStages(group string) []Stage {
 	return []Stage{
-		{Pkg: "starlark", Run: ".", Timeout: 120 * time.Second},
-		{Pkg: "lib/json", Run: ".", Timeout: 120 * time.Second},
+		{Pkg: "starlark", Run: ".", Skip: slowTests, Timeout: 120 * time.Second},
+		{Pkg: "lib/json", Run: ".", Timeout: 60 * time.Second},
+		{Pkg: "starlark", Run: "^(" + slowTests + ")$", Timeout: 300 * time.Second},
 	}
 }
 
@@ -53,15 +63,20 @@ type stageFlags []Stage
 
 func (s *stageFlags) String() string { return fmt.Sprint(*s) }
 func (s *stageFlags) Set(v string) error {
-	parts := strings.Split(v, "|")
-	if len(parts) != 3 {
-		return fmt.Errorf("want pkg|run|seconds, got %q", v)
+	// pkg;run;seconds[;skip]: the patterns hold | so the fields are split by ;
+	parts := strings.Split(v, ";")
+	if len(parts) != 3 && len(parts) != 4 {
+		return fmt.Errorf("want pkg;run;seconds[;skip], got %q", v)
 	}
 	n, err := strconv.Atoi(parts[2])
 	if err != nil || n <= 0 {
 		return fmt.Errorf("bad seconds in %q", v)
 	}
-	*s = append(*s, Stage{Pkg: parts[0], Run: parts[1], Timeout: time.Duration(n) * time.Second})
+	st := Stage{Pkg: parts[0], Run: parts[1], Timeout: time.Duration(n) * time.Second}
+	if len(parts) == 4 {
+		st.Skip = parts[3]
+	}
+	*s = append(*s, st)
 	return nil
 }
 
@@ -96,7 +111,7 @@ func run(args []string, stdout io.Writer) error {
 		slack      = fs.Duration("wall-slack", 20*time.Second, "wall time allowed over the timeout of a stage")
 		stages     stageFlags
 	)
-	fs.Var(&stages, "stage", "stage pkg|run|seconds (repeatable); default: the table of the group")
+	fs.Var(&stages, "stage", "stage pkg;run;seconds[;skip] (repeatable); default: the table of the group")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -232,7 +247,7 @@ func run(args []string, stdout io.Writer) error {
 func stageStrings(st []Stage) []string {
 	var s []string
 	for _, x := range st {
-		s = append(s, fmt.Sprintf("%s|%s|%d", x.Pkg, x.Run, int(x.Timeout.Seconds())))
+		s = append(s, fmt.Sprintf("%s;%s;%d;%s", x.Pkg, x.Run, int(x.Timeout.Seconds()), x.Skip))
 	}
 	return s
 }

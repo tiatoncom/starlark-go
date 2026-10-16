@@ -206,6 +206,45 @@ func TestRunMutantRetriesAnUnusedCall(t *testing.T) {
 	}
 }
 
+func TestStageFlagAndDefaultStages(t *testing.T) {
+	var sf stageFlags
+	if err := sf.Set("starlark;^(A|B)$;30;C|D"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sf.Set("lib/json;.;10"); err != nil {
+		t.Fatal(err)
+	}
+	want := stageFlags{{Pkg: "starlark", Run: "^(A|B)$", Skip: "C|D", Timeout: 30 * time.Second}, {Pkg: "lib/json", Run: ".", Timeout: 10 * time.Second}}
+	if !reflect.DeepEqual(sf, want) {
+		t.Fatalf("%+v", sf)
+	}
+	if err := sf.Set("a;b"); err == nil {
+		t.Fatal("two fields accepted")
+	}
+	// The slow tests the stages name are tests of package starlark.
+	src, err := os.ReadDir("../../../starlark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	for _, e := range src {
+		if strings.HasSuffix(e.Name(), "_test.go") {
+			b, _ := os.ReadFile(filepath.Join("../../../starlark", e.Name()))
+			text.Write(b)
+		}
+	}
+	for _, name := range strings.Split(slowTests, "|") {
+		if !strings.Contains(text.String(), "func "+name+"(") {
+			t.Errorf("slowTests names %s: no such test", name)
+		}
+	}
+	for _, g := range Groups {
+		if len(defaultStages(g)) == 0 {
+			t.Errorf("%s: no stages", g)
+		}
+	}
+}
+
 func TestSelect(t *testing.T) {
 	var all []Mutant
 	for i := 0; i < 20; i++ {

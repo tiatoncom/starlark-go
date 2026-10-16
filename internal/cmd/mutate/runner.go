@@ -28,6 +28,7 @@ const (
 type Stage struct {
 	Pkg     string // package directory relative to the root, e.g. "starlark"
 	Run     string // -test.run
+	Skip    string // -test.skip of this stage, added to Config.Skip
 	Timeout time.Duration
 }
 
@@ -194,8 +195,14 @@ func (l *limitedBuffer) Write(p []byte) (int, error) {
 // runStage runs a built test binary in the directory of its package.
 func (r *Runner) runStage(bin string, st Stage) (verdict, detail string, failed []string) {
 	args := []string{"-test.run", st.Run, "-test.failfast", "-test.count=1", "-test.timeout", fmt.Sprintf("%ds", int(st.Timeout.Seconds()))}
-	if r.Cfg.Skip != "" {
-		args = append(args, "-test.skip", r.Cfg.Skip)
+	var skips []string
+	for _, s := range []string{r.Cfg.Skip, st.Skip} {
+		if s != "" {
+			skips = append(skips, s)
+		}
+	}
+	if len(skips) > 0 {
+		args = append(args, "-test.skip", strings.Join(skips, "|"))
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = filepath.Join(r.T.Root, filepath.FromSlash(st.Pkg))
