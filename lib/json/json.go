@@ -502,9 +502,12 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 	return nil, nil
 }
 
-// short cuts a string that is embedded in an error message.
+// short cuts a string that is embedded in an error message: a key, a field, a
+// number of the script's data is named whole up to 256 bytes, as in v0.2.0,
+// and cut there above it, as the messages of package starlark are (its
+// errValueLimit: the same bound, held by TestCompatibilityDivergencesFromV020).
 func short(s string) string {
-	const max = 96
+	const max = 256
 	if len(s) <= max {
 		return s
 	}

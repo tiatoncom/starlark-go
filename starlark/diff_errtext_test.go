@@ -130,6 +130,10 @@ func errTextKinds() []errTextKind {
 			msg: "format spec features not supported in replacement fields: %s", form: aaa, how: asName, cutFrom: 257},
 		{name: "format: conversion", mk: func(n int) string { return "result = '{0!" + aaa(n) + "}'.format(1)\n" },
 			msg: "format: unknown conversion %s", form: aaa, how: asQuotedName, cutFrom: 257},
+		{name: "json.decode: invalid number", mk: func(n int) string { return "result = json.decode('0" + nines(n) + "')\n" },
+			msg: "json.decode: at offset {len}, invalid number: %s", form: func(n int) string { return "0" + nines(n) }, how: asName, cutFrom: 256},
+		{name: "json.encode: key of a value that fails", mk: func(n int) string { return "result = json.encode({" + str(n) + ": float('inf')})\n" },
+			msg: "json.encode: in dict key %s: cannot encode non-finite float +inf", form: aaa, how: asQuotedName, cutFrom: 257},
 		{name: "%c with a string", mk: func(n int) string { return "result = '%c' % " + str(n) + "\n" }, how: asNone},
 		{name: "int out of range: chr", mk: func(n int) string { return "result = chr(" + nines(n) + ")\n" },
 			msg: "chr: %s out of range", form: nines, how: asInt, cutFrom: 257, msgFrom: 10},
@@ -195,12 +199,18 @@ func (k errTextKind) formCut(n int) string {
 // version, for an operand of size n.
 func (k errTextKind) wantV020(n int) string {
 	if k.how == asQuotedName {
-		return fmt.Sprintf(k.msg, fmt.Sprintf("%q", k.form(n)))
+		return fmt.Sprintf(k.message(n), fmt.Sprintf("%q", k.form(n)))
 	}
-	return fmt.Sprintf(k.msg, k.form(n))
+	return fmt.Sprintf(k.message(n), k.form(n))
 }
 
-func (k errTextKind) wantNow(n int) string { return fmt.Sprintf(k.msg, k.formCut(n)) }
+func (k errTextKind) wantNow(n int) string { return fmt.Sprintf(k.message(n), k.formCut(n)) }
+
+// message is msg, with {len} (the length of the operand, an offset in a
+// message of the decoder) filled in.
+func (k errTextKind) message(n int) string {
+	return strings.ReplaceAll(k.msg, "{len}", fmt.Sprint(len(k.form(n))))
+}
 
 type errTextProg struct {
 	kind errTextKind
