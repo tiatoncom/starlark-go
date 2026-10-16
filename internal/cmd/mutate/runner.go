@@ -95,12 +95,17 @@ func (r *Runner) RunMutant(m Mutant, src string) (res Result, err error) {
 		return res, err
 	}
 	d := r.decide()
-	if d.Verdict == KilledBuild && m.After == "error(nil)" {
-		// The call was an expression the code uses: give it a form that builds.
+	if d.Verdict == KilledBuild && (m.After == "error(nil)" || m.After == "0") {
+		// The span was an expression the code uses (a call, a price): give the
+		// replacement a form that builds, once.
 		alt := ""
-		if x := reUnused.FindStringSubmatch(d.Detail); x != nil {
+		x := reUnused.FindStringSubmatch(d.Detail)
+		switch {
+		case x != nil && m.After == "error(nil)":
 			alt = "func() error { _ = " + x[1] + "; return nil }()"
-		} else if reNotUsed.MatchString(d.Detail) {
+		case x != nil:
+			alt = "func() uint64 { _ = " + x[1] + "; return 0 }()"
+		case reNotUsed.MatchString(d.Detail) && m.After == "error(nil)":
 			alt = "_ = error(nil)"
 		}
 		if alt != "" {

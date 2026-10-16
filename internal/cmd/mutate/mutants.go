@@ -254,7 +254,8 @@ var (
 	reJSONHalf    = regexp.MustCompile(`\b(spend|work\.add|chargeUnits)\(`)
 
 	rePriceReturn = regexp.MustCompile(`return ([^\n{};]+?)\s*\}\)?,?\n`)
-	reFirstReturn = regexp.MustCompile(`return ([^\n]+)\n`)
+	// the expression of a return statement, without the } of a function on one line
+	reFirstReturn = regexp.MustCompile(`return ([^\n]+?)[ \t]*\}?[ \t]*\n`)
 )
 
 func (g *generator) callsGroup() {
@@ -278,7 +279,7 @@ func (g *generator) pricesGroup() {
 		g.zeroAndHalf(fPrices, a, e, "return "+oneLine(s[a:e], 70))
 	}
 	w := g.src(fWork)
-	for _, fn := range []string{"workFast", "workSlow", "workSlots", "workSearch", "iterWork", "insertWork", "words64", "chargeIntToString"} {
+	for _, fn := range []string{"workFast", "workSlow", "workSlots", "workSearch", "iterWork", "insertWork", "words64"} {
 		head := regexp.MustCompile(`func (\([^)]*\) )?` + fn + `\([^)]*\)[^{]*\{`).FindStringIndex(w)
 		if head == nil {
 			g.missing = append(g.missing, fmt.Sprintf("%s: func %s", fWork, fn))

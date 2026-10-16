@@ -245,6 +245,52 @@ func TestStageFlagAndDefaultStages(t *testing.T) {
 	}
 }
 
+// The price mutants of one-line functions replace the expression, not the }.
+func TestPriceMutantsReplaceTheExpressionOnly(t *testing.T) {
+	_, tree := copyTree(t)
+	set, err := Generate(tree, GroupPrices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, m := range set.Mutants {
+		if strings.Contains(m.Before, "\n") || strings.HasSuffix(strings.TrimSpace(m.Before), "}") {
+			t.Errorf("%s: Before %q", m.ID, m.Before)
+		}
+		if m.File == fWork && strings.HasSuffix(m.Note, "workFast") {
+			found++
+			if m.Before != "uint64(max(n, 0)) / 64" {
+				t.Errorf("%s: Before %q", m.ID, m.Before)
+			}
+		}
+	}
+	if found != 2 {
+		t.Errorf("workFast: %d mutants, want ZERO and HALF", found)
+	}
+}
+
+// A price that was zeroed and left a variable unused is tried once more with
+// the variable used.
+func TestRunMutantRetriesAnUnusedVariableOfAPrice(t *testing.T) {
+	root, tree := copyTree(t)
+	target, _ := NewTarget(root)
+	m := Mutant{ID: "x-0000", Group: "x", File: fWork, Start: 0, End: 7, Before: tree.Files[fWork][:7], After: "0"}
+	var seen []string
+	r := &Runner{T: target, Cfg: Config{Stages: []Stage{{Pkg: "starlark", Run: ".", Timeout: time.Second}}, BinDir: t.TempDir()},
+		Exec: func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+			s, _ := target.Read(fWork)
+			seen = append(seen, s[:40])
+			return "starlark/work.go:3:6: declared and not used: s", errors.New("exit 1")
+		}}
+	res, err := r.RunMutant(m, tree.Files[fWork])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || !strings.HasPrefix(seen[1], "func() uint64 { _ = s; return 0 }()") || res.Retry == "" {
+		t.Fatalf("seen %q retry %q", seen, res.Retry)
+	}
+}
+
 func TestSelect(t *testing.T) {
 	var all []Mutant
 	for i := 0; i < 20; i++ {

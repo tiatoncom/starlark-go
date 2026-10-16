@@ -315,8 +315,9 @@ func doneIDs(path string) map[string]bool {
 }
 
 func printReport(w io.Writer, files []string) error {
-	byGroup := map[string]map[string]int{}
-	var survivors []Result
+	// The result of a mutant is the last one written for its id, in the order
+	// of the files given: a later file (a rerun) replaces an earlier one.
+	last := map[string]Result{}
 	for _, path := range files {
 		f, err := os.Open(strings.TrimSpace(path))
 		if err != nil {
@@ -324,23 +325,26 @@ func printReport(w io.Writer, files []string) error {
 		}
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 1<<20), 16<<20)
-		seen := map[string]bool{}
 		for sc.Scan() {
 			var r Result
-			if json.Unmarshal(sc.Bytes(), &r) != nil || r.ID == "" || seen[r.ID] {
+			if json.Unmarshal(sc.Bytes(), &r) != nil || r.ID == "" {
 				continue
 			}
-			seen[r.ID] = true
-			if byGroup[r.Group] == nil {
-				byGroup[r.Group] = map[string]int{}
-			}
-			byGroup[r.Group][r.Verdict]++
-			byGroup[r.Group]["total"]++
-			if r.Verdict == Survived {
-				survivors = append(survivors, r)
-			}
+			last[r.ID] = r
 		}
 		f.Close()
+	}
+	byGroup := map[string]map[string]int{}
+	var survivors []Result
+	for _, r := range last {
+		if byGroup[r.Group] == nil {
+			byGroup[r.Group] = map[string]int{}
+		}
+		byGroup[r.Group][r.Verdict]++
+		byGroup[r.Group]["total"]++
+		if r.Verdict == Survived {
+			survivors = append(survivors, r)
+		}
 	}
 	for _, g := range Groups {
 		c := byGroup[g]
