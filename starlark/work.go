@@ -163,7 +163,7 @@ func (thread *Thread) workExhausted(cur, n uint64) error {
 // limit. (The interpreter compares one number at every step, as it did.)
 func (thread *Thread) regate() {
 	gate := thread.userMaxSteps
-	if gate == 0 {
+	if gate == 0 && !thread.zeroStops {
 		gate = math.MaxUint64
 	}
 	if thread.maxWork != 0 {
@@ -180,7 +180,7 @@ func (thread *Thread) regate() {
 // host's step limit (OnMaxSteps, or Cancel("too many steps")) if it is that,
 // and the work limit if it is that.
 func (thread *Thread) stepGate() {
-	if thread.userMaxSteps != 0 && thread.Steps >= thread.userMaxSteps {
+	if (thread.userMaxSteps != 0 || thread.zeroStops) && thread.Steps >= thread.userMaxSteps {
 		if thread.OnMaxSteps != nil {
 			thread.OnMaxSteps(thread)
 		} else {

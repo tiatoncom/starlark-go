@@ -70,6 +70,12 @@ type Thread struct {
 	// the step at which the work limit is reached (work.go).
 	userMaxSteps uint64
 
+	// zeroStops is set when SetMaxExecutionSteps(0) was called on a thread
+	// that has run before: as in v0.2.0, where the limit was the gate itself,
+	// the limit is then 0 steps, not "none" (which a limit of 0 means on a
+	// thread that has not run).
+	zeroStops bool
+
 	// callDepth is the limit of the depth of the stack of calls set by
 	// SetMaxCallStackDepth (0: DefaultMaxCallStackDepth), and active the
 	// number of active calls of each function when the stack is deep (see
@@ -123,8 +129,13 @@ func (thread *Thread) ExecutionSteps() uint64 {
 // thread's step counter exceeds this limit, the interpreter calls
 // the optional OnMaxSteps function or the default behavior
 // of calling thread.Cancel("too many steps").
+//
+// A limit of 0 means no limit on a thread that has not run yet; on a thread
+// that has run (or while it runs) it is a limit of 0 steps, as it has always
+// been: the next step is over it.
 func (thread *Thread) SetMaxExecutionSteps(max uint64) {
 	thread.userMaxSteps = max
+	thread.zeroStops = max == 0 && thread.stack != nil
 	thread.regate()
 }
 
