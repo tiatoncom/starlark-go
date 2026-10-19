@@ -31,6 +31,56 @@ func pathSetProblem(w *valueWriter, depth int) string {
 	return ""
 }
 
+// onPathProblem says what is wrong with onPath of a writer of the depth
+// pathSetDepth (the first in which the set exists): it must consult the set
+// and nothing else from there on (a container that is only in the set is
+// found, one that is only in the slice is not), and the path below. The json
+// twin is TestEncodePath_ContainsConsultsTheSetFromTheThreshold.
+func onPathProblem(onPath func(w *valueWriter, x Value) bool) string {
+	var out sink
+	w := valueWriter{out: &out, limit: maxAlloc}
+	for i := 0; i < pathSetDepth-1; i++ {
+		w.push(NewList(nil))
+	}
+	onlyInSet, onlyInSlice := NewList(nil), NewList(nil)
+	if w.pathSet != nil {
+		return "a set below the threshold"
+	}
+	if !onPath(&w, w.path[0]) || onPath(&w, onlyInSet) {
+		return "below the threshold onPath does not search the path"
+	}
+	w.push(NewList(nil)) // the threshold
+	if w.pathSet == nil {
+		return "no set at the threshold"
+	}
+	w.pathSet[onlyInSet] = struct{}{}
+	if !onPath(&w, onlyInSet) {
+		return "a container that is only in the set is not found: onPath does not consult the set"
+	}
+	w.path = append(w.path, onlyInSlice)
+	if onPath(&w, onlyInSlice) {
+		return "a container that is only in the slice is found: onPath searches the slice, not the set"
+	}
+	return ""
+}
+
+func TestPathSet_OnPathConsultsTheSetFromTheThreshold(t *testing.T) {
+	if p := onPathProblem((*valueWriter).onPath); p != "" {
+		t.Error(p)
+	}
+	// The check is not vacuous: onPath as a linear search of the path (what
+	// onPath without the set is) is a problem, and so is one that looks at
+	// the set only (below the threshold too).
+	linear := func(w *valueWriter, x Value) bool { return pathContains(w.path, x) }
+	if onPathProblem(linear) == "" {
+		t.Error("an onPath that searches the slice is not detected")
+	}
+	setOnly := func(w *valueWriter, x Value) bool { _, ok := w.pathSet[x]; return ok }
+	if onPathProblem(setOnly) == "" {
+		t.Error("an onPath that never searches the path is not detected")
+	}
+}
+
 func TestPathSet_ValueWriterHoldsThePathBeyondTheFirstLevels(t *testing.T) {
 	var out sink
 	w := valueWriter{out: &out, limit: maxAlloc}

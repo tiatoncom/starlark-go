@@ -365,6 +365,13 @@ var calibrationProbes = []probe{
 	{"json.encode(list of str)", "l = ['abcdefghij'] * 200000", "r = json.encode(l)"},
 	{"json.encode(dict)", "d = {'key%d' % i: i for i in range(100000)}", "r = json.encode(d)"},
 	{"json.encode(nested lists)", "l = [[i, [i]] for i in range(100000)]", "r = json.encode(l)"},
+	// G4a: the depth of an encoded value (the deep-form rule of DeepFormWork),
+	// and the digits of an int (IntToStringWork). (The failing form, an
+	// encoding that ends in the error of the depth, is an ERROR of the probe
+	// and is not one.)
+	{"json.encode(list nested 9500)", "x = []\nfor i in range(9500):\n    x = [x]", "r = json.encode(x)"},
+	{"json.encode(dict nested 5000)", "x = {}\nfor i in range(5000):\n    x = {'a': x}", "r = json.encode(x)"},
+	{"json.encode(int of 4300 digits)", "n = int('1' + '0' * 4299)", "for i in range(100):\n    r = json.encode(n)"},
 	{"json.encode(non-ascii str)", "l = ['é' * 100] * 5000", "r = json.encode(l)"},
 	{"json.decode(list of int)", "s = json.encode(list(range(300000)))", "r = json.decode(s)"},
 	{"json.decode(list of str)", "s = json.encode(['abcdefghij'] * 200000)", "r = json.decode(s)"},

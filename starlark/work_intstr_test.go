@@ -213,8 +213,8 @@ func TestIsInOnLongOperands(t *testing.T) {
 // isWindowBound is the bytes that searchCharged has charged when the match of
 // a needle of m bytes that starts at pos in a haystack of total bytes is found
 // (searching from the end if last): the end of the window that finds it. The
-// windows are the ones of searchCharged: the first of max(64, m) bytes, each
-// next twice as long up to max(1024 * the divisor of m, m). A window that ends
+// windows are the ones of searchCharged: the first of max(64, 2*m) bytes, each
+// next twice as long up to max(1024 * the divisor of m, 16*m). A window that ends
 // at next searches s[done : next+m-1] (from the front) or s[total-next-m+1 :
 // total-done] (from the end), so the match at pos is found by the first window
 // with pos < next (front), or pos >= total-next-m+1 (end).
@@ -229,8 +229,8 @@ func isWindowBound(total, pos, m int, last bool) int {
 	default:
 		div = 4
 	}
-	chunk := max(1024*div, m)
-	step := max(64, m)
+	chunk := max(1024*div, 16*m)
+	step := max(64, 2*m)
 	for done := 0; done < total; {
 		next := min(total, done+step)
 		if (!last && pos < next) || (last && pos >= total-next-m+1) {

@@ -103,12 +103,10 @@ func (e *WorkBudgetError) Error() string {
 // itself (load) are not limited unless the host sets the limit on each.
 func (thread *Thread) SetMaxWork(max uint64) {
 	thread.maxWork = max
-	// A refusal of an earlier limit is stale once the thread is no longer
-	// cancelled by it (a host that Uncancels and sets the next limit, in either
-	// order): left, it would keep the gate of the new limit shut.
-	if r := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); r == nil || *(*string)(r) != workCancelReason {
-		thread.workErr.Store(nil)
-	}
+	// (The refusal of an earlier limit, workErr, is cleared by Uncancel, the
+	// only way the thread stops being cancelled by it: a host that sets the
+	// next limit before or after Uncancel gets the same, see
+	// TestG1aStaleWorkErrorAfterUncancel. A clear here was dead.)
 	thread.regate()
 }
 
