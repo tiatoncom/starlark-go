@@ -57,7 +57,7 @@ func TestFixed_TheCallbackOfABuiltin(t *testing.T) {
 	}
 }
 
-// A call that is more than recursionScanDepth frames deep is charged 56 units.
+// A call that is more than recursionScanDepth frames deep is charged deepCallWork (120) units.
 func TestFixed_TheCallThatIsDeep(t *testing.T) {
 	deep := func(n int) uint64 {
 		var b strings.Builder
@@ -67,10 +67,20 @@ func TestFixed_TheCallThatIsDeep(t *testing.T) {
 		}
 		return extraOf(t, b.String(), "r = f0()")
 	}
-	d20, d70 := deep(20), deep(70)
-	// 50 more levels, of which those past the 32nd (38 calls) pay
-	if got, want := d70-d20, uint64(38*56); got < want {
-		t.Errorf("70 levels were charged %d units more than 20, want at least %d for the deep calls", got, want)
+	d20, d25, d70 := deep(20), deep(25), deep(70)
+	// the shallow levels cost the same each, and no level of 25 is deep
+	if (d25-d20)%5 != 0 {
+		t.Fatalf("5 shallow levels were charged %d units, not a whole number each", d25-d20)
+	}
+	shallow := (d25 - d20) / 5
+	// deep(70) is 71 functions and the module, 72 frames: the calls into frames
+	// 33..72 (40 calls) pay deepCallWork, deep(20) has none: the price is pinned exactly, so a change of it is a conscious edit
+	// (and of the golden of the prices, and of the calibration).
+	if got, want := d70-d20, 50*shallow+40*120; got != want {
+		t.Errorf("70 levels were charged %d units more than 20, want exactly %d (50 shallow levels of %d, 40 deep calls of 120)", got, want, shallow)
+	}
+	if deepCallWork != 120 {
+		t.Errorf("deepCallWork is %d, this test pins 120", deepCallWork)
 	}
 	if d20 > 20*4+8 {
 		t.Errorf("20 levels were charged %d units beyond the steps: a deep price on a shallow stack", d20)

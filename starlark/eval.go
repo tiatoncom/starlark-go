@@ -2178,8 +2178,15 @@ const recursionScanDepth = 32
 const callbackWork = 3
 
 // deepCallWork is the work of a call that is more than recursionScanDepth
-// frames deep.
-const deepCallWork = 56
+// frames deep. A deep call is dear in time because the Go stack of the
+// goroutine grows (every growth is a memmove of the whole stack, and the
+// memmove is bound by the memory bandwidth, not by the speed of the
+// interpreter). Measured, a call of a chain of 20000 functions costs about
+// 500 ns on darwin/arm64 and about 3500 ns on linux/amd64 (Intel N200, a test
+// stand). The price is set so that the calibration probe "chain of 20000
+// functions" is under about 29 ns per unit on the slowest measured machine,
+// as the other probes are.
+const deepCallWork = 120
 
 // enterFunction reports an error if fn is active: called, and not returned
 // from. The funcode is compared, not the function value, otherwise the user
