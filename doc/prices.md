@@ -349,6 +349,7 @@ The units of work are the same on every platform; C turns them into time on a gi
 | platform | machine | date | C (ns / unit) | worst probe | ns / unit |
 |---|---|---|---|---|---|
 | darwin/arm64 | darwin/arm64, Go 1.26 | 2026-10-01 | 12 | any(l) all falsy | 11.7 |
+| linux/amd64 | linux/amd64, go1.26.3, Intel(R) N200 | 2026-10-19 | 34 | f(**d), 60000 keys | 29.5 |
 
 ## The prices
 
