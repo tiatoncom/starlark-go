@@ -462,6 +462,19 @@ func smallCorpus() []string {
 	return uniq(append(deterministicCorpus(), randomCorpus(3000, 7)...))
 }
 
+// refuseInV030 stops a writer of the goldens of v0.2.0 that runs in a tree of
+// this version: the goldens are the output of v0.2.0, and a rewrite by this
+// version would make the differential compare it with itself. The marker of
+// the tree of this version is work.go in the package directory (the test's
+// working directory), which v0.2.0 does not have.
+func refuseInV030(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat("work.go"); err == nil {
+		t.Fatalf("%s refuses to write: this is a tree of v0.3.0 (work.go is here), and the goldens of v0.2.0 are the output of v0.2.0; "+
+			"run it in a tree of v0.2.0 (commit d34a821, with the writers copied there) with STARLARK_WRITE_GOLDEN=<the starlark directory of that tree>", t.Name())
+	}
+}
+
 func writeGolden(t *testing.T, path string, progs []string) {
 	f, err := os.Create(path)
 	if err != nil {
@@ -504,6 +517,7 @@ func TestWriteDiffGolden(t *testing.T) {
 	if dir == "" {
 		t.Skip("set STARLARK_WRITE_GOLDEN to write the golden files (in a tree of v0.2.0)")
 	}
+	refuseInV030(t)
 	writeGolden(t, dir+"/"+goldenSmall, smallCorpus())
 	writeGolden(t, dir+"/"+goldenBig, uniq(bigCorpus()))
 	writeGolden(t, dir+"/"+goldenReview, uniq(reviewCorpus()))

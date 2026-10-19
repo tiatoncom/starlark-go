@@ -171,6 +171,7 @@ func TestWriteCompatGolden(t *testing.T) {
 	if dir == "" {
 		t.Skip("set STARLARK_WRITE_GOLDEN to write the golden file (in a tree of v0.2.0)")
 	}
+	refuseInV030(t)
 	var progs []string
 	for _, c := range compatCases() {
 		progs = append(progs, c.Src)

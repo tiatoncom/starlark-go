@@ -180,6 +180,7 @@ func TestWriteB5Golden(t *testing.T) {
 	if dir == "" {
 		t.Skip("set STARLARK_WRITE_GOLDEN to write the golden file (in a tree of v0.2.0)")
 	}
+	refuseInV030(t)
 	writeGolden(t, dir+"/"+goldenB5, b5Corpus())
 }
 

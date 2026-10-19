@@ -339,6 +339,7 @@ func TestWriteLimitsGolden(t *testing.T) {
 	if dir == "" {
 		t.Skip("set STARLARK_WRITE_GOLDEN to write the golden file (in a tree of v0.2.0)")
 	}
+	refuseInV030(t)
 	writeLimitsGolden(t, dir+"/"+goldenLimits)
 }
 
