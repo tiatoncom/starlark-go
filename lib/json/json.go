@@ -23,6 +23,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"go.starlark.net/internal/sizes"
 	"go.starlark.net/starlark"
 	"go.starlark.net/starlarkstruct"
 )
@@ -417,12 +418,12 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 			items := x.Items()
 			if garbage != nil {
 				// The items are allocated, so they are charged.
-				n := satMul(uint64(len(items)), jsonItemBytes)
+				n := sizes.MulU64(uint64(len(items)), jsonItemBytes)
 				if err := thread.ChargeAlloc(n); err != nil {
 					stop = err
 					return err
 				}
-				*garbage = satAdd(*garbage, n)
+				*garbage = sizes.AddU64(*garbage, n)
 			}
 			var keyBytes uint64
 			for _, item := range items {
@@ -668,14 +669,18 @@ func short(s string) string {
 
 // quotedLenASCII is len(strconv.AppendQuote(nil, s)) for a string of
 // printable ASCII: the quotes, and a backslash before " and \.
-func quotedLenASCII(s string) int {
-	n := len(s) + 2
+func quotedLenASCII(s string) int { return quotedLenASCIIFrom(sizes.Add(len(s), 2), s) }
+
+// quotedLenASCIIFrom adds to n what the escapes of s take (n is the length of
+// s and the quotes: a parameter, so that the sums near the largest int are
+// held by a test).
+func quotedLenASCIIFrom(n int, s string) int {
 	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '"', '\\':
-			n++
+			n = sizes.Add(n, 1)
 		case 0x7f:
-			n += 3 // strconv.Quote writes \x7f
+			n = sizes.Add(n, 3) // strconv.Quote writes \x7f
 		}
 	}
 	return n
@@ -683,18 +688,21 @@ func quotedLenASCII(s string) int {
 
 // quotedLen is len(json.Marshal(s)): what encoding/json writes for a string
 // (with HTML escaping, which Marshal applies).
-func quotedLen(s string) int {
-	n := 2
+func quotedLen(s string) int { return quotedLenFrom(2, s) }
+
+// quotedLenFrom adds to n the length of what encoding/json writes for s,
+// without its quotes (see quotedLenASCIIFrom).
+func quotedLenFrom(n int, s string) int {
 	for i := 0; i < len(s); {
 		b := s[i]
 		if b < utf8.RuneSelf {
 			switch {
 			case b == '"' || b == '\\' || b == '\b' || b == '\f' || b == '\n' || b == '\r' || b == '\t':
-				n += 2
+				n = sizes.Add(n, 2)
 			case b < 0x20 || b == '<' || b == '>' || b == '&':
-				n += 6
+				n = sizes.Add(n, 6)
 			default:
-				n++
+				n = sizes.Add(n, 1)
 			}
 			i++
 			continue
@@ -702,11 +710,11 @@ func quotedLen(s string) int {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
 		case r == utf8.RuneError && size == 1:
-			n += 6 // \ufffd
+			n = sizes.Add(n, 6) // \ufffd
 		case r == '\u2028' || r == '\u2029':
-			n += 6
+			n = sizes.Add(n, 6)
 		default:
-			n += size
+			n = sizes.Add(n, size)
 		}
 		i += size
 	}
@@ -727,22 +735,6 @@ func allocErr(b *starlark.Builtin, err error) error {
 	return fmt.Errorf("%s: %v", b.Name(), err)
 }
 
-func satAdd(a, b uint64) uint64 {
-	s, carry := bits.Add64(a, b, 0)
-	if carry != 0 {
-		return math.MaxUint64
-	}
-	return s
-}
-
-func satMul(a, b uint64) uint64 {
-	hi, lo := bits.Mul64(a, b)
-	if hi != 0 {
-		return math.MaxUint64
-	}
-	return lo
-}
-
 // indentSize returns an upper bound of the length of json.Indent(s, prefix,
 // indent): s itself, and for each element or bracket that starts a new line,
 // the newline, the prefix and as many copies of indent as the nesting depth.
@@ -753,7 +745,7 @@ func indentSize(s, prefix, indent string) uint64 {
 	size := uint64(len(s))
 	depth := uint64(0)
 	newline := func() {
-		size = satAdd(size, satAdd(1+uint64(len(prefix)), satMul(depth, uint64(len(indent)))))
+		size = sizes.AddU64(size, sizes.AddU64(1+uint64(len(prefix)), sizes.MulU64(depth, uint64(len(indent)))))
 	}
 	inString := false
 	for i := 0; i < len(s); i++ {
@@ -819,6 +811,11 @@ func indentString(thread *starlark.Thread, b *starlark.Builtin, str, prefix, ind
 	// (~1.7 ns a byte, and the indentation of a deep value is most of it).
 	if err := chargeUnits(thread, uint64(len(str))/4+size/8); err != nil {
 		return "", err
+	}
+	if size > math.MaxInt {
+		// (more than an int holds, as a platform of 32-bit ints reaches it:
+		// ChargeAlloc refuses a size like this unless the budget is unlimited)
+		return "", allocErr(b, errors.New("excessive size"))
 	}
 	var buf bytes.Buffer
 	buf.Grow(int(size))
@@ -1301,11 +1298,14 @@ func unquoteGrowthBytes(m, res int) uint64 {
 		m = 0
 	}
 	var sum uint64
-	for n := m + 2*utf8.UTFMax; res > n-2*utf8.UTFMax; {
-		n = (n + utf8.UTFMax) * 2
-		sum += uint64(n)
+	for n := sizes.Add(m, 2*utf8.UTFMax); res > n-2*utf8.UTFMax; {
+		n = sizes.Mul(sizes.Add(n, utf8.UTFMax), 2)
+		sum = sizes.AddU64(sum, uint64(n))
+		if n == math.MaxInt {
+			break // (saturated: the sum is not a size that is allocated)
+		}
 	}
-	return sum + sum/8
+	return sizes.AddU64(sum, sum/8)
 }
 
 // A hostCache keeps the results of the MarshalJSON of host values, in the
@@ -1342,7 +1342,7 @@ type outBuf struct {
 func (o *outBuf) Len() int { return o.n }
 
 func (o *outBuf) room(n int) {
-	if o.probe > 0 && !o.counting && o.n+n > o.probe {
+	if o.probe > 0 && !o.counting && sizes.Add(o.n, n) > o.probe {
 		o.counting = true
 		o.b = strings.Builder{}
 	}
@@ -1353,7 +1353,7 @@ func (o *outBuf) room(n int) {
 func (o *outBuf) skip(n int) bool {
 	o.room(n)
 	if o.counting {
-		o.n += n
+		o.n = sizes.Add(o.n, n)
 		return true
 	}
 	return false
@@ -1361,7 +1361,7 @@ func (o *outBuf) skip(n int) bool {
 
 func (o *outBuf) Write(p []byte) (int, error) {
 	o.room(len(p))
-	o.n += len(p)
+	o.n = sizes.Add(o.n, len(p))
 	if !o.counting {
 		o.b.Write(p)
 	}
@@ -1370,7 +1370,7 @@ func (o *outBuf) Write(p []byte) (int, error) {
 
 func (o *outBuf) WriteString(s string) (int, error) {
 	o.room(len(s))
-	o.n += len(s)
+	o.n = sizes.Add(o.n, len(s))
 	if !o.counting {
 		o.b.WriteString(s)
 	}
@@ -1379,7 +1379,7 @@ func (o *outBuf) WriteString(s string) (int, error) {
 
 func (o *outBuf) WriteByte(c byte) error {
 	o.room(1)
-	o.n++
+	o.n = sizes.Add(o.n, 1)
 	if !o.counting {
 		o.b.WriteByte(c)
 	}
