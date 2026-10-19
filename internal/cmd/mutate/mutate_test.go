@@ -454,3 +454,72 @@ func TestRefusesAMainWorktree(t *testing.T) {
 		t.Errorf("-list in a main worktree: %v", err)
 	}
 }
+
+// A gitdir file is not enough: a separate-git-dir repository and a submodule
+// have one, and are not linked worktrees (their gitdir is not inside
+// <common git dir>/worktrees/).
+func TestRefusesAGitdirThatIsNotALinkedWorktree(t *testing.T) {
+	base := t.TempDir()
+	sep := filepath.Join(base, "sep")
+	if err := os.Mkdir(sep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, base, "init", "-q", "--separate-git-dir", filepath.Join(base, "sep.git"), sep)
+	if st, err := os.Lstat(filepath.Join(sep, ".git")); err != nil || st.IsDir() {
+		t.Fatalf("setup: .git of a separate-git-dir repo should be a file: %v", err)
+	}
+	if err := requireLinkedWorktree(sep); err == nil || !strings.Contains(err.Error(), "not a linked worktree") {
+		t.Errorf("separate-git-dir: %v", err)
+	}
+
+	// A submodule: .git is a relative gitdir file into .git/modules/<name>.
+	super := filepath.Join(base, "super")
+	mod := filepath.Join(super, ".git", "modules", "sub")
+	sub := filepath.Join(super, "sub")
+	for _, d := range []string{mod, sub} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sub, ".git"), []byte("gitdir: ../.git/modules/sub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireLinkedWorktree(sub); err == nil || !strings.Contains(err.Error(), "not a linked worktree") {
+		t.Errorf("submodule: %v", err)
+	}
+	// Even with a commondir, a gitdir outside <common>/worktrees/ is refused.
+	if err := os.WriteFile(filepath.Join(mod, "commondir"), []byte("../..\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireLinkedWorktree(sub); err == nil {
+		t.Error("a gitdir outside worktrees/ was accepted")
+	}
+}
+
+// -resume reruns the ids whose last verdict is not final (crashed, timeout,
+// memory) and skips only killed-test, killed-build and survived.
+func TestResumeRerunsNonFinalVerdicts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "out.jsonl")
+	lines := []string{
+		`{"header":{"tree":"x"}}`,
+		`{"id":"a","verdict":"killed-test"}`,
+		`{"id":"b","verdict":"killed-build"}`,
+		`{"id":"c","verdict":"survived"}`,
+		`{"id":"d","verdict":"crashed"}`,
+		`{"id":"e","verdict":"timeout"}`,
+		`{"id":"f","verdict":"memory"}`,
+		`{"id":"g","verdict":"crashed"}`,
+		`{"id":"g","verdict":"killed-test"}`, // rerun: final now
+		`{"id":"h","verdict":"survived"}`,
+		`{"id":"h","verdict":"timeout"}`, // a later non-final replaces
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := doneIDs(path)
+	for id, want := range map[string]bool{"a": true, "b": true, "c": true, "d": false, "e": false, "f": false, "g": true, "h": false} {
+		if done[id] != want {
+			t.Errorf("done[%s] = %v, want %v", id, done[id], want)
+		}
+	}
+}

@@ -38,11 +38,12 @@ const (
 	fInt    = "starlark/int.go"
 	fForm   = "starlark/form.go"
 	fJSON   = "lib/json/json.go"
+	fSizes  = "internal/sizes/sizes.go"
 )
 
 // DeclaredFiles are the files the mutants of any group are made in.
 var DeclaredFiles = []string{
-	fEval, fLib, fValue, fAlloc, fInterp, fHash, fCmp, fWork, fPrices, fSort, fInt, fForm, fJSON,
+	fEval, fLib, fValue, fAlloc, fInterp, fHash, fCmp, fWork, fPrices, fSort, fInt, fForm, fJSON, fSizes,
 }
 
 // Mutant is one change of one span of one file. Start and End are byte

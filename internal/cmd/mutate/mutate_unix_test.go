@@ -189,3 +189,57 @@ func TestInterruptKillsChildrenAndRestoresFiles(t *testing.T) {
 		t.Error("the target accepted a write after the interrupt")
 	}
 }
+
+// SIGHUP (the terminal closes) is handled like SIGINT and SIGTERM.
+func TestSighupKillsChildrenAndRestoresFiles(t *testing.T) {
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	r, tree := scriptRunner(t, sleeper(pidfile))
+	if err := r.T.Write(fWork, "garbage"); err != nil {
+		t.Fatal(err)
+	}
+	code := make(chan int, 1)
+	stop := r.HandleInterrupts(tree.Files, func(c int) { code <- c })
+	defer stop()
+	done := make(chan Result, 1)
+	go func() { done <- r.decide() }()
+	pid := waitPid(t, pidfile)
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case c := <-code:
+		if c != 130 {
+			t.Errorf("exit code %d", c)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the handler did not run on SIGHUP")
+	}
+	waitReturn(t, done)
+	waitDead(t, pid)
+	if got, _ := r.T.ReadTree(); got.Hash != tree.Hash {
+		t.Error("the files are not restored")
+	}
+}
+
+// A child that cannot be started is crashed, not killed-build or killed-test.
+func TestStartFailureIsCrashed(t *testing.T) {
+	r, _ := scriptRunner(t, "")
+	r.Exec = nil
+	st := Stage{Pkg: "starlark", Run: ".", Timeout: 5 * time.Second}
+	v, detail, _ := r.runStage(filepath.Join(t.TempDir(), "missing.test"), st)
+	if v != Crashed || !strings.Contains(detail, "no such file") {
+		t.Errorf("missing test binary: %s %q", v, detail)
+	}
+	noexec := filepath.Join(t.TempDir(), "noexec.test")
+	if err := os.WriteFile(noexec, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if v, detail, _ := r.runStage(noexec, st); v != Crashed || !strings.Contains(detail, "permission") {
+		t.Errorf("no permission: %s %q", v, detail)
+	}
+	// The go tool itself is missing (the build stage).
+	t.Setenv("PATH", t.TempDir())
+	if res := r.decide(); res.Verdict != Crashed || !strings.Contains(res.Detail, "start:") {
+		t.Errorf("go missing: %s %q", res.Verdict, res.Detail)
+	}
+}

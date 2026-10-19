@@ -296,6 +296,32 @@ func requireLinkedWorktree(root string) error {
 	if err != nil || !strings.HasPrefix(string(b), "gitdir:") {
 		return fmt.Errorf("-root %s: .git is not a worktree link (no \"gitdir:\"): %s", root, hint)
 	}
+	// A linked worktree's gitdir is <common dir>/worktrees/<name>, and holds a
+	// commondir file. A separate-git-dir repository or a submodule has a gitdir
+	// file too, but is the home of work, not a linked worktree.
+	gitdir := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(string(b), "\n", 2)[0], "gitdir:"))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(root, gitdir)
+	}
+	bad := func(why string) error {
+		return fmt.Errorf("-root %s: .git points to %s, which is not a linked worktree of a repository (%s): %s", root, gitdir, why, hint)
+	}
+	cd, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		return bad("no commondir; a separate git dir or a submodule")
+	}
+	common := strings.TrimSpace(string(cd))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitdir, common)
+	}
+	realGitdir, err1 := filepath.EvalSymlinks(gitdir)
+	realCommon, err2 := filepath.EvalSymlinks(common)
+	if err1 != nil || err2 != nil {
+		return bad("cannot resolve the git dirs")
+	}
+	if filepath.Dir(realGitdir) != filepath.Join(realCommon, "worktrees") {
+		return bad("not inside <common git dir>/worktrees/")
+	}
 	return nil
 }
 
@@ -346,7 +372,13 @@ func doneIDs(path string) map[string]bool {
 	for sc.Scan() {
 		var r Result
 		if json.Unmarshal(sc.Bytes(), &r) == nil && r.ID != "" {
-			done[r.ID] = true
+			// The last verdict of an id decides; only a final one is done.
+			switch r.Verdict {
+			case KilledTest, KilledBuild, Survived:
+				done[r.ID] = true
+			default: // crashed, timeout, memory: not final, run again
+				delete(done, r.ID)
+			}
 		}
 	}
 	return done

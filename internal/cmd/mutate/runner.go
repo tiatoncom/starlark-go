@@ -102,6 +102,13 @@ type Runner struct {
 
 var errStopped = errors.New("the tool is stopping")
 
+// startError is a child that could not be started (the binary is missing, no
+// permission): not a verdict about the mutant, so it is crashed, not a kill.
+type startError struct{ err error }
+
+func (e *startError) Error() string { return "start: " + e.err.Error() }
+func (e *startError) Unwrap() error { return e.err }
+
 // begin starts cmd (already in a process group of its own) and registers its
 // group, unless the runner is stopped.
 func (r *Runner) begin(cmd *exec.Cmd) error {
@@ -111,7 +118,7 @@ func (r *Runner) begin(cmd *exec.Cmd) error {
 		return errStopped
 	}
 	if err := cmd.Start(); err != nil {
-		return err
+		return &startError{err}
 	}
 	if r.groups == nil {
 		r.groups = map[int]bool{}
@@ -160,12 +167,12 @@ func (r *Runner) Interrupt(pristine map[string]string) error {
 	return r.T.Freeze(pristine)
 }
 
-// HandleInterrupts calls Interrupt on SIGINT or SIGTERM, says whether the files
+// HandleInterrupts calls Interrupt on SIGINT, SIGTERM or SIGHUP, says whether the files
 // were restored, and calls exit(130). The returned func stops the handler.
 func (r *Runner) HandleInterrupts(pristine map[string]string, exit func(int)) (stop func()) {
 	sig := make(chan os.Signal, 1)
 	quit := make(chan struct{})
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		select {
 		case <-sig:
@@ -269,6 +276,13 @@ func (r *Runner) decide() Result {
 			bin = filepath.Join(r.Cfg.BinDir, strings.ReplaceAll(st.Pkg, "/", "_")+".test")
 			out, err := r.exec(context.Background(), r.T.Root, r.env(false), "go", "test", "-c", "-o", bin, "./"+st.Pkg+"/")
 			res.BuildSeconds += time.Since(t0).Seconds()
+			var se *startError
+			if errors.As(err, &se) {
+				res.Verdict = Crashed
+				res.Detail = cut(se.Error(), r.buildCut())
+				res.StageIndex = i
+				return res
+			}
 			if err != nil {
 				res.Verdict = KilledBuild
 				res.Detail = cut(strings.TrimSpace(out), r.buildCut())
@@ -353,7 +367,7 @@ func (r *Runner) runStage(bin string, st Stage) (verdict, detail string, failed 
 	cmd.WaitDelay = 5 * time.Second
 	setProcessGroup(cmd)
 	if err := r.begin(cmd); err != nil {
-		return KilledBuild, "start: " + err.Error(), nil
+		return Crashed, err.Error(), nil // errStopped too: the caller parks
 	}
 	defer r.end(cmd.Process.Pid)
 	done := make(chan error, 1)
