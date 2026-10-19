@@ -988,6 +988,11 @@ func ord(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 		s := string(x)
 		r, sz := utf8.DecodeRuneInString(s)
 		if sz == 0 || sz != len(s) {
+			// The text of the error counts the runes of the whole string: a
+			// rune pass, charged as the others are, before it is made.
+			if err := thread.chargeWork(workRunes(len(s))); err != nil {
+				return nil, err
+			}
 			n := utf8.RuneCountInString(s)
 			return nil, fmt.Errorf("ord: string encodes %d Unicode code points, want 1", n)
 		}

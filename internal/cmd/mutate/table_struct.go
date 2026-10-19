@@ -292,4 +292,11 @@ func (g *generator) structGroup() {
 	s(fJSON, `work.add(starlark.IntToStringWork(bi, true))`, `work.add(0)`, `json.encode: the conversion of a big int is free (IntToStringWork)`)
 	s(fJSON, `thread.ChargeAlloc(hostSlotBytes + uint64(len(data)))`, `thread.ChargeAlloc(hostSlotBytes)`, `json.encode: the copy of the host value is not charged (only its slot)`)
 	s(fJSON, `for n := sizes.Add(m, 2*utf8.UTFMax); res > n-2*utf8.UTFMax; {`, `for n := sizes.Add(m, 2*utf8.UTFMax); res > n; {`, `unquoteGrowthBytes: the buffer is made again too late (only when the result passes its end)`)
+	s(fLib, `if err := thread.chargeWork(workRunes(len(s))); err != nil {
+				return nil, err
+			}
+			n := utf8.RuneCountInString(s)`, `if err := thread.chargeWork(0); err != nil {
+				return nil, err
+			}
+			n := utf8.RuneCountInString(s)`, `ord: the rune pass of the error text is not charged (workRunes, before the count)`)
 }

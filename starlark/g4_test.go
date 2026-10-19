@@ -1,6 +1,7 @@
 package starlark
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,32 @@ func TestG4TupleOnThePathAndACycle(t *testing.T) {
 	s := string(v.(String))
 	if !strings.Contains(s, "[...]") || !strings.HasPrefix(s, "[((((") {
 		t.Errorf("str of the cycle: %q", s)
+	}
+}
+
+// ord of a string of more than one rune counts its runes for the error text
+// (v0.2.0's, unchanged): the count is a rune pass and is charged workRunes of
+// the bytes, before it is made, like the other rune passes (it was n/96:
+// 2.45x C for a string of 50 MB).
+func TestG4OrdOfALongStringChargesTheRunePass(t *testing.T) {
+	const n = 1 << 20
+	s := String(strings.Repeat("x", n))
+	th := &Thread{}
+	_, err := ExecFile(th, "ord.star", "ord(L)", StringDict{"L": s})
+	const want = "ord: string encodes 1048576 Unicode code points, want 1"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err %v, want it to contain %q", err, want)
+	}
+	if got := th.Work(); got < workRunes(n) || got > workRunes(n)+100 {
+		t.Errorf("work %d, want workRunes(%d) = %d (and a call)", got, n, workRunes(n))
+	}
+	// the refusal comes before the count: at a limit below the pass, the work is the limit
+	th = &Thread{}
+	th.SetMaxWork(1000)
+	_, err = ExecFile(th, "ord.star", "ord(L)", StringDict{"L": s})
+	var we *WorkBudgetError
+	if !errors.As(err, &we) || th.Work() != 1000 {
+		t.Errorf("work limit 1000: err %v, work %d, want a work refusal at 1000", err, th.Work())
 	}
 }
 
