@@ -54,7 +54,26 @@ func compatCases() []compatCase {
 	cs = append(cs, errTextCompatCases()...)
 	cs = append(cs, digitsCompatCases()...)
 	cs = append(cs, unionCompatCases()...)
+	cs = append(cs, sortedCompatCases()...)
 	return cs
+}
+
+const boundSortFirst = "sorted stops at the first error of a comparison (no comparison is made after it, so no time is spent on them): v0.2.0 went on sorting and named the last pair that failed"
+
+// sortedCompatCases: sorted of elements that are not comparable. v0.2.0 kept
+// sorting after the first failing comparison and reported the error of the LAST
+// one; this version stops at the first, and reports it. The steps are the same.
+// (The programs are those of the corpus of the small differential test, whose
+// v0.2.0 outcome is in diff_v020.golden.)
+func sortedCompatCases() []compatCase {
+	was := compatOutcome{"error", "NoneType < string not implemented"}
+	now := compatOutcome{"error", "string < int not implemented"}
+	return []compatCase{
+		{ID: "sorted of incomparable elements names the first pair, not the last", Bound: boundSortFirst,
+			Src: "result = sorted([1, 'a', None])\n", V020: was, Now: now},
+		{ID: "sorted of incomparable elements names the first pair, not the last (other statements)", Bound: boundSortFirst,
+			Src: "v0 = sorted([1, 'a', None])\nv1 = {}.replace('a', 'b')\nresult = v0\n", V020: was, Now: now},
+	}
 }
 
 const boundDepth = "MaxValueDepth / глубина сравнения: v0.2.0 молча обрывал объединение, v0.3.0 отказывает"
@@ -265,6 +284,14 @@ func compatHostCases() []compatHost {
 // what its case says, on both sides, exactly.
 func TestCompatibilityDivergencesFromV020(t *testing.T) {
 	golden := map[string]diffOutcome{}
+	// (the programs of the small differential corpus are there too: a case may
+	// be a program that it holds, whose v0.2.0 outcome is not written twice)
+	for _, g := range readGolden(t, goldenSmall) {
+		golden[g.Src] = g
+	}
+	for _, g := range readGolden(t, goldenErrText) { // (the error texts: the cut operands)
+		golden[g.Src] = g
+	}
 	for _, g := range readGolden(t, goldenCompat) {
 		golden[g.Src] = g
 	}

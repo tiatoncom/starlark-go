@@ -185,12 +185,16 @@ func (i Int) Hash() (uint32, error) {
 	iSmall, iBig := i.get()
 	var lo big.Word
 	if iBig != nil {
-		// All the words take part, and both halves of each: ints that differ
+		// All the words take part, and both halves of each, through a 64-bit
+		// multiply-xorshift state (deterministic, no seed): ints that differ
 		// only above bit 32 (i << 32) must not all share a bucket, which makes
-		// a dict of them a linked list.
-		h := uint32(0)
+		// a dict of them a linked list, and a family of ints that is made to
+		// have one hash (the halves of a word cancelling each other, as they
+		// did in a xor of 32-bit products) must not exist by a formula.
+		h := uint64(0xCBF29CE484222325)
 		mix := func(w uint64) {
-			h = h*0x9E3779B1 ^ uint32(w) ^ uint32(w>>32)*0x85EBCA6B
+			h = (h ^ w) * 0x9E3779B97F4A7C15
+			h ^= h >> 32
 		}
 		if bits.UintSize == 64 {
 			for _, w := range iBig.Bits() {
@@ -207,7 +211,9 @@ func (i Int) Hash() (uint32, error) {
 				mix(w)
 			}
 		}
-		return 12582917 * (h + 3), nil
+		// (one more multiply, so that the high half of the state, which the
+		// last word reaches through its high bits only, takes the low half)
+		return 12582917 * (uint32(h*0x9E3779B97F4A7C15>>32) + 3), nil
 	} else {
 		lo = big.Word(iSmall)
 	}

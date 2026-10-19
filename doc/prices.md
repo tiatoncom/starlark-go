@@ -7,6 +7,8 @@ The steps of a program (`Thread.Steps`, `ExecutionSteps()`) are what they were i
 
 **The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = 12 ns on the reference machine, darwin/arm64 (C is per platform: see the platforms below;the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 
+**The search family** (find, rfind, index, rindex, partition, rpartition) charges each window of the haystack before it scans it (windows of 64 bytes or the needle, doubling up to a chunk of 1024 units), so a call is refused before the window that does not fit, and a match that is found may be charged up to the rest of its last window.
+
 ## What a unit costs, by probe (308 probes)
 
 The time is the least of seven runs, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = 12 ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:
@@ -21,12 +23,12 @@ The time is the least of seven runs, measured by `TestCalibrate` (the date and t
 | max(l, key=f) | 9139875 | 900021 | 10.2 |
 | sorted: strings | 43374000 | 4323458 | 10.0 |
 | sorted: 2 elements x 200000 calls | 26969625 | 2700013 | 10.0 |
+| startswith/endswith | 778250 | 78013 | 10.0 |
 | d.update(kw) x 50000 | 10953375 | 1100013 | 10.0 |
 | join: 500000 strings | 5208792 | 523449 | 10.0 |
 | %s loop with a string | 19871375 | 2000013 | 9.9 |
 | abs/min/max of 2 x 300000 | 139596541 | 14100013 | 9.9 |
 | find: needle 63 | 1231709 | 125016 | 9.9 |
-| collisions: i << 40 | 37187250 | 3775209 | 9.9 |
 | find: needle 48 | 1225375 | 125016 | 9.8 |
 
 All of them:
@@ -52,7 +54,7 @@ All of them:
 | replace: a -> b | 8495375 | 2070325 | 9 | 4.10 |
 | partition: 100-byte miss | 1274209 | 250018 | 12 | 5.10 |
 | rpartition: 100-byte miss | 1273459 | 250018 | 12 | 5.09 |
-| startswith/endswith | 778250 | 2078013 | 20009 | 0.37 |
+| startswith/endswith | 778250 | 78013 | 20009 | 9.98 |
 | split: , (500000 fields) | 7395417 | 3015645 | 8 | 2.45 |
 | split: whitespace | 9154542 | 3250014 | 7 | 2.82 |
 | split: , 100-byte sep miss | 2547750 | 500027 | 12 | 5.10 |
@@ -122,7 +124,7 @@ All of them:
 | l < m (ints) | 4094959 | 1000007 | 7 | 4.09 |
 | l == m (mixed int/float) | 2869792 | 300007 | 7 | 9.57 |
 | str(l) ints | 10171083 | 1223853 | 7 | 8.31 |
-| str(l) empty lists depth 40 | 42871292 | 6021077 | 7 | 7.12 |
+| str(l) empty lists depth 40 | 42871292 | 22021333 | 7 | 1.95 |
 | x < 1.5, big int 32 KB | 25500 | 10013 | 10009 | 2.55 |
 | d[k] = v, 500000 | 176584500 | 28610878 | 6000011 | 6.17 |
 | set(l) | 157281583 | 22610874 | 7 | 6.96 |
@@ -139,7 +141,7 @@ All of them:
 | s == t | 31075167 | 6000007 | 7 | 5.18 |
 | s <= t | 33077459 | 5765543 | 7 | 5.74 |
 | collisions: i << 16 | 212801375 | 25797083 | 280011 | 8.25 |
-| collisions: i << 40 | 37187250 | 3775209 | 280011 | 9.85 |
+| collisions: i << 40 | 4788542 | 927280 | 280011 | 5.16 |
 | d[k] with 30 char string keys | 32276750 | 10195478 | 2400009 | 3.17 |
 | x in d, strings | 7160167 | 2905560 | 1400009 | 2.46 |
 | f() with 2000 params x 2000 | 13554208 | 8024013 | 20009 | 1.69 |
@@ -153,8 +155,8 @@ All of them:
 | big // y (6000 / 1500 words) | 24125 | 2002512 | 7 | 0.01 |
 | big << 511 | 27337417 | 20080013 | 50009 | 1.36 |
 | -big | 26629292 | 20075013 | 45009 | 1.33 |
-| str(int 4300 digits) x20 | 993792 | 135633 | 209 | 7.33 |
-| int(str 4300 digits) x20 | 575958 | 90633 | 209 | 6.35 |
+| str(int 4300 digits) x20 | 993792 | 159433 | 209 | 6.23 |
+| int(str 4300 digits) x20 | 575958 | 176613 | 209 | 3.26 |
 | hash of 6000-word int | 2494916 | 2023513 | 6009 | 1.23 |
 | find: needle 2 | 245583 | 62512 | 8 | 3.93 |
 | find: needle 4 | 240583 | 62512 | 8 | 3.85 |
@@ -177,7 +179,7 @@ All of them:
 | split: needle 1, no match | 26000 | 15645 | 8 | 1.66 |
 | rsplit: needle 100 miss | 2517042 | 500027 | 12 | 5.03 |
 | splitlines: no newline | 25958 | 15645 | 7 | 1.66 |
-| startswith 1 MB | 1710416 | 101564013 | 1109 | 0.02 |
+| startswith 1 MB | 1710416 | 1564013 | 1109 | 1.09 |
 | s in s (long needle hit at the end) | 1258625 | 250013 | 11 | 5.03 |
 | title: non-ascii | 7560917 | 912511 | 7 | 8.29 |
 | isalpha: non-ascii | 942500 | 250011 | 7 | 3.77 |
@@ -258,7 +260,7 @@ All of them:
 | d[k] hits, int keys | 18690083 | 6606798 | 2400011 | 2.83 |
 | d.get misses, int keys | 32625667 | 8400015 | 4000011 | 3.88 |
 | x in d hits, string keys | 7264709 | 2905589 | 1400009 | 2.50 |
-| d[k] = v new keys, 2M entries (cold) | 547187542 | 67590588 | 14000011 | 8.10 |
+| d[k] = v new keys, 2M entries (cold) | 547187542 | 67615552 | 14000011 | 8.09 |
 | d.pop(k) 200000 | 29107916 | 5877789 | 2200009 | 4.95 |
 | d.popitem 200000 | 22428042 | 5677789 | 2000009 | 3.95 |
 | d.setdefault 200000 | 59263500 | 13859259 | 2400011 | 4.28 |
@@ -281,9 +283,9 @@ All of them:
 | tuple keys (2 ints) 200000 | 66750500 | 13022076 | 3200011 | 5.13 |
 | tuple keys (2 strings) 100000 | 15212583 | 4922973 | 1200009 | 3.09 |
 | float keys 200000 | 39574792 | 10581500 | 2800011 | 3.74 |
-| big int keys (200 bits) 100000 | 26421708 | 6192795 | 1400011 | 4.27 |
-| collisions: ints i << 32 | 5661791 | 926259 | 280011 | 6.11 |
-| collisions: floats 2^k | 37844500 | 3875210 | 320011 | 9.77 |
+| big int keys (200 bits) 100000 | 26421708 | 6199682 | 1400011 | 4.26 |
+| collisions: ints i << 32 | 5661791 | 927241 | 280011 | 6.11 |
+| collisions: floats 2^k | 8013875 | 1027281 | 320011 | 7.80 |
 | collisions: strings of 11 bytes | 3003375 | 767479 | 240009 | 3.91 |
 | def with 3 params x 300000 | 26593584 | 4200013 | 4200009 | 6.33 |
 | def with kwargs call x 200000 | 26917334 | 3400013 | 2800009 | 7.92 |
@@ -322,12 +324,12 @@ All of them:
 | -int, abs(int), ~int (4000 words) x 2000 | 44981917 | 32090013 | 34009 | 1.40 |
 | int == int, < (4000 words) x 5000 | 10276083 | 40084023 | 70013 | 0.26 |
 | int < float (4000 words) x 100000 | 2552542 | 1000013 | 1000009 | 2.55 |
-| str(int) 4300 digits x 50 | 2523667 | 339213 | 509 | 7.44 |
-| int(str) 4300 digits x 50 | 1505959 | 226663 | 509 | 6.64 |
-| int(str, 16) 4000 digits x 200 | 3415000 | 602013 | 2209 | 5.67 |
+| str(int) 4300 digits x 50 | 2523667 | 398763 | 509 | 6.33 |
+| int(str) 4300 digits x 50 | 1505959 | 441663 | 509 | 3.41 |
+| int(str, 16) 4000 digits x 200 | 3415000 | 1302013 | 2209 | 2.62 |
 | '%x' % int (4000 bits) x 2000 | 1491541 | 166013 | 20009 | 8.98 |
 | float(int) / int(float) x 200000 | 43667291 | 5400008 | 2800009 | 8.09 |
-| hash of int keys above 2^31 | 78483667 | 13381500 | 3200011 | 5.87 |
+| hash of int keys above 2^31 | 78483667 | 13395299 | 3200011 | 5.86 |
 | json.encode(list of int) | 12603417 | 2815985 | 8 | 4.48 |
 | json.encode(list of str) | 15254709 | 2912512 | 8 | 5.24 |
 | json.encode(dict) | 60669125 | 7872750 | 8 | 7.71 |
@@ -364,14 +366,14 @@ The units of work are the same on every platform; C turns them into time on a gi
 | `bytes` | before the call | 4 | bytes(str): len/64; bytes(iterable): one unit per element |
 | `chr` | constant | 4 | one code point |
 | `dict` | as it goes | 4 | one insert (8 units + hash + chain) per entry |
-| `dir` | constant | 4 | the attributes of a type, not of the data |
+| `dir` | as it goes | 12 | 12 + n * (3 + bit length of n) for n names: the names are copied, boxed and sorted (charged by dir once it has them) |
 | `enumerate` | before the call | 4 | three units per element (a tuple for each) |
 | `fail` | before the call | 4 | len of the message/64 |
 | `float` | before the call | 4 | float(str): len/4 |
 | `getattr` | constant | 12 | a lookup of an attribute by name, and the bound method |
 | `hasattr` | constant | 12 | a lookup of an attribute by name |
 | `hash` | before the call | 4 | len/4 (FNV, byte by byte) |
-| `int` | as it goes | 4 | int(str): digits^2/4096 (and at most maxIntDigits digits); other: o1 |
+| `int` | as it goes | 4 | int(str): digits + digits^2/4096 (and at most maxIntDigits digits); other: o1 |
 | `len` | constant | 4 | the length is stored |
 | `list` | before the call | 4 | one unit per element |
 | `max` | as it goes | 8 | one comparison (a unit and the leaves) per element |
@@ -441,7 +443,7 @@ The units of work are the same on every platform; C turns them into time on a gi
 | `count` | before the call | 4 | the search of the needle in len bytes (workSearch), and half a unit for each of the len/needle matches |
 | `elem_ords` | constant | 4 | lazy: the iterator is the work |
 | `elems` | constant | 4 | lazy: the iterator is the work |
-| `endswith` | before the call | 4 | bytes of the suffix(es)/64 |
+| `endswith` | before the call | 4 | the sum over the suffixes of min(len(suffix), len(s))/64 (s: the string that start and end leave), and a unit for each suffix of a tuple |
 | `find` | as it goes | 4 | position of the match/64 |
 | `format` | as it goes | 4 | len of the result/4 |
 | `index` | as it goes | 4 | position of the match/64 |
@@ -466,7 +468,7 @@ The units of work are the same on every platform; C turns them into time on a gi
 | `rstrip` | as it goes | 4 | bytes trimmed/4 |
 | `split` | as it goes | 4 | len/64, and 4 units per field |
 | `splitlines` | as it goes | 4 | len/64, and 4 units per line |
-| `startswith` | before the call | 4 | bytes of the prefix(es)/64 |
+| `startswith` | before the call | 4 | the sum over the prefixes of min(len(prefix), len(s))/64 (s: the string that start and end leave), and a unit for each prefix of a tuple |
 | `strip` | as it goes | 4 | bytes trimmed/4 |
 | `title` | before the call | 4 | 3/4 of len (rune by rune) |
 | `upper` | before the call | 4 | 3/4 of len (rune by rune) |

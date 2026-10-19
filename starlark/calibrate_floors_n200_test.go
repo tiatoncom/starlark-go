@@ -4,6 +4,9 @@ package starlark_test
 // Machine: linux/amd64, go1.26.3, Intel(R) N200. 6 runs; the least time of each probe over all of them is kept.
 // C = 34 ns a unit: the ceiling of the dearest probe of any run (run 3: f(**d), 60000 keys, 33.84 ns a unit);
 // by the least times the dearest is f(**d), 60000 keys, 29.48 ns a unit.
+// EDITED by hand: the two collision probes ("collisions: i << 40", "collisions:
+// floats 2^k") are removed until the recalibration after the new hash of big
+// integers (they were measured with the old collisions).
 // The load of the machine at the start and the end of each run:
 //   15:03:44 up 41 days, 3:38, 2 users, load average: 0.46, 0.15, 0.24
 //   15:07:10 up 41 days, 3:42, 2 users, load average: 1.31, 0.79, 0.49
@@ -55,9 +58,7 @@ var calibratedNs_linux_amd64 = map[string]float64{
 	"chain of 20000 functions":                     68312198,
 	"chr/ord loop":                                 79790477,
 	"closure x 200000":                             95138214,
-	"collisions: floats 2^k":                       79888285,
 	"collisions: i << 16":                          507988730,
-	"collisions: i << 40":                          72364964,
 	"collisions: ints i << 32":                     8794854,
 	"collisions: strings of 11 bytes":              6538682,
 	"comprehension with condition 500000":          78223849,

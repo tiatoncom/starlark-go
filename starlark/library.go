@@ -364,6 +364,11 @@ func dir(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	if x, ok := args[0].(HasAttrs); ok {
 		names = x.AttrNames()
 	}
+	// The names are the host's, and their number is not known before they
+	// are asked for: charged as soon as it is, before the sort and the list.
+	if err := thread.chargeWork(dirWork(len(names))); err != nil {
+		return nil, err
+	}
 	sort.Strings(names)
 	elems := make([]Value, len(names))
 	for i, name := range names {
@@ -657,8 +662,12 @@ func int_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 					}
 					return nil, fmt.Errorf("int: the string has more than %d digits: its conversion to an integer is not allowed", MaxIntDigits)
 				}
+				// A unit for each digit (the parse: ~5-9 ns a digit, which at
+				// 20-600 digits is more than the quadratic term: 424 ns at 20,
+				// 1 us at 100, 5.3 us at 600), and the quadratic term of the
+				// conversion of the long ones.
 				d := uint64(digits)
-				if err := thread.chargeWork(d * d / 4096); err != nil {
+				if err := thread.chargeWork(d + d*d/4096); err != nil {
 					return nil, err
 				}
 			}
@@ -1369,27 +1378,53 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 	}
 
 	slice := &sortSlice{keys: keys, values: values, m: thread.meter()}
-	if reverse {
-		stableSort(reverseSortSlice{slice}, len(slice.values))
-	} else {
-		stableSort(slice, len(slice.values))
-	}
+	slice.run(reverse)
 	if slice.stopped {
+		// (The work of the comparisons that were made is charged, a refusal
+		// of the limit apart: that is the limit.)
+		if !isResourceError(slice.err) {
+			if err := slice.m.flush(); err != nil {
+				return nil, err
+			}
+		}
 		return nil, slice.err
 	}
-	if slice.err == nil {
-		slice.err = slice.m.flush()
+	if err := slice.m.flush(); err != nil {
+		return nil, err
 	}
-	return NewList(slice.values), slice.err
+	return NewList(slice.values), nil
+}
+
+// sortStop is what a sortSlice panics with to leave stableSort, which cannot
+// be told to stop, at the first error.
+type sortStop struct{}
+
+// run sorts the values, and stops at the FIRST error, of any kind (a
+// comparison that fails, a refusal of the work): the sort is left at once, so
+// that no comparison is made after it. (A sort that went on would build the
+// error of every comparison that follows, and fail them all.)
+func (s *sortSlice) run(reverse bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			if _, ok := r.(sortStop); !ok {
+				panic(r)
+			}
+		}
+	}()
+	if reverse {
+		stableSort(reverseSortSlice{s}, len(s.values))
+	} else {
+		stableSort(s, len(s.values))
+	}
 }
 
 type sortSlice struct {
 	keys   []Value // nil => values[i] is key
 	values []Value
-	err    error // the error that is reported: the last of the comparisons, or the refusal of the work
+	err    error // the error that is reported: the FIRST of the comparisons, or the refusal of the work
 	m      meter // charged with the comparisons and the swaps
-	// stopped: the work is used up (err is the refusal): the sort goes on
-	// calling Less and Swap, which are free from now on, and compares nothing.
+	// stopped: there was an error (err): the sort was left at once (run), and
+	// no comparison or swap is made after it.
 	stopped bool
 	odd     bool // a swap is half a unit: the swaps are counted in pairs
 }
@@ -1406,18 +1441,16 @@ func (s *sortSlice) Less(i, j int) bool {
 		keys = s.values
 	}
 	if s.stopped {
-		return false // the work is used up: stop the comparisons
+		return false // (not reached: the sort is left at the first error)
 	}
 	if err := s.m.add(1); err != nil {
 		s.err, s.stopped = err, true
-		return false
+		panic(sortStop{})
 	}
 	ok, err := compareM(&s.m, syntax.LT, keys[i], keys[j], CompareLimit)
 	if err != nil {
-		s.err = err // (as before, the last error is the one reported)
-		if isResourceError(err) {
-			s.stopped = true // a refusal of a limit ends the work: no more comparisons
-		}
+		s.err, s.stopped = err, true // the first error is the one reported
+		panic(sortStop{})
 	}
 	return ok
 }
@@ -1428,6 +1461,7 @@ func (s *sortSlice) Swap(i, j int) {
 		if s.odd = !s.odd; !s.odd {
 			if err := s.m.add(1); err != nil {
 				s.err, s.stopped = err, true
+				panic(sortStop{})
 			}
 		}
 	}
@@ -2499,21 +2533,8 @@ func string_partition(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (V
 	if sep == "" {
 		return nil, nameErr(b, "empty separator")
 	}
-	var i int
-	if b.Name()[0] == 'p' {
-		i = strings.Index(recv, sep) // partition
-	} else {
-		i = strings.LastIndex(recv, sep) // rpartition
-	}
-	scanned := len(recv)
-	if i >= 0 {
-		if b.Name()[0] == 'p' {
-			scanned = i + len(sep)
-		} else {
-			scanned = len(recv) - i
-		}
-	}
-	if err := thread.chargeWork(workSearch(scanned, len(sep))); err != nil {
+	i, err := thread.searchCharged(recv, sep, b.Name()[0] != 'p') // partition, rpartition
+	if err != nil {
 		return nil, err
 	}
 	tuple := make(Tuple, 0, 3)
@@ -2811,6 +2832,17 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	// first, then check.
 	// (rsplit on a separator splits the whole string and then joins the
 	// leading fields, so it allocates all of them whatever maxsplit is.)
+	// The scan (of the count, and of the split that follows it) is known from
+	// the lengths: it is charged before the count is made.
+	scan := workSearch(len(recv), 1)
+	if sep, ok := AsString(sep_); ok {
+		scan = 2 * workSearch(len(recv), len(sep)) // (Split counts, then searches)
+	} else if sep_ == nil || sep_ == None {
+		scan = workSlow(len(recv)) // whitespace is decided rune by rune
+	}
+	if err := thread.chargeWork(scan); err != nil {
+		return nil, err
+	}
 	var fields int
 	clamp := true
 	if sep_ == nil || sep_ == None {
@@ -2825,14 +2857,8 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	if err := thread.chargeNewValues(fields); err != nil {
 		return nil, excess(err, "%s: excessive size (%d elements)", b.Name(), fields)
 	}
-	// The scan, and a field is a new string.
-	scan := workSearch(len(recv), 1)
-	if sep, ok := AsString(sep_); ok {
-		scan = 2 * workSearch(len(recv), len(sep)) // (Split counts, then searches)
-	} else if sep_ == nil || sep_ == None {
-		scan = workSlow(len(recv)) // whitespace is decided rune by rune
-	}
-	if err := thread.chargeWork(scan + 4*uint64(fields)); err != nil {
+	// A field is a new string.
+	if err := thread.chargeWork(4 * uint64(fields)); err != nil {
 		return nil, err
 	}
 
@@ -3306,6 +3332,78 @@ func set_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 	return None, nil
 }
 
+// searchCharged is strings.Index (LastIndex if last) of sub in s, which charges
+// the work of the search BEFORE it is made, as it goes: the work is that of the
+// distance searched (workSearch of it: the whole of s if sub is not in it), and
+// the distance is not known until it is searched, so s is searched in windows
+// whose work is charged before each one. The first window is 64 bytes (or the
+// length of sub, if that is more: a search reads the needle), and each is twice
+// the last up to the bytes of a chunk (flushWork units), so a match near the
+// start costs about the work of the distance (at most twice, and the first
+// window), a search that is refused is refused before the window that does not
+// fit, and no window is made after the limit: the work done and not charged is
+// never more than a chunk. A window overlaps the one before by len(sub)-1 bytes
+// (a match across the join), and is at least len(sub) long, so the bytes that
+// are read are at most twice those that are charged.
+func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
+	n, m := len(s), len(sub)
+	if m == 0 { // found at once, nothing is read
+		if last {
+			return n, nil
+		}
+		return 0, nil
+	}
+	chunk := max(flushWork*searchDivisor(m), m) // bytes
+	step := max(64, m)
+	var charged uint64
+	charge := func(bound int) error {
+		if w := workSearch(bound, m); w > charged {
+			if err := thread.chargeWork(w - charged); err != nil {
+				return err
+			}
+			charged = w
+		}
+		return nil
+	}
+	for done := 0; done < n; {
+		next := min(n, done+step) // bytes decided by this window, counted from the end if last
+		if err := charge(next); err != nil {
+			return -1, err
+		}
+		var i int
+		if last {
+			lo := max(0, n-next-m+1)
+			if i = strings.LastIndex(s[lo:n-done], sub); i >= 0 {
+				i += lo
+				return i, charge(n - i)
+			}
+		} else {
+			hi := min(n, next+m-1)
+			if i = strings.Index(s[done:hi], sub); i >= 0 {
+				i += done
+				return i, charge(i + m)
+			}
+		}
+		done = next
+		step = min(step*2, chunk)
+	}
+	return -1, nil
+}
+
+// searchDivisor is the bytes of a haystack that workSearch charges a unit for,
+// for a needle of m bytes.
+func searchDivisor(m int) int {
+	switch {
+	case m <= 1:
+		return 128
+	case m <= 16:
+		return 16
+	case m <= 63:
+		return 8
+	}
+	return 4
+}
+
 // Common implementation of string_{r}{find,index}.
 func string_find_impl(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple, allowError, last bool) (Value, error) {
 	var sub string
@@ -3324,22 +3422,10 @@ func string_find_impl(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple, al
 		slice = s[start:end]
 	}
 
-	var i int
-	if last {
-		i = strings.LastIndex(slice, sub)
-	} else {
-		i = strings.Index(slice, sub)
-	}
-	// The work is the distance searched (the whole slice if there is no match).
-	scanned := len(slice)
-	if i >= 0 {
-		if last {
-			scanned = len(slice) - i
-		} else {
-			scanned = i + len(sub)
-		}
-	}
-	if err := thread.chargeWork(workSearch(scanned, len(sub))); err != nil {
+	// The work is the distance searched (the whole slice if there is no match),
+	// charged before it is searched.
+	i, err := thread.searchCharged(slice, sub, last)
+	if err != nil {
 		return nil, err
 	}
 	if i < 0 {

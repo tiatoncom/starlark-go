@@ -1,6 +1,6 @@
 package starlark
 
-import ()
+import "math/bits"
 
 // The price of every built-in function and method of this package, and of the
 // operators, in units of work (work.go).
@@ -93,6 +93,57 @@ func argWork(args Tuple, i int) uint64 {
 	return 0
 }
 
+// prefixWork is the work of startswith and endswith: the bytes that the
+// comparison can look at, which are those of each prefix (or suffix) that is no
+// longer than the string that start and end leave, in 64s (memequal), and a unit
+// for each element of a tuple (the loop and the type check). It is computed
+// before the call from the lengths only: a tuple of a hundred thousand prefixes
+// of a megabyte is a hundred thousand units and the bytes of each, not a
+// hundred thousand units. (start and end given by keyword are not looked at:
+// the whole string is the bound.)
+func prefixWork(recv Value, a Tuple, _ []Tuple) uint64 {
+	n := recvLen(recv)
+	if len(a) > 1 {
+		var end Value = None
+		if len(a) > 2 {
+			end = a[2]
+		}
+		if start, end, err := indices(a[1], end, n); err == nil {
+			n = max(end-start, 0)
+		}
+	}
+	if len(a) == 0 {
+		return 0
+	}
+	one := func(v Value) uint64 {
+		if s, ok := v.(String); ok {
+			return workFast(min(len(s), n))
+		}
+		return 0
+	}
+	if t, ok := a[0].(Tuple); ok {
+		var w uint64
+		for _, v := range t {
+			w = satAdd(w, satAdd(1, one(v)))
+		}
+		return w
+	}
+	return one(a[0])
+}
+
+// dirCall is the work of the call of dir: a lookup of the names of the type.
+const dirCall = 12
+
+// dirWork is the work of dir of a value of n attributes, charged by dir once
+// it has the names (it cannot know their number before): the names are copied
+// (AttrNames), each is boxed in a String and set in a list (~36 ns, three
+// units), and sorted: n log2 n comparisons of two strings (a unit for each
+// level, bits.Len(n) of them). Measured on darwin/arm64: dir("") 2.1 us (35
+// names), dir([]) 0.6 us (7), dir({}) 0.86 us (9).
+func dirWork(n int) uint64 {
+	return satMul(uint64(n), 3+uint64(bits.Len(uint(n))))
+}
+
 // recvLen is the length of the receiver of a method.
 func recvLen(recv Value) int { return max(Len(recv), 0) }
 
@@ -126,14 +177,14 @@ var universePrices = map[string]price{
 	}),
 	"chr":       o1("one code point"),
 	"dict":      inside("one insert (8 units + hash + chain) per entry"),
-	"dir":       o1("the attributes of a type, not of the data"),
+	"dir":       inside("12 + n * (3 + bit length of n) for n names: the names are copied, boxed and sorted (charged by dir once it has them)").fixed(dirCall),
 	"enumerate": work("three units per element (a tuple for each)", func(_ Value, a Tuple, _ []Tuple) uint64 { return 3 * argWork(a, 0) }),
 	"fail":      work("len of the message/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) }),
 	"float":     work("float(str): len/4", func(_ Value, a Tuple, _ []Tuple) uint64 { return workSlow(strBytesAt(a, 0)) }),
 	"getattr":   o1("a lookup of an attribute by name, and the bound method").fixed(12),
 	"hasattr":   o1("a lookup of an attribute by name").fixed(12),
 	"hash":      work("len/4 (FNV, byte by byte)", func(_ Value, a Tuple, _ []Tuple) uint64 { return workSlow(strBytesAt(a, 0)) }),
-	"int":       inside("int(str): digits^2/4096 (and at most maxIntDigits digits); other: o1"),
+	"int":       inside("int(str): digits + digits^2/4096 (and at most maxIntDigits digits); other: o1"),
 	"len":       o1("the length is stored"),
 	"list":      work("one unit per element", func(_ Value, a Tuple, _ []Tuple) uint64 { return argWork(a, 0) }),
 	"max":       inside("one comparison (a unit and the leaves) per element").fixed(8),
@@ -254,7 +305,7 @@ var stringPrices = map[string]price{
 	}),
 	"elem_ords":    o1("lazy: the iterator is the work"),
 	"elems":        o1("lazy: the iterator is the work"),
-	"endswith":     work("bytes of the suffix(es)/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) + uint64(argLen(a, 0)) }),
+	"endswith":     work("the sum over the suffixes of min(len(suffix), len(s))/64 (s: the string that start and end leave), and a unit for each suffix of a tuple", prefixWork),
 	"find":         inside("position of the match/64"),
 	"format":       inside("len of the result/4"),
 	"index":        inside("position of the match/64"),
@@ -279,7 +330,7 @@ var stringPrices = map[string]price{
 	"rstrip":       inside("bytes trimmed/4"),
 	"split":        inside("len/64, and 4 units per field"),
 	"splitlines":   inside("len/64, and 4 units per line"),
-	"startswith":   work("bytes of the prefix(es)/64", func(_ Value, a Tuple, _ []Tuple) uint64 { return workFast(sumBytes(a)) + uint64(argLen(a, 0)) }),
+	"startswith":   work("the sum over the prefixes of min(len(prefix), len(s))/64 (s: the string that start and end leave), and a unit for each prefix of a tuple", prefixWork),
 	"strip":        inside("bytes trimmed/4"),
 	"title":        work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),
 	"upper":        work("3/4 of len (rune by rune)", func(r Value, _ Tuple, _ []Tuple) uint64 { return workRunes(strBytes(r)) }),

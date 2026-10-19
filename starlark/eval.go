@@ -92,7 +92,11 @@ type Thread struct {
 	// extraWork is the work charged beyond the steps (each of which is a unit
 	// of work), and maxWork its limit, 0 if none. See work.go.
 	extraWork, maxWork uint64
-	workErr            *WorkBudgetError
+	// workErr is the refusal that cancelled the thread (nil if none): it makes
+	// the gate fire once, and is cleared with the cancellation (Uncancel, and
+	// SetMaxWork once the work cancellation is gone), so that a new limit is a
+	// limit. Atomic, since Uncancel may be called from another goroutine.
+	workErr atomic.Pointer[WorkBudgetError]
 
 	// allocated is the number of bytes charged to this thread and
 	// maxAllocBytes its budget, 0 if none. See alloc.go.
@@ -145,6 +149,9 @@ func (thread *Thread) SetMaxExecutionSteps(max uint64) {
 // goroutine, even if the thread is actively executing.
 func (thread *Thread) Uncancel() {
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason)), nil)
+	// (the refusal of the work limit is part of the cancellation: left, it
+	// would shut the gate of the next limit, see stepGate)
+	thread.workErr.Store(nil)
 }
 
 // Cancel causes execution of Starlark code in the specified thread to
@@ -1461,7 +1468,7 @@ func tupleRepeat(thread *Thread, elems Tuple, n Int, list bool) (Tuple, error) {
 	}
 	i, err := AsInt32(n)
 	if err != nil {
-		return nil, fmt.Errorf("repeat count %s too large", n)
+		return nil, fmt.Errorf("repeat count %s too large", errValue(n))
 	}
 	if i < 1 {
 		return nil, nil
@@ -1503,7 +1510,7 @@ func stringRepeat(thread *Thread, s String, n Int) (String, error) {
 	}
 	i, err := AsInt32(n)
 	if err != nil {
-		return "", fmt.Errorf("repeat count %s too large", n)
+		return "", fmt.Errorf("repeat count %s too large", errValue(n))
 	}
 	if i < 1 {
 		return "", nil

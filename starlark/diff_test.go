@@ -532,10 +532,22 @@ func TestDifferentialAgainstV020(t *testing.T) {
 	}
 	// A program of v0.2.0 that panicked, or whose behavior is changed on
 	// purpose, is not compared.
+	// (The Compatibility list, compatCases, is the one place where a divergence on purpose is declared.)
+	onPurpose := map[string]bool{}
+	for _, c := range compatCases() {
+		onPurpose[c.Src] = true
+	}
 	changed := func(g diffOutcome) bool {
-		return g.Status == "panic"
+		return g.Status == "panic" || onPurpose[g.Src]
 	}
 	var bad []string
+	excluded := 0
+	for _, g := range golden {
+		if g.Status != "panic" && onPurpose[g.Src] {
+			excluded++
+		}
+	}
+	t.Logf("%d programs of the golden file are declared in the Compatibility list and not compared", excluded)
 	compared := 0
 	for _, g := range golden {
 		if changed(g) {

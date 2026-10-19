@@ -1702,6 +1702,13 @@ type valueWriter struct {
 // pathSetDepth is the depth from which the cycle check uses a set.
 const pathSetDepth = 32
 
+// deepFormWork is the work of each level of the form of a value beyond the
+// pathSetDepth+1 first containers (as deepCallWork is for the calls deeper than
+// the recursion scan): a measured 217-278 ns a level at depth 9000 on
+// darwin/arm64 against 27 at depth 30, which at the 12 units a level that were
+// charged is 2-3.5 times C; 12 + 32 = 44 units a level covers 3.5.
+const deepFormWork = 32
+
 func (w *valueWriter) onPath(x Value) bool {
 	if w.pathSet != nil {
 		_, ok := w.pathSet[x]
@@ -1713,6 +1720,11 @@ func (w *valueWriter) onPath(x Value) bool {
 func (w *valueWriter) push(x Value) {
 	if len(w.path) >= pathSetDepth {
 		w.work(8) // below the first levels the container is in a map
+	}
+	if len(w.path) > pathSetDepth {
+		// the stack and the cache of a deep form: a level of a value nested
+		// 9000 deep takes 2-3.5 times what a shallow one does
+		w.work(deepFormWork)
 	}
 	w.path = append(w.path, x)
 	if len(w.path) == pathSetDepth {
@@ -1812,9 +1824,9 @@ func (w *valueWriter) write(x Value, depth int) {
 				w.out.WriteString("<int of " + strconv.Itoa(big.BitLen()) + " bits>")
 				return
 			}
-			// The conversion is quadratic in the digits.
-			d := uint64(big.BitLen()/3 + 1)
-			w.work(d * d / 4096)
+			// The conversion: the one price of every path (intToStringWork);
+			// the leaf below adds nothing for the digits.
+			w.work(intToStringWork(big, true))
 			// The decimal form has at most BitLen/3+1 digits.
 			n := big.BitLen()/3 + 2
 			emit := func() { w.out.WriteString(x.String()) }
@@ -1827,7 +1839,7 @@ func (w *valueWriter) write(x Value, depth int) {
 				s := x.String()
 				n, emit = len(s), func() { w.out.WriteString(s) }
 			}
-			w.leaf(n, workSlow(n), false, emit, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
+			w.leaf(n, 0, false, emit, func(room int) string { return "<int of " + strconv.Itoa(big.BitLen()) + " bits>" })
 		} else {
 			var tmp [24]byte
 			iSmall, _ := x.get()

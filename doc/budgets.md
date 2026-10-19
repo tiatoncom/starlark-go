@@ -124,7 +124,7 @@ The programs that a handler writes, run in a loop until a byte budget of 1 GiB s
 
 ## Compatibility with v0.2.0
 
-With the limits not set, a program gives in this version what it gave in v0.2.0: the same result, error, output and steps, on the corpora of the differential tests (`diff_*_v020.golden`, about 16 000 programs, written by running the writers in a tree of v0.2.0 at `d34a821`). What differs is a deliberate bound, and each difference is a case in `compatCases()` (`compat_test.go`), a program with what v0.2.0 gave and what this version gives, both checked exactly by `TestCompatibilityDivergencesFromV020` (45 cases of scripts and 10 of a host that calls `Value.String()`). A difference that is not a bound was returned to v0.2.0 and is held by the differential tests: the equality of dicts and sets, and the lookup, insertion and deletion of a tuple key, nested 11 levels or more, are v0.2.0's (`TestDifferentialB5`, which fails on any other result, error, output or step), and so are `json.decode(s, default=d)` for an integer of 4300 digits or less and the set methods with an unhashable element.
+With the limits not set, a program gives in this version what it gave in v0.2.0: the same result, error, output and steps, on the corpora of the differential tests (`diff_*_v020.golden`, about 16 000 programs, written by running the writers in a tree of v0.2.0 at `d34a821`). What differs is a deliberate bound, and each difference is a case in `compatCases()` (`compat_test.go`), a program with what v0.2.0 gave and what this version gives, both checked exactly by `TestCompatibilityDivergencesFromV020` (48 cases of scripts and 10 of a host that calls `Value.String()`). A difference that is not a bound was returned to v0.2.0 and is held by the differential tests: the equality of dicts and sets, and the lookup, insertion and deletion of a tuple key, nested 11 levels or more, are v0.2.0's (`TestDifferentialB5`, which fails on any other result, error, output or step), and so are `json.decode(s, default=d)` for an integer of 4300 digits or less and the set methods with an unhashable element.
 
 Steps differ in a case only where the program stops at a refusal that v0.2.0 did not make.
 
@@ -156,6 +156,7 @@ v0.2.0 printed the operand whole, megabytes if the key was megabytes. Now the te
 | json.encode: key of a value that fails | `json.encode: in dict key "aaa...": cannot encode non-finite float +inf` | key cut, from n = 257 | same |
 | int out of range: chr | `chr: 99...9 out of range` | `<int of B bits>`, from 257 digits | same |
 | int out of range: index | `list index: 99...9 out of range` | same | same |
+| int out of range: repeat | `repeat count 99...9 too large` | same | same |
 | int out of range: range | `range: for parameter 1: 99...9 out of range (want value in signed 64-bit range)` | same | same |
 | int out of range: bytes | `bytes: at index 0, 99...9 out of range (want value in unsigned 8-bit range)` | same | same |
 | int out of range: shift | `99...9 out of range` | same | same |
@@ -193,6 +194,14 @@ An integer longer than `MaxIntDigits` is still an integer (it is computed with, 
 | ... nested 10 deep, more keys after it (`e = {t: 2, 'z': 3}`) | `{t: 1}`: `z` lost and the value of `t` not updated | the same error | same |
 | dict union with a tuple key nested 12 deep | `{t: 1}` | the same error | same |
 | ... nested 12 deep, more keys after it | `{t: 1}`: `z` lost | the same error | same |
+
+### `sorted` of elements that are not comparable
+
+`sorted` stops at the first comparison that fails: no comparison is made after it (each would build an error and take time that the work does not cover). v0.2.0 went on sorting and reported the error of the last comparison that failed. The steps are the same.
+
+| id | v0.2.0 | v0.3.0 | why |
+|---|---|---|---|
+| `sorted([1, 'a', None])` | error `NoneType < string not implemented` (the last pair) | error `string < int not implemented` (the first pair) | sorted of incomparable elements names the first pair, not the last (it stops at the first error) |
 
 ### The string form of a value in a host (`Value.String()`)
 

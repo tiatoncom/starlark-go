@@ -119,4 +119,6 @@ The steps of a program (` + "`Thread.Steps`" + `, ` + "`ExecutionSteps()`" + `) 
 **The unit of work** is about the time of a simple step of the interpreter (the loop probes below take 1.5 to 11.2 ns a unit; C below is the bound that is asserted). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
 
 **The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine, darwin/arm64 (C is per platform: see the platforms below;the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
+
+**The search family** (find, rfind, index, rindex, partition, rpartition) charges each window of the haystack before it scans it (windows of 64 bytes or the needle, doubling up to a chunk of 1024 units), so a call is refused before the window that does not fit, and a match that is found may be charged up to the rest of its last window.
 `

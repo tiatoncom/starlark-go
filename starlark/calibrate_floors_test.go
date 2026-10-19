@@ -6,7 +6,11 @@ import "go.starlark.net/starlark"
 // into the per-platform form of calibrate_test.go (registerCalibration) from the
 // table that the run of that day wrote; the raw per-run outputs no longer exist,
 // so this file cannot be regenerated, only replaced by a new calibration
-// (calibrate_test.go says how). The numbers are exactly those of that run.
+// (calibrate_test.go says how). The numbers are exactly those of that run,
+// except two: "collisions: i << 40" and "collisions: floats 2^k" were taken
+// again on 2026-10-19 after the hash of big integers changed (they had been
+// measured with the old collisions): the least of six processes of seven
+// repeats, under a load average of 111 (so on the safe side, as longer).
 // Two runs; the least time of each probe is kept. The load of the machine at the
 // start and the end of each run:
 //   18:00  up 23 days, 23:30, 18 users, load averages: 6.71 8.88 10.00
@@ -45,9 +49,9 @@ var calibratedNs_darwin_arm64 = map[string]float64{
 	"chain of 20000 functions":                     9964625,
 	"chr/ord loop":                                 37492000,
 	"closure x 200000":                             47985083,
-	"collisions: floats 2^k":                       37844500,
+	"collisions: floats 2^k":                       8013875,
 	"collisions: i << 16":                          212801375,
-	"collisions: i << 40":                          37187250,
+	"collisions: i << 40":                          4788542,
 	"collisions: ints i << 32":                     5661791,
 	"collisions: strings of 11 bytes":              3003375,
 	"comprehension with condition 500000":          39317250,

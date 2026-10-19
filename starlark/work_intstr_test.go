@@ -141,16 +141,17 @@ func TestIsSmallOpsWithABigResult(t *testing.T) {
 	}
 }
 
-// "%d" of a big integer is charged d*d/4096 for its d = bits/3+1 estimated
-// digits (quadratic), on top of the bytes of the string it makes; "%x" and
+// "%d" of a big integer is charged d/2 + d*d/4096 for its d = bits/3+1 estimated
+// digits (intToStringWork: linear and quadratic), on top of the bytes of the string it makes; "%x" and
 // "%o" are linear in the words.
 func TestIsIntToString(t *testing.T) {
 	for _, bits := range []int{3000, 8000, 14000} { // under MaxIntBits
 		x := isBig(bits)
 		env := StringDict{"x": x}
 		d := uint64(bits/3 + 1)
-		quad := d * d / 4096
-		if quad < 2 || (uint64(bits/4+1)*uint64(bits/4+1))/4096 == quad {
+		// the one price of the conversion (see intToStringWork): d/2 + d*d/4096
+		quad := d/2 + d*d/4096
+		if (d/2)+(uint64(bits/4+1)*uint64(bits/4+1))/4096 == quad {
 			t.Fatalf("bits=%d: a number that the estimate of /4 and a free conversion do not tell apart", bits)
 		}
 		bi := x.BigInt()
@@ -209,6 +210,38 @@ func TestIsInOnLongOperands(t *testing.T) {
 	}
 }
 
+// isWindowBound is the bytes that searchCharged has charged when the match of
+// a needle of m bytes that starts at pos in a haystack of total bytes is found
+// (searching from the end if last): the end of the window that finds it. The
+// windows are the ones of searchCharged: the first of max(64, m) bytes, each
+// next twice as long up to max(1024 * the divisor of m, m). A window that ends
+// at next searches s[done : next+m-1] (from the front) or s[total-next-m+1 :
+// total-done] (from the end), so the match at pos is found by the first window
+// with pos < next (front), or pos >= total-next-m+1 (end).
+func isWindowBound(total, pos, m int, last bool) int {
+	div := 128
+	switch {
+	case m <= 1:
+	case m <= 16:
+		div = 16
+	case m <= 63:
+		div = 8
+	default:
+		div = 4
+	}
+	chunk := max(1024*div, m)
+	step := max(64, m)
+	for done := 0; done < total; {
+		next := min(total, done+step)
+		if (!last && pos < next) || (last && pos >= total-next-m+1) {
+			return next
+		}
+		done = next
+		step = min(step*2, chunk)
+	}
+	return total
+}
+
 // partition and rpartition scan up to the separator, found or not.
 func TestIsPartitionOnLongOperands(t *testing.T) {
 	const n = 10000
@@ -231,11 +264,16 @@ func TestIsPartitionOnLongOperands(t *testing.T) {
 	}
 	for _, k := range []int{1, 2, 16, 17, 63, 64} {
 		// partition: the scan is the text before the separator and the separator
-		if got, want := isRun(t, nil, setup, fmt.Sprintf("r = p.partition(b%d)", k)).work, uint64(isBaseCall+(n+k)/rate(k)); got != want {
+		// The search charges BEFORE it reads (searchCharged): by windows that
+		// grow (64 bytes, doubling, up to a chunk of 1024 units' worth), so a
+		// match is charged up to the end of the window that found it, not up to
+		// the match.
+		if got, want := isRun(t, nil, setup, fmt.Sprintf("r = p.partition(b%d)", k)).work, uint64(isBaseCall+isWindowBound(n+64, n, k, false)/rate(k)); got != want {
 			t.Errorf("partition by %d bytes: work %d, want %d", k, got, want)
 		}
-		// rpartition of q: the last 'b' * k is at 64-k, so the scan is the text after it
-		if got, want := isRun(t, nil, setup, fmt.Sprintf("r = q.rpartition(b%d)", k)).work, uint64(isBaseCall+(n+k)/rate(k)); got != want {
+		// rpartition of q: the last 'b' * k is at 64-k, found by the window that
+		// reaches it from the end
+		if got, want := isRun(t, nil, setup, fmt.Sprintf("r = q.rpartition(b%d)", k)).work, uint64(isBaseCall+isWindowBound(n+64, 64-k, k, true)/rate(k)); got != want {
 			t.Errorf("rpartition by %d bytes: work %d, want %d", k, got, want)
 		}
 	}

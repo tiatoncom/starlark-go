@@ -103,6 +103,12 @@ func (e *WorkBudgetError) Error() string {
 // itself (load) are not limited unless the host sets the limit on each.
 func (thread *Thread) SetMaxWork(max uint64) {
 	thread.maxWork = max
+	// A refusal of an earlier limit is stale once the thread is no longer
+	// cancelled by it (a host that Uncancels and sets the next limit, in either
+	// order): left, it would keep the gate of the new limit shut.
+	if r := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); r == nil || *(*string)(r) != workCancelReason {
+		thread.workErr.Store(nil)
+	}
 	thread.regate()
 }
 
@@ -160,7 +166,7 @@ func (thread *Thread) workExhausted(cur, n uint64) error {
 		thread.extraWork = 0
 	}
 	e := &WorkBudgetError{Limit: thread.maxWork, Charged: cur, Requested: n}
-	thread.workErr = e
+	thread.workErr.Store(e)
 	thread.Cancel(workCancelReason)
 	thread.regate()
 	return e
@@ -196,7 +202,7 @@ func (thread *Thread) stepGate() {
 		}
 		return
 	}
-	if thread.maxWork != 0 && thread.Work() >= thread.maxWork && thread.workErr == nil {
+	if thread.maxWork != 0 && thread.Work() >= thread.maxWork && thread.workErr.Load() == nil {
 		thread.workExhausted(thread.Work(), 0)
 	}
 }
@@ -205,8 +211,8 @@ func (thread *Thread) stepGate() {
 // and the interpreter reports: the work error if that is the reason, and the
 // text of the interpreter otherwise.
 func (thread *Thread) cancelError(reason string) error {
-	if reason == workCancelReason && thread.workErr != nil {
-		return thread.workErr
+	if e := thread.workErr.Load(); reason == workCancelReason && e != nil {
+		return e
 	}
 	return &cancelledError{reason}
 }
@@ -413,9 +419,22 @@ func (thread *Thread) chargeIntToString(x Int, decimal bool) error {
 	if big.BitLen() > maxIntBits {
 		return fmt.Errorf("an integer of more than %d decimal digits is not converted to a string", MaxIntDigits)
 	}
+	return thread.chargeWork(intToStringWork(big, decimal))
+}
+
+// intToStringWork is THE price of the conversion of the big integer b to a
+// string, the one every path that makes the text of an int charges (str, repr,
+// format, %s, %r, %d, %i, %x, %X, %o: the form writer and the % operator).
+//
+// Decimal: a unit for two digits (d = BitLen/3+1, the bound of the digits:
+// Text(10) takes 135 ns at 20 digits, 457 at 100: 11 and 38 units of 12 ns),
+// and the d*d/4096 of the quadratic division that rules from ~600 digits.
+// Other bases (powers of two, no division): a unit for a word (Text(16) of 220
+// words takes less than a microsecond).
+func intToStringWork(b *big.Int, decimal bool) uint64 {
 	if !decimal {
-		return thread.chargeWork(words64(big))
+		return words64(b)
 	}
-	d := uint64(big.BitLen()/3 + 1)
-	return thread.chargeWork(d * d / 4096)
+	d := uint64(b.BitLen()/3 + 1)
+	return d/2 + d*d/4096
 }
