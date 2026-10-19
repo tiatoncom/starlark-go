@@ -49,11 +49,13 @@ import (
 // charge, so a long operation is stopped as promptly as a long loop.
 //
 // C is 12 ns: the worst probe of the calibration (calibrate_probes_test.go,
-// 308 programs, each the worst form of an operation, steps-prices.md) took 11.7
-// ns for a unit of work, on a machine that was not quiet (load 5-9); the
-// interpreter's own loops take 8-11, the units of the operations that are
-// priced less than that (the prices are set so that none of the probes is
-// over it), and TestWork_NoProbeCostsMoreThanC holds all of them to it.
+// 308 programs, each the worst form of an operation; doc/prices.md, and doc/budgets.md for
+// how they were taken) took 11.7 ns for a unit of work, on a machine that was
+// not quiet (load 4.8-12.5); the
+// loops of the interpreter itself, measured as probes, take 1.5 to 11.2 ns a
+// unit (the table of doc/prices.md), the operations that are priced less than
+// that (the prices are set so that none of the probes is over C), and
+// TestWork_NoProbeCostsMoreThanC holds all of them to it.
 const workNanoseconds = 12
 
 // workCancelReason is the reason of the cancellation of a thread that has done
@@ -261,8 +263,9 @@ func (m *meter) flush() error {
 // meter returns a meter for the work of one operation of thread.
 func (thread *Thread) meter() meter { return meter{thread: thread} }
 
-// Units of work. Each is the measured cost of the primitive in units of ~8 ns
-// (prices.go has the table of measurements).
+// Units of work. Each is the measured cost of the primitive in units of work
+// (C = workNanoseconds, 12 ns, is the bound of a unit; prices.go and
+// doc/prices.md have the table of measurements).
 
 // workFast is the work of copying, comparing, searching or hashing n bytes
 // (memmove, memcmp, IndexByte: 0.02-0.1 ns a byte).

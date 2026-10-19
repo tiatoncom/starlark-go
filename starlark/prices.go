@@ -6,8 +6,9 @@ import ()
 // operators, in units of work (work.go).
 //
 // The unit of work is about the time of one simple step of the interpreter
-// (8 ns nominal), and the invariant is one sentence: a program that has done W
-// units of work (Thread.Work) has used at most C * W nanoseconds, C being
+// (the loop probes of the calibration take 1.5 to 11.2 ns a unit, doc/prices.md;
+// the bound of a unit is C = workNanoseconds, 12 ns), and the invariant is one
+// sentence: a program that has done W units of work (Thread.Work) has used at most C * W nanoseconds, C being
 // workNanoseconds. Each step of the interpreter is a unit; a price is what an
 // operation costs beyond the steps that start it, by what it does in the worst
 // case: the elements it visits, compares, probes, hashes or copies, the bytes it
@@ -33,11 +34,12 @@ import ()
 // without a price is a built-in whose time nothing bounds.
 //
 // The prices are the measured costs of the primitives in the worst form that is
-// known, divided by the unit; steps-prices.md has the table of the
-// measurements (and calibrate_probes_test.go the programs of them), and
+// known, divided by the unit; doc/prices.md has the table of the
+// measurements (and calibrate_probes_test.go the programs of them; how they
+// were taken is in doc/budgets.md), and
 // TestPrices_AtLeastTheMeasuredCost holds every priced operation to it.
 type price struct {
-	desc string // the formula, in words (the table of steps-prices.md)
+	desc string // the formula, in words (the table of doc/prices.md)
 	// accounts is set for built-ins that charge the allocation budget
 	// themselves, or return a value that already exists (the argument, an
 	// element, a substring that shares memory): Call does not charge their
@@ -48,7 +50,7 @@ type price struct {
 	inside   bool
 	// call is the work of the call itself, whatever the operands: the frame, the
 	// arguments, the lookup, the result. A call of a built-in takes 40-150 ns,
-	// which is five to fifteen steps of the interpreter, and the steps count
+	// which is three to twelve units of work (C = 12 ns), and the steps count
 	// the one opcode that makes it. It is charged by Call, before the work.
 	call uint64
 	work func(recv Value, args Tuple, kwargs []Tuple) uint64

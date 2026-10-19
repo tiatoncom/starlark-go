@@ -2145,7 +2145,7 @@ const DefaultMaxCallStackDepth = 100_000
 // "Starlark stack overflow", as a Starlark error, not a crash of Go. n <= 0
 // restores DefaultMaxCallStackDepth.
 //
-// What a frame takes was measured (TestMeasureStackPerLevel, steps-prices.md):
+// What a frame takes was measured (TestMeasureStackPerLevel, doc/budgets.md):
 // 2.2 KiB of the stack of Go for each frame of a function (1.8 KiB for a frame of
 // a built-in that calls a function back, sorted(key=f) or max(key=f), which
 // takes three frames a level: 5.5 KiB a level), and on the heap 0.2 KiB for a

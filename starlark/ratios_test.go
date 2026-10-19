@@ -3,7 +3,7 @@ package starlark_test
 // The ratio of the work to the steps for the programs that are not attacks: the
 // handlers of the reviews, at sizes of a few dozen to a few thousand records, and
 // the programs of the differential. The host that sets a limit of work as a
-// multiple K of its limit of steps reads K from here (steps-prices.md).
+// multiple K of its limit of steps reads K from here (doc/budgets.md).
 
 import (
 	"fmt"

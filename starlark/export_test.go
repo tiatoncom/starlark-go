@@ -1,7 +1,7 @@
 package starlark
 
 // What the external tests (package starlark_test) need of the tables of prices,
-// to write the document of them (steps-prices.md).
+// to write the document of them (doc/prices.md).
 
 // PriceRow is one line of a table of prices.
 type PriceRow struct {

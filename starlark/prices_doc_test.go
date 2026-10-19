@@ -1,6 +1,6 @@
 package starlark_test
 
-// Writes steps-prices.md, the document of the prices, from the tables of
+// Writes doc/prices.md, the document of the prices, from the tables of
 // prices.go (the source of truth), the probes of the calibration with the times
 // that were measured (calibrate_floors_test.go), and the work and steps of the
 // handlers as they are charged now:
@@ -51,7 +51,7 @@ func TestWritePricesDoc(t *testing.T) {
 		}
 	}
 	sort.Slice(worst, func(i, j int) bool { return worst[i].nsPerUnit > worst[j].nsPerUnit })
-	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of seven runs, measured by `TestCalibrate` on the date and under the load above; the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = %d ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(starlark.WorkNanoseconds))
+	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of seven runs, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = %d ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(starlark.WorkNanoseconds))
 	for i, r := range worst {
 		if i >= 15 {
 			break
@@ -82,7 +82,7 @@ func TestWritePricesDoc(t *testing.T) {
 const pricesDocIntro = `
 The steps of a program (` + "`Thread.Steps`" + `, ` + "`ExecutionSteps()`" + `) are what they were in v0.2.0, byte for byte, whatever the operands: the interpreter counts an opcode, and nothing else is converted to steps. The time of the operations is a second counter, the work (` + "`Thread.Work()`" + `), with its own limit (` + "`SetMaxWork`" + `).
 
-**The unit of work** is about the time of a simple step of the interpreter (8 ns nominal). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
+**The unit of work** is about the time of a simple step of the interpreter (the loop probes below take 1.5 to 11.2 ns a unit; C below is the bound that is asserted). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
 
 **The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine (the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 `

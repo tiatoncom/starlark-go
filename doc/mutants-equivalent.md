@@ -13,8 +13,8 @@ unmutated source.
 
 | id | place | changes |
 |---|---|---|
-| struct-0128 | `work.go:172` | nothing |
-| struct-0109 | `work.go:337` | nothing on a 64-bit platform |
+| struct-0128 | `work.go:173` | nothing |
+| struct-0109 | `work.go:339` | nothing on a 64-bit platform |
 | struct-0138 | `eval.go:2223` | Go memory of a deep stack |
 | struct-0011 | `value.go:1718` | time of the form of a deep value |
 | struct-0101 | `lib/json/json.go:277` | time of `json.encode` of a deep value |
@@ -26,19 +26,19 @@ One mutant that looked like these is not equivalent: see the end.
 `left = max(thread.maxWork-thread.extraWork, 1)` becomes
 `left = thread.maxWork-thread.extraWork`.
 
-The statement is inside `if thread.maxWork > thread.extraWork` (`work.go:171`),
+The statement is inside `if thread.maxWork > thread.extraWork` (`work.go:172`),
 and both are `uint64`, so the difference is at least 1 and `max(d, 1) == d`. The
 case that needs the floor, `maxWork <= extraWork`, is the `left := uint64(1)` of
-`work.go:170`, which the mutation does not touch.
+`work.go:171`, which the mutation does not touch.
 
 | observable | changes? | why |
 |---|---|---|
 | result, error | no | the gate `thread.maxSteps` is the same number for every state of the thread |
-| `Work()`, `AllocatedBytes()`, `Steps` | no | they are not read by `regate`; the gate decides only when `stepGate` (`work.go:182`) looks at the limits, and it is the same step |
+| `Work()`, `AllocatedBytes()`, `Steps` | no | they are not read by `regate`; the gate decides only when `stepGate` (`work.go:183`) looks at the limits, and it is the same step |
 
 ## struct-0109: `words64` as `len(b.Bits())`
 
-`uint64(b.BitLen()+63) / 64` becomes `uint64(len(b.Bits()))` (`work.go:337`).
+`uint64(b.BitLen()+63) / 64` becomes `uint64(len(b.Bits()))` (`work.go:339`).
 
 `big.Int.Bits` is the normalised slice of `big.Word`: no word of zero at the
 top, empty for zero. Its length is `ceil(BitLen/64)` when a `big.Word` is 64
@@ -48,13 +48,13 @@ calibrated on), which is the formula. For zero both are 0; the sign is not in
 
 | observable | changes? | why |
 |---|---|---|
-| result, error | no | `words64` is only a price: `alloc.go:458,498`, `work.go:343,408`, `workcmp.go:41,203` |
+| result, error | no | `words64` is only a price: `alloc.go:459,499`, `work.go:345,410`, `workcmp.go:41,203` |
 | `Work()`, `AllocatedBytes()` | no on 64-bit | the same number of words at every call site |
 | `Steps` | no | not charged by it |
 
 On a platform of 32-bit words `len(b.Bits())` is up to twice the formula and
 the prices double: this is the reason the function is written as it is (the
-comment at `work.go:334`). The tests run on 64-bit, so the mutant is equal
+comment at `work.go:336`). The tests run on 64-bit, so the mutant is equal
 there.
 
 ## struct-0138: `leaveFunction` leaves the zero counts in the map
@@ -90,7 +90,7 @@ The two answer the same: the path holds `*List` and `*Dict` only
 values and `slices.Contains` both compare them with `==`. The set is made from
 the whole path and kept in step by `push` and `pop`, so at every moment it holds
 what the slice holds; `onPath` prevents a value from being on the path twice.
-The charge `w.work(8)` of `push` (`value.go:1714`) depends on `len(w.path)` and
+The charge `w.work(8)` of `push` (`value.go:1715`) depends on `len(w.path)` and
 not on the set, and the mutation does not touch it.
 
 | observable | changes? | why |

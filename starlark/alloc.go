@@ -132,8 +132,9 @@ const (
 	// method such as dict.items materializes: a list slot and a 2-tuple.
 	allocBytesPerItem = allocBytesPerValue + allocBaseTuple + 2*allocBytesPerValue
 
-	// allocBytesPerWork is the memory that takes one unit of work (~8 ns) to
-	// allocate, zero and give back to the collector: measured 0.5 ns a byte for
+	// allocBytesPerWork is the memory that takes one unit of work (under C =
+	// 12 ns, workNanoseconds) to allocate, zero and give back to the collector:
+	// 16 bytes at the measured 0.5 ns a byte, about 8 ns, for
 	// the large allocations of a list (copying a list of a million slots into
 	// new memory takes 8 ms, and the collector marks what is alive).
 	allocBytesPerWork = 16
