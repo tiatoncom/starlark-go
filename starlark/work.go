@@ -401,6 +401,23 @@ func (thread *Thread) chargeIntDiv(x, y Int) error {
 // for each doubling after that (45 units for two million entries).
 func insertWork(n uint32) uint64 { return 1 + 4*uint64(max(bits.Len32(n)-10, 0)) }
 
+const (
+	// overwriteWork is what the insert of a key that is in the table already
+	// costs beyond insertWork (the key is compared, the value is written over
+	// the old one): d.update(d2) of the same keys took 42 ns an entry, 3.5
+	// units for the 2 charged; 4 are charged now.
+	overwriteWork = 2
+	// pairWork is the work of one pair of d.update(pairs) / dict(pairs) beyond
+	// the insert: the iterator of the pair, its length, the two Next and the
+	// closure took ~63 ns (111 ns a pair of existing keys against 48 for the
+	// insert, 9.25 units at 12 ns: 10 are charged with these 6).
+	pairWork = 6
+	// countWork is the work of one element of the other side of issubset / <=
+	// (hashtable.countM) that is in the table, beyond the lookup: its bit is
+	// tested and set in a big.Int (31 ns an element for the 1.3 units charged).
+	countWork = 2
+)
+
 // lookupWork is the work of looking for a key in a hash table of n entries,
 // beyond the hash and the walk of the chain: the cache misses of a large table.
 // Nothing up to a thousand entries; two units for each doubling after that
@@ -431,6 +448,10 @@ func (thread *Thread) chargeIntToString(x Int, decimal bool) error {
 // and the d*d/4096 of the quadratic division that rules from ~600 digits.
 // Other bases (powers of two, no division): a unit for a word (Text(16) of 220
 // words takes less than a microsecond).
+// IntToStringWork is intToStringWork for the packages that write the text of
+// an int themselves (lib/json): one price for every conversion.
+func IntToStringWork(b *big.Int, decimal bool) uint64 { return intToStringWork(b, decimal) }
+
 func intToStringWork(b *big.Int, decimal bool) uint64 {
 	if !decimal {
 		return words64(b)

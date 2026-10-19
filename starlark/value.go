@@ -1717,22 +1717,43 @@ func (w *valueWriter) onPath(x Value) bool {
 	return pathContains(w.path, x)
 }
 
-func (w *valueWriter) push(x Value) {
-	if len(w.path) >= pathSetDepth {
-		w.work(8) // below the first levels the container is in a map
+// DeepFormWork is the work of entering a container of a value that is written
+// (its string form, or json.encode of it) when depth containers are open
+// already: below the first levels the container is in a map (8 units), and
+// beyond them the stack and the cache of a deep form cost deepFormWork a level
+// (a level of a value nested 9000 deep takes 2-3.5 times what a shallow one
+// does). It is THE rule of the depth of a written value; the form writer and
+// lib/json charge it alike.
+func DeepFormWork(depth int) uint64 {
+	var n uint64
+	if depth >= pathSetDepth {
+		n += 8
 	}
-	if len(w.path) > pathSetDepth {
-		// the stack and the cache of a deep form: a level of a value nested
-		// 9000 deep takes 2-3.5 times what a shallow one does
-		w.work(deepFormWork)
+	if depth > pathSetDepth {
+		n += deepFormWork
+	}
+	return n
+}
+
+func (w *valueWriter) push(x Value) {
+	if n := DeepFormWork(len(w.path)); n > 0 {
+		w.work(n)
+	}
+	if _, ok := x.(Tuple); ok {
+		// A tuple is a level of the depth like any container, but it cannot
+		// be on a cycle (it has no identity, and cannot be a key of the set):
+		// its place in the path is nil.
+		x = nil
 	}
 	w.path = append(w.path, x)
 	if len(w.path) == pathSetDepth {
 		w.pathSet = make(map[Value]struct{}, 2*pathSetDepth)
 		for _, v := range w.path {
-			w.pathSet[v] = struct{}{}
+			if v != nil {
+				w.pathSet[v] = struct{}{}
+			}
 		}
-	} else if w.pathSet != nil {
+	} else if w.pathSet != nil && x != nil {
 		w.pathSet[x] = struct{}{}
 	}
 }
@@ -1740,7 +1761,7 @@ func (w *valueWriter) push(x Value) {
 func (w *valueWriter) pop() {
 	x := w.path[len(w.path)-1]
 	w.path = w.path[:len(w.path)-1]
-	if w.pathSet != nil {
+	if w.pathSet != nil && x != nil {
 		delete(w.pathSet, x)
 	}
 }
@@ -1891,6 +1912,7 @@ func (w *valueWriter) write(x Value, depth int) {
 
 	case Tuple:
 		w.out.WriteByte('(')
+		w.push(x)
 		for i, elem := range x {
 			if i > 0 {
 				w.out.WriteString(", ")
@@ -1907,6 +1929,7 @@ func (w *valueWriter) write(x Value, depth int) {
 				return
 			}
 		}
+		w.pop()
 		if len(x) == 1 {
 			w.out.WriteByte(',')
 		}

@@ -226,10 +226,13 @@ func TestG1aErrorTextsAreBounded(t *testing.T) {
 	t.Logf("%d error paths checked", n)
 }
 
-// SF11: the hash of a big int takes part with all its words, and is not
-// invertible by hand: the family of ints that collided under the old hash
-// (h = lo ^ hi*0x85EBCA6B for one word, the halves of the word being lo and hi)
-// has distinct hashes now.
+// SF11: the hash of a big int takes part with all its words, and the family of
+// ints that collided under the old hash (h = lo ^ hi*0x85EBCA6B for one word,
+// the halves of the word being lo and hi) has distinct hashes now. (The new
+// hash is NOT secret and NOT collision-free: a multiply-xorshift is invertible,
+// and a script can make ints of one hash by the inverse in 15 lines, as
+// TestG4CollidingFamilyIsOneHash does. What stops that is the price of the
+// comparisons of a chain, TestG4EqualHashBigIntsAreCharged, not the hash.)
 func TestG1aBigIntHashDoesNotCollideOnTheOldFamily(t *testing.T) {
 	const k2 = 0x85EBCA6B
 	old := func(w uint64) uint32 { return uint32(w) ^ uint32(w>>32)*k2 }

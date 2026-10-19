@@ -236,8 +236,10 @@ func TestG2_EncodeCallsAHostMarshalJSONOnce(t *testing.T) {
 		case "[h, h, {'k': h}]":
 			setup = starlark.ListAllocBytes(3) + starlark.DictAllocBytes(1)
 		}
-		// and 24 bytes a host value, the slice header it is kept in till the second pass
-		want := setup + uint64(len(out)) + 24*uint64(hosts)
+		// and for each host value 24 bytes, the slice header it is kept in till the
+		// second pass, and the copy of its bytes that is kept there (G4d: the host
+		// may reuse the buffer it returned), n+2 of them
+		want := setup + uint64(len(out)) + uint64(hosts)*(24+uint64(c.n)+2)
 		if c.wrap == "[h, h, {'k': h}]" {
 			want += 2 * 64 // the items of the dict, made by each of the two passes
 		}

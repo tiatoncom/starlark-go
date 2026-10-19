@@ -190,7 +190,10 @@ func (i Int) Hash() (uint32, error) {
 		// only above bit 32 (i << 32) must not all share a bucket, which makes
 		// a dict of them a linked list, and a family of ints that is made to
 		// have one hash (the halves of a word cancelling each other, as they
-		// did in a xor of 32-bit products) must not exist by a formula.
+		// did in a xor of 32-bit products) must not exist by a formula that
+		// is easy to find. (This hash is invertible all the same, and ints of
+		// one hash can be made by a script: the chain of them is charged by
+		// the comparisons, see equalFast.)
 		h := uint64(0xCBF29CE484222325)
 		mix := func(w uint64) {
 			h = (h ^ w) * 0x9E3779B97F4A7C15

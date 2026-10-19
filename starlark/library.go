@@ -2639,10 +2639,16 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 		}
 		return nil
 	}
+	// A unit for each element, charged before the elements are looked at (the
+	// sizing loop below is the work of the join, and is not free): for a list
+	// and a tuple all at once, and for any other iterable as it goes.
 	var elems []Value
 	switch it := iterable.(type) {
 	case *List:
 		elems = it.elems
+		if err := thread.chargeWork(uint64(len(elems))); err != nil {
+			return nil, err
+		}
 		for i, x := range elems {
 			if err := check(i, x); err != nil {
 				return nil, err
@@ -2650,6 +2656,9 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 		}
 	case Tuple:
 		elems = it
+		if err := thread.chargeWork(uint64(len(elems))); err != nil {
+			return nil, err
+		}
 		for i, x := range elems {
 			if err := check(i, x); err != nil {
 				return nil, err
@@ -2659,7 +2668,11 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 		iter := iterable.Iterate()
 		defer iter.Done()
 		var x Value
+		m := thread.meter()
 		for i := 0; iter.Next(&x); i++ {
+			if err := m.add(1); err != nil {
+				return nil, err
+			}
 			if err := check(i, x); err != nil {
 				return nil, err
 			}
@@ -2669,9 +2682,13 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 			}
 			elems = append(elems, x)
 		}
+		if err := m.flush(); err != nil {
+			return nil, err
+		}
 	}
-	// total is below the limit: Call charges the result.
-	if err := thread.chargeWork(workFast(total) + uint64(len(elems))); err != nil {
+	// total is below the limit: Call charges the result. (A unit for each
+	// element was charged above.)
+	if err := thread.chargeWork(workFast(total)); err != nil {
 		return nil, err
 	}
 	buf := new(strings.Builder)
@@ -3249,12 +3266,16 @@ func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 	}
 	var lines []Value
 	if s := string(b.Receiver().(String)); s != "" {
-		// One line per newline, and one more: count before splitting.
+		// The scan of the string is charged first (as split does): the count
+		// of the lines below is that scan. One line per newline, and one more.
+		if err := thread.chargeWork(workFast(len(s))); err != nil {
+			return nil, err
+		}
 		n := strings.Count(s, "\n") + 1
 		if err := thread.chargeNewValues(n); err != nil {
 			return nil, excess(err, "splitlines: excessive size (%d elements)", n)
 		}
-		if err := thread.chargeWork(workFast(len(s)) + 4*uint64(n)); err != nil {
+		if err := thread.chargeWork(4 * uint64(n)); err != nil {
 			return nil, err
 		}
 		// TODO(adonovan): handle CRLF correctly.
@@ -3755,6 +3776,9 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh
 				var k, v Value
 				iter2.Next(&k)
 				iter2.Next(&v)
+				if err := m.add(pairWork); err != nil {
+					return err
+				}
 				if err := set(k, v); err != nil {
 					return err
 				}

@@ -288,8 +288,24 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 		}
 		return err
 	}
+	// enter charges the entry of a container that is at depth (the number of
+	// containers open around it) by the rule of the written forms, before it is
+	// entered: a level of a value nested thousands deep costs 2-3.5 times a
+	// shallow one (the stack, the set of the path).
+	enter := func(depth int) error {
+		if n := starlark.DeepFormWork(depth); n > 0 {
+			if err := work.add(n); err != nil {
+				stop = err
+				return err
+			}
+		}
+		return nil
+	}
 	// emitSeq writes the elements of a list or a tuple.
 	emitSeq := func(x starlark.Value, seq starlark.Indexable, depth int) error {
+		if err := enter(depth); err != nil {
+			return err
+		}
 		buf.WriteByte('[')
 		for i := 0; i < seq.Len(); i++ {
 			if i > 0 {
@@ -299,7 +315,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 				if stop != nil {
 					return stop
 				}
-				return fmt.Errorf("at %s index %d: %v", x.Type(), i, err)
+				return withFrame(err, pathFrame{kind: frameIndex, typ: x.Type(), i: i})
 			}
 		}
 		buf.WriteByte(']')
@@ -312,6 +328,11 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 			// may define their own JSON encoding.
 			var data []byte
 			if hosts.replay {
+				if hosts.next >= len(hosts.data) {
+					// A host changed the value between the two passes (v0.2.3 has
+					// one pass and does not see it): an error, not a panic.
+					return errors.New("a MarshalJSON changed the value being encoded")
+				}
 				data = hosts.data[hosts.next]
 				hosts.next++
 			} else {
@@ -320,11 +341,17 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 				if err != nil {
 					return err
 				}
-				// The slice header of the cache is allocated: it is charged.
-				if err := thread.ChargeAlloc(hostSlotBytes); err != nil {
+				if tooBig(len(data)) {
+					return stop
+				}
+				// The cache owns a copy: the host may return a view of a buffer
+				// that it reuses for its next value. The slice header and the copy
+				// are allocated: they are charged, before the copy is made.
+				if err := thread.ChargeAlloc(hostSlotBytes + uint64(len(data))); err != nil {
 					stop = err
 					return err
 				}
+				data = bytes.Clone(data)
 				hosts.data = append(hosts.data, data)
 			}
 			if tooBig(len(data)) {
@@ -344,7 +371,8 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 
 		case starlark.Int:
 			if _, small := x.Int64(); !small {
-				bits := x.BigInt().BitLen()
+				bi := x.BigInt()
+				bits := bi.BitLen()
 				if bits > starlark.MaxIntBits {
 					stop = fmt.Errorf("an integer of more than %d decimal digits is not converted to a string", starlark.MaxIntDigits)
 					return stop
@@ -353,9 +381,9 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 				if tooBig(bits/3 + 2) {
 					return stop
 				}
-				// The conversion is quadratic in the digits.
-				d := uint64(bits/3 + 1)
-				if err := work.add(d * d / 4096); err != nil {
+				// The conversion is quadratic in the digits (one price: the
+				// one of the string form of an int).
+				if err := work.add(starlark.IntToStringWork(bi, true)); err != nil {
 					stop = err
 					return err
 				}
@@ -382,6 +410,9 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 
 		case starlark.IterableMapping:
 			// e.g. dict (must have string keys)
+			if err := enter(depth); err != nil {
+				return err
+			}
 			buf.WriteByte('{')
 			items := x.Items()
 			if garbage != nil {
@@ -427,7 +458,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 					if stop != nil {
 						return stop // not wrapped: the message would grow with the depth
 					}
-					return fmt.Errorf("in %s key %s: %v", x.Type(), starlark.String(short(k)).String(), err)
+					return withFrame(err, pathFrame{kind: frameKey, typ: x.Type(), s: k})
 				}
 			}
 			buf.WriteByte('}')
@@ -439,6 +470,9 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 			return emitSeq(x, x, depth)
 
 		case starlark.Iterable:
+			if err := enter(depth); err != nil {
+				return err
+			}
 			buf.WriteByte('[')
 			iter := x.Iterate()
 			var elem starlark.Value
@@ -451,7 +485,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 					if stop != nil {
 						return stop
 					}
-					return fmt.Errorf("at %s index %d: %v", x.Type(), i, err)
+					return withFrame(err, pathFrame{kind: frameIndex, typ: x.Type(), i: i})
 				}
 			}
 			iter.Done()
@@ -459,6 +493,9 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 
 		case starlark.HasAttrs:
 			// e.g. struct
+			if err := enter(depth); err != nil {
+				return err
+			}
 			buf.WriteByte('{')
 			var names []string
 			names = append(names, x.AttrNames()...)
@@ -466,12 +503,13 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 			for i, name := range names {
 				v, err := x.Attr(name)
 				if err != nil {
-					return fmt.Errorf("cannot access attribute %s.%s: %w", x.Type(), name, err)
+					// (the names and the text are cut: they are the host's, and can be large)
+					return fmt.Errorf("cannot access attribute %s.%s: %s", short(x.Type()), short(name), short(err.Error()))
 				}
 				if v == nil {
 					// x.AttrNames() returned name, but x.Attr(name) returned nil, stating
 					// that the field doesn't exist.
-					return fmt.Errorf("missing attribute %s.%s (despite %q appearing in dir()", x.Type(), name, name)
+					return fmt.Errorf("missing attribute %s.%s (despite %q appearing in dir()", short(x.Type()), short(name), short(name))
 				}
 				if i > 0 {
 					buf.WriteByte(',')
@@ -484,7 +522,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 					if stop != nil {
 						return stop
 					}
-					return fmt.Errorf("in field .%s: %v", short(name), err)
+					return withFrame(err, pathFrame{kind: frameField, s: name})
 				}
 			}
 			buf.WriteByte('}')
@@ -496,9 +534,120 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 	}
 
 	if err := emit(x, 0); err != nil {
-		return stop, err
+		if stop != nil {
+			return stop, err
+		}
+		return nil, withFrames(err)
 	}
 	return nil, nil
+}
+
+// The text of the error of encode names the containers that lead to the value
+// that failed ("at list index 3: in dict key "a": cannot encode ..."). It is
+// not built by a wrapping per level (a text of the depth wrapped at each level
+// is quadratic: 161 KB and 0.7 s at depth 9500): the levels are recorded as
+// the error unwinds (a constant of work and no allocation each), and the text
+// is built once, by Error, from the 3 innermost and the 3 outermost of them,
+// with the number of the others elided, and is cut to errPathMax bytes. The
+// cause is cut to 256 bytes, as the operands of the messages of package
+// starlark are. The text is at most errPathMax + ~30 (the marker) + 256 + ~30
+// bytes, and the same as in v0.2.0 for a value whose keys are of at most 256
+// bytes (a key that is quoted is up to 4 times that: "\x00"), which the
+// differential tests hold: errPathMax is 2 such keys and the words around them.
+const errPathMax = 2048
+
+const (
+	frameIndex = iota // at TYPE index I
+	frameKey          // in TYPE key "S"
+	frameField        // in field .S
+)
+
+type pathFrame struct {
+	kind uint8
+	typ  string
+	i    int
+	s    string // a key or a field: as it is, it is cut when the text is built
+}
+
+func (f pathFrame) text() string {
+	switch f.kind {
+	case frameIndex:
+		return "at " + short(f.typ) + " index " + strconv.Itoa(f.i)
+	case frameKey:
+		return "in " + short(f.typ) + " key " + starlark.String(short(f.s)).String()
+	}
+	return "in field ." + short(f.s)
+}
+
+// A pathErr is the error of a value inside containers: the cause and the
+// levels, innermost first (see errPathMax).
+type pathErr struct {
+	leaf error
+	n    int
+	head [3]pathFrame // the first (innermost) 3 levels
+	tail [3]pathFrame // the last 3 (outermost), a ring: the level i is at i%3
+}
+
+// withFrame adds a level to the error of a value inside it.
+func withFrame(err error, f pathFrame) error {
+	pe, ok := err.(*pathErr)
+	if !ok {
+		pe = &pathErr{leaf: err}
+	}
+	if pe.n < len(pe.head) {
+		pe.head[pe.n] = f
+	}
+	pe.tail[pe.n%len(pe.tail)] = f
+	pe.n++
+	return pe
+}
+
+// withFrames makes err a pathErr without a level, so that its text is cut.
+func withFrames(err error) error {
+	if _, ok := err.(*pathErr); ok {
+		return err
+	}
+	return &pathErr{leaf: err}
+}
+
+func (e *pathErr) Error() string {
+	var path strings.Builder
+	frame := func(i int) pathFrame { // the level i (0 is the innermost)
+		if i < len(e.head) {
+			return e.head[i]
+		}
+		return e.tail[i%len(e.tail)]
+	}
+	if e.n <= len(e.head)+len(e.tail) {
+		for i := e.n - 1; i >= 0; i-- {
+			path.WriteString(frame(i).text())
+			path.WriteString(": ")
+		}
+	} else {
+		for i := e.n - 1; i >= e.n-len(e.tail); i-- {
+			path.WriteString(frame(i).text())
+			path.WriteString(": ")
+		}
+		path.WriteString("...<" + strconv.Itoa(e.n-len(e.head)-len(e.tail)) + " levels>: ")
+		for i := len(e.head) - 1; i >= 0; i-- {
+			path.WriteString(frame(i).text())
+			path.WriteString(": ")
+		}
+	}
+	p := path.String()
+	if len(p) > errPathMax {
+		// keep both ends: the outermost level is what the script wrote first, the
+		// innermost is closest to the cause.
+		a, b := errPathMax/2, len(p)-errPathMax/2
+		for a > 0 && !utf8.RuneStart(p[a]) {
+			a--
+		}
+		for b < len(p) && !utf8.RuneStart(p[b]) {
+			b++
+		}
+		p = p[:a] + "...<" + strconv.Itoa(b-a) + " bytes>..." + p[b:]
+	}
+	return p + short(e.leaf.Error())
 }
 
 // short cuts a string that is embedded in an error message: a key, a field, a
@@ -670,9 +819,6 @@ func indentString(thread *starlark.Thread, b *starlark.Builtin, str, prefix, ind
 	// (~1.7 ns a byte, and the indentation of a deep value is most of it).
 	if err := chargeUnits(thread, uint64(len(str))/4+size/8); err != nil {
 		return "", err
-	}
-	if len(str) == 0 {
-		return "", nil
 	}
 	var buf bytes.Buffer
 	buf.Grow(int(size))

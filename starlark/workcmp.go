@@ -91,6 +91,15 @@ func isResourceError(err error) bool {
 	return false
 }
 
+// bigEqualWork is the work of comparing a big int of a table with the key,
+// beyond the words (a unit each, in equalM): the two numbers are in memory
+// that is far from each other, and a chain of ints of one hash (a family that a
+// script can make with the inverse of the hash, 15 lines) walks ~17 ns a
+// comparison (26 ns on the loaded machine of the review, 1.4-2 units) for the
+// 1.1 that were charged; 2 more make it 3.1 units, and the probe "collisions:
+// big ints of one hash (inverse formula)" 8-9 ns a unit.
+const bigEqualWork = 2
+
 // equalFast is equalM for the pairs that a hash table and a membership test
 // compare most: two strings, two small ints. The work of the rest is in equalM.
 func equalFast(m *meter, x, y Value, depth int) (bool, error) {
@@ -115,6 +124,8 @@ func equalFast(m *meter, x, y Value, depth int) (bool, error) {
 				if ys, yb := y.get(); yb == nil {
 					return xs == ys, nil
 				}
+			} else if err := m.add(bigEqualWork); err != nil {
+				return false, err
 			}
 		}
 	}

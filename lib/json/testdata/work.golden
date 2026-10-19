@@ -2,7 +2,7 @@ encode(x)	878477
 encode(sx)	120352
 encode(d)	654507
 encode(nested)	271950
-encode(bn)	3817
+encode(bn)	5180
 encode(long string)	325005
 encode(string with escapes)	491671
 encode_indent(x)	1246532
@@ -21,7 +21,7 @@ small: encode(x)	7165
 small: encode(sx)	1046
 small: encode(d)	3647
 small: encode(nested)	2400
-small: encode(bn)	3817
+small: encode(bn)	5180
 small: encode(long string)	3255
 small: encode(string with escapes)	4921
 small: encode_indent(x)	9595

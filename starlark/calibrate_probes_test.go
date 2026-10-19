@@ -288,6 +288,9 @@ var calibrationProbes = []probe{
 	{"dict(zip(l, l))", "l = list(range(300000))", "r = dict(zip(l, l))"},
 	{"dict(list of pairs)", "l = [(i, i) for i in range(300000)]", "r = dict(l)"},
 	{"d.update(pairs)", "d = {}\nl = [(i, i) for i in range(300000)]", "d.update(l)"},
+	{"d.update(pairs) existing keys, 1000 x 3000", "d = {i: i for i in range(1000)}\ne = [(i, i) for i in range(1000)]", "for i in range(3000):\n    d.update(e)"},
+	{"d.update(d2) existing keys, 1000 x 3000", "d = {i: i for i in range(1000)}\ne = dict(d)", "for i in range(3000):\n    d.update(e)"},
+	{"s <= t of 1000 x 3000", "s = set(range(1000))\nt = set(range(1000))", "for i in range(3000):\n    r = s <= t"},
 	{"d.update(kw) x 50000", "d = {}", "for i in range(50000):\n    d.update(a=1, b=2)"},
 	{"d.keys() then list", "d = {i: i for i in range(300000)}", "r = list(d)"},
 	{"set.add 300000", "", "s = set()\nfor i in range(300000):\n    s.add(i)"},
@@ -305,6 +308,9 @@ var calibrationProbes = []probe{
 	{"big int keys (200 bits) 100000", "x = 1 << 200", "d = {}\nfor i in range(100000):\n    d[x + i] = i"},
 	{"collisions: ints i << 32", "", "d = {}\nfor i in range(20000):\n    d[i << 32] = i"},
 	{"collisions: floats 2^k", "", "d = {}\nfor i in range(20000):\n    d[float(i << 40)] = i"},
+	// SF11: big ints of one hash, made by the inverse of the hash (the state s
+	// with (s*K)>>32 = T is a multiple of Kinv; its word is (Kinv*(s^s>>32))^h0).
+	{"collisions: big ints of one hash (inverse formula)", g4CollidingInts, "d = {}\nfor k in ks:\n    d[k] = 1\nfor r in range(10):\n    for k in ks:\n        x = k in d"},
 	{"collisions: strings of 11 bytes", "ks = [str(i) + 'aaaaaaaaaa' for i in range(20000)]", "d = {}\nfor k in ks:\n    d[k] = 1"},
 
 	// ---- calls

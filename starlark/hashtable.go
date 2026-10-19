@@ -121,6 +121,9 @@ retry:
 				continue
 			}
 			// Key already present; update value.
+			if err := m.add(overwriteWork); err != nil {
+				return err
+			}
 			e.value = v
 			return nil
 		}
@@ -278,6 +281,9 @@ func (ht *hashtable) countM(m *meter, iter Iterator) (int, error) {
 					if eq, err := equalFast(m, k, e.key, CompareLimit); err != nil {
 						return 0, err
 					} else if eq {
+						if err := m.add(countWork); err != nil {
+							return 0, err
+						}
 						bitIndex := i<<3 + j
 						if bitsets[bucketId].Bit(bitIndex) == 0 {
 							bitsets[bucketId].SetBit(&bitsets[bucketId], bitIndex, 1)
