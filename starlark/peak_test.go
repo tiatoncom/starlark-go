@@ -80,6 +80,8 @@ var peakTable = []peakRow{
 	// Many forms of a few dozen bytes: each is made in one pass (formProbe is
 	// 4096). With a smaller probe each would be made in two, and the first pass
 	// would allocate what the second does again (2.0x instead of 1.2x).
+	// Measured spread over 20 runs (darwin/arm64): charged 4788890, allocated
+	// 5600160..5600544, 1.1695x at most.
 	{"s % (a, b), small, x 50000", "s = 'abcdefghijklmnopqrstuvwxyz'", "for i in range(50000):\n    r = '%s-%d' % (s, i)"},
 	{"format of many", "t = ['abcdefghij'] * 100000", "r = ('{},' * 100000).format(*t)"},
 	{"s * n", "s = 'abcdefghij' * 1000", "r = s * 400"},

@@ -21,7 +21,10 @@ package starlark
 //
 // The golden file is written, and only then, by
 //
-//	STARLARK_WRITE_GOLDEN=prices go test ./starlark -run TestPricesGolden
+//	STARLARK_WRITE_GOLDEN=$PWD/starlark go test ./starlark -run TestPricesGolden
+//
+// (the same variable as the writers of the goldens of v0.2.0: the directory of
+// the starlark package whose testdata is written).
 //
 // A new built-in appears in the tables, so it shows up here as a new row.
 
@@ -281,16 +284,17 @@ func pgRows(t *testing.T) []string {
 func TestPricesGolden_ExactWork(t *testing.T) {
 	rows := pgRows(t)
 	got := strings.Join(rows, "\n") + "\n"
-	if os.Getenv("STARLARK_WRITE_GOLDEN") == "prices" {
-		if err := os.WriteFile(pgGoldenFile, []byte(got), 0o644); err != nil {
+	if dir := os.Getenv("STARLARK_WRITE_GOLDEN"); dir != "" {
+		path := dir + "/" + pgGoldenFile
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		t.Logf("wrote %s: %d rows", pgGoldenFile, len(rows))
+		t.Logf("wrote %s: %d rows", path, len(rows))
 		return
 	}
 	wantBytes, err := os.ReadFile(pgGoldenFile)
 	if err != nil {
-		t.Fatalf("%v (STARLARK_WRITE_GOLDEN=prices writes the golden file)", err)
+		t.Fatalf("%v (STARLARK_WRITE_GOLDEN=<directory of this starlark package> writes the golden file)", err)
 	}
 	want := strings.Split(strings.TrimSuffix(string(wantBytes), "\n"), "\n")
 	if len(want) == 1 && want[0] == "" {
@@ -337,6 +341,6 @@ func pgCompare(t *testing.T, want, got []string) {
 		more = fmt.Sprintf("\n... and %d more lines", len(diffs)-shown)
 		diffs = diffs[:shown]
 	}
-	t.Errorf("the work of the calls differs from %s (STARLARK_WRITE_GOLDEN=prices rewrites it, if the change of a price is meant):\n%s%s",
+	t.Errorf("the work of the calls differs from %s (STARLARK_WRITE_GOLDEN=<directory of this starlark package> rewrites it, if the change of a price is meant):\n%s%s",
 		pgGoldenFile, strings.Join(diffs, "\n"), more)
 }
