@@ -273,7 +273,9 @@ func TestG1bFindFamily_ChargedBeforeTheScan(t *testing.T) {
 		hay := g1bRep("x", at) + needle + g1bRep("x", n)
 		for _, name := range []string{"find", "index", "partition"} {
 			got := g1bCall2(stringMethods[name], hay, Tuple{needle}) - isBaseCall
-			if max := workSearch(2*(at+m)+64+m, m) + 1; got > max {
+			// (the first window is 64 bytes or 16 needles, and each is twice the last: the
+			// bytes charged are less than three times the distance, or the first window)
+			if max := workSearch(max(max(64, 16*m), 3*(at+m)), m) + 1; got > max {
 				t.Errorf("%s, needle %d: a match at %d is charged %d, want at most %d", name, m, at, got, max)
 			}
 			if min := workSearch(at+m, m); got < min {
@@ -331,6 +333,49 @@ func TestG1bSplit_ScanChargedBeforeTheCount(t *testing.T) {
 	// are charged 4 units for the list of them and 4 for the strings)
 	if got, want := th.Work()-th.Steps, uint64(6043); got != want {
 		t.Errorf("split: work %d, want %d", got, want)
+	}
+}
+
+// A window of the search is at least 16 needles long, so the overlap that is
+// scanned twice (a match across the join: len(needle)-1 bytes) is at most a
+// sixteenth: the bytes that searchCharged scans are at most (1 + 1/16) of the
+// haystack, a long needle included, found late or not found.
+func TestG1bSearchCharged_ScansAtMostASixteenthMore(t *testing.T) {
+	const n = 1 << 20
+	var scanned int
+	searchScanned = func(w int) { scanned += w }
+	defer func() { searchScanned = nil }()
+	for _, m := range []int{1, 2, 16, 100, 1000, 10000} {
+		needle := strings.Repeat("b", m)
+		for _, c := range []struct {
+			name, hay string
+			last      bool
+			found     int // where the match is, -1: not found
+		}{
+			{"not found", strings.Repeat("a", n), false, -1},
+			{"not found, from the end", strings.Repeat("a", n), true, -1},
+			{"found late", strings.Repeat("a", n-m) + needle, false, n - m},
+			{"found late, from the end", needle + strings.Repeat("a", n-m), true, 0},
+		} {
+			scanned = 0
+			th := &Thread{}
+			i, err := th.searchCharged(c.hay, needle, c.last)
+			if err != nil || i != c.found {
+				t.Fatalf("m=%d %s: got %d, %v, want %d", m, c.name, i, err, c.found)
+			}
+			if max := n + n/16; scanned > max {
+				t.Errorf("m=%d %s: %d bytes scanned of a haystack of %d, want at most %d", m, c.name, scanned, n, max)
+			}
+			if scanned < n-m { // the whole of it is looked at
+				t.Errorf("m=%d %s: only %d bytes scanned of %d", m, c.name, scanned, n)
+			}
+		}
+	}
+	// a short needle does not overlap: the haystack is scanned once
+	scanned = 0
+	(&Thread{}).searchCharged(strings.Repeat("a", n), "b", false)
+	if scanned != n {
+		t.Errorf("a needle of one byte: %d bytes scanned of %d", scanned, n)
 	}
 }
 

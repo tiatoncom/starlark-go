@@ -3554,19 +3554,24 @@ func set_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 	return None, nil
 }
 
+// searchScanned, if set (by a test), is called with the bytes of each window
+// that searchCharged is about to scan.
+var searchScanned func(n int)
+
 // searchCharged is strings.Index (LastIndex if last) of sub in s, which charges
 // the work of the search BEFORE it is made, as it goes: the work is that of the
 // distance searched (workSearch of it: the whole of s if sub is not in it), and
 // the distance is not known until it is searched, so s is searched in windows
-// whose work is charged before each one. The first window is 64 bytes (or the
-// length of sub, if that is more: a search reads the needle), and each is twice
-// the last up to the bytes of a chunk (flushWork units), so a match near the
+// whose work is charged before each one. The first window is 64 bytes (or 16
+// lengths of sub, if that is more: a search reads the needle), and each is twice
+// the last up to the bytes of a chunk (flushWork units, or 16 lengths of sub if
+// that is more), so a match near the
 // start costs about the work of the distance (at most twice, and the first
 // window), a search that is refused is refused before the window that does not
 // fit, and no window is made after the limit: the work done and not charged is
 // never more than a chunk. A window overlaps the one before by len(sub)-1 bytes
-// (a match across the join), and is at least len(sub) long, so the bytes that
-// are read are at most twice those that are charged.
+// (a match across the join), and is at least 16 len(sub) long, so the bytes
+// that are read are at most 17/16 of those that are charged.
 func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 	n, m := len(s), len(sub)
 	if m == 0 { // found at once, nothing is read
@@ -3575,8 +3580,11 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 		}
 		return 0, nil
 	}
-	chunk := max(flushWork*searchDivisor(m), m) // bytes
-	step := max(64, m)
+	// A window is at least 16 needles: the m-1 bytes that it shares with the
+	// one before are scanned twice, at most a sixteenth more than the bytes
+	// that are charged.
+	chunk := max(flushWork*searchDivisor(m), 16*m) // bytes
+	step := max(64, 16*m)
 	var charged uint64
 	charge := func(bound int) error {
 		if w := workSearch(bound, m); w > charged {
@@ -3595,12 +3603,18 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 		var i int
 		if last {
 			lo := max(0, n-next-m+1)
+			if searchScanned != nil {
+				searchScanned(n - done - lo)
+			}
 			if i = strings.LastIndex(s[lo:n-done], sub); i >= 0 {
 				i += lo
 				return i, charge(n - i)
 			}
 		} else {
 			hi := min(n, next+m-1)
+			if searchScanned != nil {
+				searchScanned(hi - done)
+			}
 			if i = strings.Index(s[done:hi], sub); i >= 0 {
 				i += done
 				return i, charge(i + m)

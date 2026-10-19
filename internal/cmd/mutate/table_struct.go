@@ -239,9 +239,9 @@ func (g *generator) structGroup() {
 	s(fValue, `w.work(deepFormWork)`, `w.work(0)`, `push: the levels of a deep form are free`)
 	s(fValue, `const deepFormWork = 32`, `const deepFormWork = 8`, `deepFormWork = 8 (below the measured 2-3.5x of a deep level)`)
 	// library.go: the windowed search
-	s(fLib, `step := max(64, m)`, `step := 64`, `searchCharged: the first window is shorter than the needle`)
+	s(fLib, `step := max(64, 16*m)`, `step := 64`, `searchCharged: the first window is shorter than the needle`)
 	s(fLib, `step = min(step*2, chunk)`, `step = min(step*2, chunk*1024)`, `searchCharged: the window is not capped at a chunk`)
-	s(fLib, `chunk := max(flushWork*searchDivisor(m), m)`, `chunk := m`, `searchCharged: the chunk is the needle`)
+	s(fLib, `chunk := max(flushWork*searchDivisor(m), 16*m)`, `chunk := m`, `searchCharged: the chunk is the needle`)
 	s(fLib, `hi := min(n, next+m-1)`, `hi := min(n, next)`, `searchCharged: a window does not overlap (a match across the join is missed)`)
 	s(fLib, `return i, charge(i + m)`, `return i, nil`, `searchCharged: the distance to a match is not charged to the end of it`)
 	s(fLib, `return i, charge(n - i)`, `return i, nil`, `searchCharged: the distance of a match from the end is not charged`)
@@ -285,4 +285,5 @@ func (g *generator) structGroup() {
 	s(fJSON, `hosts.replay = true`, `hosts.replay = false`, `json.encode: the host is called again in the second pass`)
 	s(fJSON, `n := satMul(uint64(len(items)), jsonItemBytes)`, `n := uint64(0)`, `json.encode: the items of a dict are not charged`)
 	s(fJSON, `if err := thread.ChargeAlloc(garbage); err != nil {`, `if err := error(nil); err != nil {`, `json.encode: the garbage of the items is not charged for the second pass`)
+	s(fLib, `step := max(64, 16*m)`, `step := max(64, m)`, `searchCharged: window not 16 needles (the overlap rescanned)`)
 }
