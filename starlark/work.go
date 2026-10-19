@@ -56,6 +56,12 @@ import (
 // unit (the table of doc/prices.md), the operations that are priced less than
 // that (the prices are set so that none of the probes is over C), and
 // TestWork_NoProbeCostsMoreThanC holds all of them to it.
+//
+// This C is that of darwin/arm64, the reference platform of the invariant and
+// of doc/prices.md. C is per platform: the units are deterministic and the
+// same everywhere, C only turns them into time on a given machine, and every
+// other platform that is calibrated has its own C, held by the same tests
+// (doc/budgets.md).
 const workNanoseconds = 12
 
 // workCancelReason is the reason of the cancellation of a thread that has done

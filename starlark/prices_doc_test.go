@@ -33,17 +33,29 @@ func TestWritePricesDoc(t *testing.T) {
 		work, steps uint64
 		nsPerUnit   float64
 	}
+	// the table is that of the reference platform; the other platforms are in
+	// the summary under it (each judged by its own floors and its own C)
+	var ref *calibrationPlatform
+	for i := range calibrationPlatforms {
+		if calibrationPlatforms[i].Platform == referencePlatform {
+			ref = &calibrationPlatforms[i]
+		}
+	}
+	if ref == nil {
+		t.Fatalf("the reference platform %s is not registered", referencePlatform)
+	}
 	var rows []row
 	var worst []row
 	for _, p := range calibrationProbes {
-		ns, ok := calibratedNs[p.name]
+		ns, ok := ref.Ns[p.name]
 		if !ok {
 			continue
 		}
-		work, steps, err := probeWork(t, p)
-		if err != nil {
+		c := countedProbe(t, p)
+		if c.err != nil {
 			continue
 		}
+		work, steps := c.work, c.steps
 		r := row{p.name, ns, work, steps, ns / float64(max(work, 1))}
 		rows = append(rows, r)
 		if !strings.HasPrefix(p.name, "loop:") && ns >= minProbeNanoseconds {
@@ -61,6 +73,28 @@ func TestWritePricesDoc(t *testing.T) {
 	b.WriteString("\nAll of them:\n\n| probe | ns | work | steps | ns / unit |\n|---|---|---|---|---|\n")
 	for _, r := range rows {
 		fmt.Fprintf(&b, "| %s | %.0f | %d | %d | %.2f |\n", strings.ReplaceAll(r.name, "|", "\\|"), r.ns, r.work, r.steps, r.nsPerUnit)
+	}
+
+	// ---- the platforms: each has its own C, and is judged by it
+	b.WriteString("\n## The platforms\n\nThe units of work are the same on every platform; C turns them into time on a given machine, and each platform has its own (a platform is judged by its own floors with its own C, never by a mixture of them). The table above is that of the reference platform, " + referencePlatform + ". Per platform, the worst probe of 2000 ns or more by the work that is charged now:\n\n| platform | machine | date | C (ns / unit) | worst probe | ns / unit |\n|---|---|---|---|---|---|\n")
+	plats := append([]calibrationPlatform(nil), calibrationPlatforms...)
+	sort.Slice(plats, func(i, j int) bool { return plats[i].Platform < plats[j].Platform })
+	for _, pl := range plats {
+		wn, wr := "", 0.0
+		for _, p := range calibrationProbes {
+			ns, ok := pl.Ns[p.name]
+			if !ok || ns < minProbeNanoseconds {
+				continue
+			}
+			c := countedProbe(t, p)
+			if c.err != nil {
+				continue
+			}
+			if r := ns / float64(max(c.work, 1)); r > wr {
+				wn, wr = p.name, r
+			}
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %.0f | %s | %.1f |\n", pl.Platform, strings.ReplaceAll(pl.Machine, "|", "\\|"), pl.Date, pl.C, strings.ReplaceAll(wn, "|", "\\|"), wr)
 	}
 
 	// ---- the prices
@@ -84,5 +118,5 @@ The steps of a program (` + "`Thread.Steps`" + `, ` + "`ExecutionSteps()`" + `) 
 
 **The unit of work** is about the time of a simple step of the interpreter (the loop probes below take 1.5 to 11.2 ns a unit; C below is the bound that is asserted). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
 
-**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine (the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
+**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = %d ns on the reference machine, darwin/arm64 (C is per platform: see the platforms below;the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 `

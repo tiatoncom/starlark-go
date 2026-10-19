@@ -1,5 +1,7 @@
 package starlark_test
 
+import "go.starlark.net/starlark"
+
 // The floors of darwin/arm64, Go 1.26, measured on 2026-10-01. CONVERTED by hand
 // into the per-platform form of calibrate_test.go (registerCalibration) from the
 // table that the run of that day wrote; the raw per-run outputs no longer exist,
@@ -327,6 +329,12 @@ var calibratedNs_darwin_arm64 = map[string]float64{
 }
 
 var _ = registerCalibration(calibrationPlatform{
+	Platform: "darwin/arm64",
+	// C of the reference platform is workNanoseconds (work.go): 12, which the
+	// worst probe of this table (11.72 ns a unit) is under. Written by hand,
+	// like the rest of this file; the files that the generator writes hold the
+	// C that it takes from their runs.
+	C:       float64(starlark.WorkNanoseconds),
 	Machine: "darwin/arm64, Go 1.26",
 	Date:    "2026-10-01",
 	Uptime: []string{

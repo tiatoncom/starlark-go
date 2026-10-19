@@ -52,7 +52,8 @@ func sortStrings(a []string) {
 	}
 }
 
-// WorkNanoseconds is the C of the invariant.
+// WorkNanoseconds is the C of the invariant on the reference platform,
+// darwin/arm64. The other platforms have their own C (calibrate_test.go).
 const WorkNanoseconds = workNanoseconds
 
 // FlushWork is the chunk of work that a meter charges at a time.

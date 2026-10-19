@@ -15,14 +15,19 @@ the text of the declared files. They were made and run for the tree
 the comments of 242d9c5 changed the hash to
 `42203a1b66b358f2867f665269f81721b19b687391b8bfede7fb4e0256e2cdfd`, and every
 id there names the same mutation (the lists of the three groups compared, id by
-id). After another change of the declared files, compare the lists before
-reusing an id. File:line are of the unmutated source of 242d9c5.
+id). The price of the deep call (120, not 56) and the comments of the
+calibration by platform changed it to
+`4e84123c9c04da645b2f39f956d609c72cac07d1edbd6f8c02c830024f75c678`: the two
+rows of `deepCallWork` follow the new price (struct-0168, struct-0169, killed by
+`TestFixed_TheCallThatIsDeep`), and every other id names the same mutation as
+before. After another change of the declared files, compare the lists before
+reusing an id. File:line are of the unmutated source of that last tree.
 
 | id | place | changes |
 |---|---|---|
-| struct-0128 | `work.go:173` | nothing |
-| struct-0109 | `work.go:339` | nothing on a 64-bit platform |
-| struct-0138 | `eval.go:2223` | Go memory of a deep stack |
+| struct-0128 | `work.go:180` | nothing |
+| struct-0109 | `work.go:346` | nothing on a 64-bit platform |
+| struct-0138 | `eval.go:2230` | Go memory of a deep stack |
 | struct-0011 | `value.go:1718` | time of the form of a deep value |
 | struct-0101 | `lib/json/json.go:277` | time of `json.encode` of a deep value |
 
@@ -33,19 +38,19 @@ One mutant that looked like these is not equivalent: see the end.
 `left = max(thread.maxWork-thread.extraWork, 1)` becomes
 `left = thread.maxWork-thread.extraWork`.
 
-The statement is inside `if thread.maxWork > thread.extraWork` (`work.go:172`),
+The statement is inside `if thread.maxWork > thread.extraWork` (`work.go:179`),
 and both are `uint64`, so the difference is at least 1 and `max(d, 1) == d`. The
 case that needs the floor, `maxWork <= extraWork`, is the `left := uint64(1)` of
-`work.go:171`, which the mutation does not touch.
+`work.go:178`, which the mutation does not touch.
 
 | observable | changes? | why |
 |---|---|---|
 | result, error | no | the gate `thread.maxSteps` is the same number for every state of the thread |
-| `Work()`, `AllocatedBytes()`, `Steps` | no | they are not read by `regate`; the gate decides only when `stepGate` (`work.go:183`) looks at the limits, and it is the same step |
+| `Work()`, `AllocatedBytes()`, `Steps` | no | they are not read by `regate`; the gate decides only when `stepGate` (`work.go:190`) looks at the limits, and it is the same step |
 
 ## struct-0109: `words64` as `len(b.Bits())`
 
-`uint64(b.BitLen()+63) / 64` becomes `uint64(len(b.Bits()))` (`work.go:339`).
+`uint64(b.BitLen()+63) / 64` becomes `uint64(len(b.Bits()))` (`work.go:346`).
 
 `big.Int.Bits` is the normalised slice of `big.Word`: no word of zero at the
 top, empty for zero. Its length is `ceil(BitLen/64)` when a `big.Word` is 64
@@ -55,32 +60,32 @@ calibrated on), which is the formula. For zero both are 0; the sign is not in
 
 | observable | changes? | why |
 |---|---|---|
-| result, error | no | `words64` is only a price: `alloc.go:459,499`, `work.go:345,410`, `workcmp.go:41,203` |
+| result, error | no | `words64` is only a price: `alloc.go:459,499`, `work.go:352,417`, `workcmp.go:41,203` |
 | `Work()`, `AllocatedBytes()` | no on 64-bit | the same number of words at every call site |
 | `Steps` | no | not charged by it |
 
 On a platform of 32-bit words `len(b.Bits())` is up to twice the formula and
 the prices double: this is the reason the function is written as it is (the
-comment at `work.go:336`). The tests run on 64-bit, so the mutant is equal
+comment at `work.go:343`). The tests run on 64-bit, so the mutant is equal
 there.
 
 ## struct-0138: `leaveFunction` leaves the zero counts in the map
 
 `if thread.active[f]--; thread.active[f] == 0 { delete(thread.active, f) }`
-becomes `thread.active[f]--` (`eval.go:2223`).
+becomes `thread.active[f]--` (`eval.go:2230`).
 
 `thread.active` is read in two places only, both in `enterFunction`:
-`thread.active[f] > 0` (`eval.go:2213`) and `thread.active[f]++`
-(`eval.go:2216`). A key with count 0 and an absent key give the same `0` to
+`thread.active[f] > 0` (`eval.go:2220`) and `thread.active[f]++`
+(`eval.go:2223`). A key with count 0 and an absent key give the same `0` to
 both. Nothing ranges over the map or takes its length. The map is dropped
-(`thread.active = nil`, `eval.go:2227`) as soon as a call leaves with the stack
+(`thread.active = nil`, `eval.go:2234`) as soon as a call leaves with the stack
 at most `recursionScanDepth` deep, so it does not outlive a deep stack.
 
 | observable | changes? | why |
 |---|---|---|
-| result, error | no | "called recursively" is decided by `> 0` at `eval.go:2213` |
+| result, error | no | "called recursively" is decided by `> 0` at `eval.go:2220` |
 | `Work()` | no | the work of a deep call is `deepCallWork` by the depth of `thread.stack` (`interp.go:34-38`), not by the map |
-| `AllocatedBytes()`, `Steps` | no | the map is not charged (no charge at `eval.go:2203`) |
+| `AllocatedBytes()`, `Steps` | no | the map is not charged (no charge at `eval.go:2210`) |
 
 What changes: while the stack stays deeper than 32, the map keeps one entry for
 each function that was active once, not only for the active ones: at most the

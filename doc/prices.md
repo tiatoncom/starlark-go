@@ -5,7 +5,7 @@ The steps of a program (`Thread.Steps`, `ExecutionSteps()`) are what they were i
 
 **The unit of work** is about the time of a simple step of the interpreter (the loop probes below take 1.5 to 11.2 ns a unit; C below is the bound that is asserted). Each step is a unit, and the operations charge for what they do beyond the opcodes that start them: the elements they visit, compare, probe, hash or copy, the bytes they scan, and the memory they allocate (garbage is allocator and collector time as well).
 
-**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = 12 ns on the reference machine (the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
+**The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = 12 ns on the reference machine, darwin/arm64 (C is per platform: see the platforms below;the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 
 ## What a unit costs, by probe (308 probes)
 
@@ -147,7 +147,7 @@ All of them:
 | f(**d) onto 2000 params | 419042 | 100078 | 64 | 4.19 |
 | '{k}'.format(**d) | 7501917 | 1360951 | 10 | 5.51 |
 | f(*l), 500000 | 6530625 | 1000011 | 9 | 6.53 |
-| chain of 20000 functions | 9964625 | 1178269 | 60005 | 8.46 |
+| chain of 20000 functions | 9964625 | 2456285 | 60005 | 4.06 |
 | big + 1 (6000 words) | 25695709 | 20080013 | 50009 | 1.28 |
 | big * big (1500 words) | 21625 | 200412 | 7 | 0.11 |
 | big // y (6000 / 1500 words) | 24125 | 2002512 | 7 | 0.01 |
@@ -341,6 +341,14 @@ All of them:
 | json.indent(flat) | 9274791 | 1243063 | 8 | 7.46 |
 | json.indent(nested) | 141719416 | 19045008 | 8 | 7.44 |
 | hash of a DAG tuple (2^22 paths) | 58648166 | 12582953 | 9 | 4.66 |
+
+## The platforms
+
+The units of work are the same on every platform; C turns them into time on a given machine, and each platform has its own (a platform is judged by its own floors with its own C, never by a mixture of them). The table above is that of the reference platform, darwin/arm64. Per platform, the worst probe of 2000 ns or more by the work that is charged now:
+
+| platform | machine | date | C (ns / unit) | worst probe | ns / unit |
+|---|---|---|---|---|---|
+| darwin/arm64 | darwin/arm64, Go 1.26 | 2026-10-01 | 12 | any(l) all falsy | 11.7 |
 
 ## The prices
 
