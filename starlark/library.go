@@ -303,6 +303,11 @@ func bytes_(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 			}
 			buf.WriteByte(b)
 		}
+		if n < 0 { // (the work of an element was added: nothing was, for a known length)
+			if err := m.flush(); err != nil {
+				return nil, err
+			}
+		}
 		return Bytes(buf.String()), nil
 
 	default:
@@ -410,6 +415,9 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 			}
 			pair := Tuple{MakeInt(start + i), x}
 			pairs = append(pairs, pair)
+		}
+		if err := m.flush(); err != nil {
+			return nil, err
 		}
 	}
 
@@ -871,6 +879,11 @@ func list(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 			}
 			elems = append(elems, x)
 		}
+		if n < 0 { // (the work of an element was added: nothing was, for a known length)
+			if err := m.flush(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return NewList(elems), nil
 }
@@ -1245,6 +1258,11 @@ func reversed(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, er
 		}
 		elems = append(elems, x)
 	}
+	if known < 0 { // (the work of an element was added: nothing was, for a known length)
+		if err := m.flush(); err != nil {
+			return nil, err
+		}
+	}
 	n := len(elems)
 	for i := 0; i < n>>1; i++ {
 		elems[i], elems[n-1-i] = elems[n-1-i], elems[i]
@@ -1529,6 +1547,11 @@ func tuple(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 			}
 		}
 		elems = append(elems, x)
+	}
+	if n < 0 { // (the work of an element was added: nothing was, for a known length)
+		if err := m.flush(); err != nil {
+			return nil, err
+		}
 	}
 	return elems, nil
 }
