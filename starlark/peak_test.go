@@ -77,6 +77,10 @@ var peakTable = []peakRow{
 	{"s % (a,)", "s = 'abcdefghij' * 400000", "r = '%s!' % s"},
 	{"s % tuple", "t = tuple(['abcdefghij'] * 100000)", "r = ('%s,' * 100000) % t"},
 	{"'{}'.format(s)", "s = 'abcdefghij' * 400000", "r = '{}!'.format(s)"},
+	// Many forms of a few dozen bytes: each is made in one pass (formProbe is
+	// 4096). With a smaller probe each would be made in two, and the first pass
+	// would allocate what the second does again (2.0x instead of 1.2x).
+	{"s % (a, b), small, x 50000", "s = 'abcdefghijklmnopqrstuvwxyz'", "for i in range(50000):\n    r = '%s-%d' % (s, i)"},
 	{"format of many", "t = ['abcdefghij'] * 100000", "r = ('{},' * 100000).format(*t)"},
 	{"s * n", "s = 'abcdefghij' * 1000", "r = s * 400"},
 	{"l * n", "l = list(range(1000))", "r = l * 400"},

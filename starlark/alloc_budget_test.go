@@ -149,6 +149,8 @@ var chargeCases = []struct {
 	{"str(bytes) of a valid string allocates nothing", "x = b'abc'", "r = str(x)", 0},
 	{"str(bytes) of an invalid string", "x = b'\\xff'", "r = str(x)", 3},
 	{"str(str) is the same string", "x = 'abc'", "r = str(x)", 0},
+	{"str(int): the digits", "x = 12345", "r = str(x)", 5},
+	{"str(int): the sign too", "x = -1234567", "r = str(x)", 8},
 	{"repr(list)", "x = [1, 2, 3]", "r = repr(x)", 9},
 	{"print", "", "print('abc', 'de')", 6},
 	// strings
