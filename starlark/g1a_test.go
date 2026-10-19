@@ -355,7 +355,7 @@ func TestG1aIntToStringIsOneFunctionForEveryPath(t *testing.T) {
 	str96 := func(n int) uint64 { return uint64(n) / 96 }
 	paths := []path{
 		{"r = str(x)", true, func(n int) uint64 { return 4 + str96(n) }},
-		{"r = repr(x)", true, func(int) uint64 { return 4 }},
+		{"r = repr(x)", true, func(n int) uint64 { return 4 + str96(n) }}, // the same as str: one rule for the result string
 		{"r = '%s' % x", true, str96},
 		{"r = '%r' % x", true, str96},
 		{"r = '%d' % x", true, str96},

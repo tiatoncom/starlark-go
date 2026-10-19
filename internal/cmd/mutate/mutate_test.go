@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -316,5 +317,140 @@ func TestSelect(t *testing.T) {
 	}
 	if got := idx(selectMutants(all, 0, -1, "7, 3,19", 1, "")); !reflect.DeepEqual(got, []int{3, 7, 19}) {
 		t.Errorf("only: %v", got)
+	}
+}
+
+// A test binary that fails without a failed test is a crash, which is not a
+// kill; one with a "--- FAIL" line is killed-test.
+func TestClassifyFailure(t *testing.T) {
+	exit2 := errors.New("exit status 2")
+	cases := []struct {
+		name    string
+		err     error
+		text    string
+		verdict string
+		failed  []string
+		detail  []string // substrings of the detail
+	}{
+		{"failed test", exit2, "=== RUN TestA\n--- FAIL: TestA (0.10s)\n    a_test.go:3: bad\nFAIL\n", KilledTest, []string{"TestA"}, nil},
+		{"panic inside a test", exit2, "--- FAIL: TestB (0.00s)\npanic: boom [recovered]\n", KilledTest, []string{"TestB"}, nil},
+		{"fatal error", exit2, "fatal error: concurrent map writes\n\ngoroutine 7 [running]:\n", Crashed, nil, []string{"exit status 2", "fatal error: concurrent map writes"}},
+		{"panic outside a test", exit2, "panic: runtime error: index out of range [3] with length 2\n\ngoroutine 1 [running]:\n", Crashed, nil, []string{"panic: runtime error"}},
+		{"signal", errors.New("signal: killed"), "", Crashed, nil, []string{"signal: killed"}},
+		{"exit without output", exit2, "", Crashed, nil, []string{"exit status 2"}},
+	}
+	for _, c := range cases {
+		v, detail, failed := classifyFailure(c.err, c.text)
+		if v != c.verdict || !reflect.DeepEqual(failed, c.failed) {
+			t.Errorf("%s: verdict %s failed %v", c.name, v, failed)
+		}
+		for _, s := range c.detail {
+			if !strings.Contains(detail, s) {
+				t.Errorf("%s: detail %q lacks %q", c.name, detail, s)
+			}
+		}
+		if v == KilledTest && detail != "" {
+			t.Errorf("%s: detail %q", c.name, detail)
+		}
+	}
+	// Only the first lines of a long output are kept, and no more than crashBytes.
+	var long strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&long, "line %d\n", i)
+	}
+	_, detail, _ := classifyFailure(exit2, long.String())
+	if !strings.Contains(detail, "line 0") || !strings.Contains(detail, fmt.Sprintf("line %d", crashLines-1)) || strings.Contains(detail, fmt.Sprintf("line %d\n", crashLines)) {
+		t.Errorf("the first lines: %q", detail)
+	}
+	_, detail, _ = classifyFailure(exit2, strings.Repeat("x", 10*crashBytes))
+	if len(detail) != crashBytes {
+		t.Errorf("detail of %d bytes", len(detail))
+	}
+}
+
+// -report counts a crash in a column of its own, not as killed, and lists it.
+func TestReportCountsCrashesApart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "r.jsonl")
+	lines := []string{
+		`{"header":{}}`,
+		`{"id":"struct-0000","group":"struct","verdict":"killed-test","failed":["TestA"]}`,
+		`{"id":"struct-0001","group":"struct","file":"starlark/eval.go","line":7,"note":"n","verdict":"crashed","detail":"signal: killed\nfatal error: x"}`,
+		`{"id":"struct-0002","group":"struct","verdict":"survived"}`,
+		`{"id":"struct-0003","group":"struct","verdict":"killed-build"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := printReport(&out, []string{path}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	want := "struct: total 4, killed-test 1, killed-build 1, timeout 0, memory 0, crashed 1, survived 1\n"
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("summary:\n%s\nwant\n%s", got, want)
+	}
+	if !strings.Contains(got, "CRASHED struct-0001") || !strings.Contains(got, "fatal error: x") {
+		t.Errorf("the crash is not listed:\n%s", got)
+	}
+}
+
+// gitIn runs git in dir for a test, or skips the test if there is no git.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// A run is refused in a main worktree (.git is a directory) and in a directory
+// that is no worktree; a linked worktree (.git is a file) is accepted.
+func TestRefusesAMainWorktree(t *testing.T) {
+	base := t.TempDir()
+	main := filepath.Join(base, "main")
+	if err := os.Mkdir(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, main, "init", "-q")
+	gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "x")
+	linked := filepath.Join(base, "linked")
+	gitIn(t, main, "worktree", "add", "-q", "--detach", linked)
+
+	err := requireLinkedWorktree(main)
+	if err == nil || !strings.Contains(err.Error(), "main worktree") || !strings.Contains(err.Error(), "git worktree add --detach") {
+		t.Errorf("main worktree: %v", err)
+	}
+	if err := requireLinkedWorktree(linked); err != nil {
+		t.Errorf("linked worktree: %v", err)
+	}
+	plain := t.TempDir()
+	if err := requireLinkedWorktree(plain); err == nil || !strings.Contains(err.Error(), "git worktree add --detach") {
+		t.Errorf("a directory without .git: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(plain, ".git"), []byte("nonsense"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireLinkedWorktree(plain); err == nil {
+		t.Error(".git that is no link was accepted")
+	}
+
+	// run() refuses a main worktree before it reads or runs anything ...
+	var out strings.Builder
+	err = run([]string{"-root", main, "-group", GroupStruct, "-out", filepath.Join(base, "out.jsonl")}, &out)
+	if err == nil || !strings.Contains(err.Error(), "main worktree") {
+		t.Errorf("run in a main worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "out.jsonl")); err == nil {
+		t.Error("a results file was made")
+	}
+	// ... but -list only reads: the refusal is not what stops it here (the
+	// repository has no declared files).
+	err = run([]string{"-root", main, "-group", GroupStruct, "-list", "-allow-dirty"}, &out)
+	if err == nil || strings.Contains(err.Error(), "worktree") {
+		t.Errorf("-list in a main worktree: %v", err)
 	}
 }

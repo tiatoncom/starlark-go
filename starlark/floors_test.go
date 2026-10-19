@@ -68,6 +68,11 @@ func countedProbe(t *testing.T, p probe) probeCount {
 	return c
 }
 
+// minJudgedProbes is the number of probes that a platform must have judged by
+// each of the two tests of the floors: a test that judges none passes by
+// itself.
+const minJudgedProbes = 150
+
 func TestPrices_AtLeastTheMeasuredCost(t *testing.T) {
 	if len(calibrationPlatforms) == 0 {
 		t.Skip("no calibration")
@@ -92,9 +97,10 @@ func TestPrices_AtLeastTheMeasuredCost(t *testing.T) {
 					t.Errorf("%s: %d units of work (%d of them steps) for %.0f ns: %.1f ns a unit, over C = %.0f of %s", p.name, c.work, c.steps, ns, ns/float64(max(c.work, 1)), plat.C, plat.Platform)
 				}
 			}
-			if checked < 150 {
+			if checked < minJudgedProbes {
 				t.Errorf("only %d probes were checked", checked)
 			}
+			t.Logf("%s: %d probes checked", plat.Platform, checked)
 		})
 	}
 }
@@ -112,6 +118,7 @@ func TestWork_NoProbeCostsMoreThanC(t *testing.T) {
 	for _, plat := range calibrationPlatforms {
 		t.Run(plat.Platform, func(t *testing.T) {
 			worst, worstName := 0.0, ""
+			judged := 0
 			for _, p := range calibrationProbes {
 				ns, ok := plat.Ns[p.name]
 				if !ok || ns < minProbeNanoseconds {
@@ -122,6 +129,7 @@ func TestWork_NoProbeCostsMoreThanC(t *testing.T) {
 					t.Errorf("%s: %v", p.name, c.err)
 					continue
 				}
+				judged++
 				r := ns / float64(max(c.work, 1))
 				if r > worst {
 					worst, worstName = r, p.name
@@ -130,7 +138,12 @@ func TestWork_NoProbeCostsMoreThanC(t *testing.T) {
 					t.Errorf("%s: %d units of work for %.0f ns: %.1f ns a unit, over C = %.0f of %s", p.name, c.work, ns, r, plat.C, plat.Platform)
 				}
 			}
-			t.Logf("%s, C = %.0f: the worst probe: %s, %.1f ns a unit", plat.Platform, plat.C, worstName, worst)
+			// A run that judges no probe is not a pass (the loops are judged here
+			// too, so at least as many as the other test judges).
+			if judged < minJudgedProbes {
+				t.Errorf("only %d probes were judged on %s, at least %d are required", judged, plat.Platform, minJudgedProbes)
+			}
+			t.Logf("%s, C = %.0f: %d probes judged; the worst probe: %s, %.1f ns a unit", plat.Platform, plat.C, judged, worstName, worst)
 		})
 	}
 }

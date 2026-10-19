@@ -168,7 +168,7 @@ func (j *formJob) charge(thread *Thread, n int) error {
 	case jobStr:
 		return excess(thread.chargeBytes(n), "str: value's string form exceeds the size limit")
 	case jobRepr:
-		return thread.chargeBudget(uint64(n)) // (at the ceiling the bounded form is returned: the budget only)
+		return thread.chargeBytesBounded(n) // (at the ceiling the bounded form is returned: no error of the ceiling)
 	case jobPrint:
 		return excess(thread.chargeBytes(n), "print: excessive output size")
 	case jobInterpolate:

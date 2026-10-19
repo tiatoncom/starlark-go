@@ -533,17 +533,14 @@ func TestDifferentialAgainstV020(t *testing.T) {
 	// A program of v0.2.0 that panicked, or whose behavior is changed on
 	// purpose, is not compared.
 	// (The Compatibility list, compatCases, is the one place where a divergence on purpose is declared.)
-	onPurpose := map[string]bool{}
-	for _, c := range compatCases() {
-		onPurpose[c.Src] = true
-	}
-	changed := func(g diffOutcome) bool {
-		return g.Status == "panic" || onPurpose[g.Src]
-	}
+	// (differentialSkip is the one rule of the three differential tests, and
+	// TestDifferentialExclusionsAreTheCompatibilityList holds it to the list.)
+	compat := compatBySrc()
+	changed := func(g diffOutcome) bool { return differentialSkip(g, compat) != "" }
 	var bad []string
 	excluded := 0
 	for _, g := range golden {
-		if g.Status != "panic" && onPurpose[g.Src] {
+		if differentialSkip(g, compat) == skipCompat {
 			excluded++
 		}
 	}
@@ -585,11 +582,12 @@ func TestDifferentialLargeOperands(t *testing.T) {
 		was, steps uint64
 	}
 	var rows []row
+	compat := compatBySrc()
 	for _, g := range golden {
-		got := runDiffProgram(g.Src)
-		if g.Status == "panic" {
+		if differentialSkip(g, compat) != "" {
 			continue
 		}
+		got := runDiffProgram(g.Src)
 		if got.Status != g.Status || got.Result != g.Result || got.Err != g.Err {
 			// (the sum_ program is an error in both)
 			t.Errorf("%.200q\n   v0.2.0: %s %.100q %.100q\n   now:    %s %.100q %.100q", g.Src, g.Status, g.Result, g.Err, got.Status, got.Result, got.Err)
@@ -623,8 +621,9 @@ func TestDifferentialReviewPrograms(t *testing.T) {
 		t.Fatalf("the golden file has %d programs", len(golden))
 	}
 	var bad []string
+	compat := compatBySrc()
 	for _, g := range golden {
-		if g.Status == "panic" {
+		if differentialSkip(g, compat) != "" {
 			continue
 		}
 		got := runDiffProgram(g.Src)

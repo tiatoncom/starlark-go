@@ -26,12 +26,16 @@ reusing an id. File:line are of the unmutated source of that last tree.
 | id | place | changes |
 |---|---|---|
 | struct-0128 | `work.go:180` | nothing |
+| `sortSlice.Less`: continues after the stop | `library.go:1444` | nothing |
 | struct-0109 | `work.go:346` | nothing on a 64-bit platform |
 | struct-0138 | `eval.go:2230` | Go memory of a deep stack |
-| struct-0011 | `value.go:1718` | time of the form of a deep value |
-| struct-0101 | `lib/json/json.go:277` | time of `json.encode` of a deep value |
 
-One mutant that looked like these is not equivalent: see the end.
+struct-0011 (`value.go:1718`) and struct-0101 (`encodePath.contains`, `lib/json/json.go:717`) were in
+this table. They are equivalent in the result, the error and the counters, but
+not in time, and time is what the budget is for: they are killed by tests of
+the set and of the time (their sections below), and are not unobservable.
+
+Two mutants that looked like these are not equivalent: see the end.
 
 ## struct-0128: `regate` without `max(..., 1)`
 
@@ -91,7 +95,7 @@ What changes: while the stack stays deeper than 32, the map keeps one entry for
 each function that was active once, not only for the active ones: at most the
 number of functions of the program, in Go memory that is not charged.
 
-## struct-0011: `valueWriter` without the set
+## struct-0011: `valueWriter` without the set (equivalent in results and counters, NOT in time: killed)
 
 `if len(w.path) == pathSetDepth` becomes `if len(w.path) == 1<<30`
 (`value.go:1718`): the set `pathSet` is never made, `onPath` (`value.go:1705`)
@@ -113,18 +117,27 @@ not on the set, and the mutation does not touch it.
 
 What changes: the check of a container at depth d costs d comparisons instead of
 one lookup, so the form of a value nested n levels deep takes time quadratic in
-n (n is at most `MaxValueDepth`, 10000) instead of linear.
+n (n is at most `MaxValueDepth`, 10000) instead of linear, while the work
+counter stays linear: about 300 ns a unit at depth 9000.
 
-## struct-0101: `json.encode`, the cycle check without the set
+Killed by `TestPathSet_ValueWriterHoldsThePathBeyondTheFirstLevels`
+(`starlark/pathset_test.go`, white box: after N pushes beyond `pathSetDepth` the
+set is not nil and holds exactly N entries, and the pops take them out; the
+mutant never makes the set). No guard asserts a wall time, so the time itself
+is not tested, only the set that makes it linear.
 
-`if pathSet != nil { _, cycle = pathSet[ptr] } else { cycle = pathContains(path, ptr) }`
-becomes `if false {...} else {...}` (`lib/json/json.go:277`): the set is made
-and maintained (`json.go:286-296`) and never read.
+## struct-0101: `json.encode`, the cycle check without the set (equivalent in results and counters, NOT in time: killed)
+
+In `encodePath.contains` (`lib/json/json.go:717`) `if p.set != nil { _, ok := p.set[item]; return ok }`
+becomes `if false {...}`, so `slices.Contains(p.stack, item)` always answers: the set
+is made and maintained by `push` and `pop` (`json.go:725`, `:737`) and never read.
+(In the tree the ids were made for, this was an inline `pathSet` in `encodeTo`,
+`json.go:277`; the encoder's path is now the type `encodePath`.)
 
 Same argument as struct-0011: `path` and `pathSet` hold the same pointers at all
 times, `slices.Contains` on `unsafe.Pointer` and the map lookup compare the same
 way, and the answer decides only whether `cycle in JSON structure` is returned.
-The charge of the node (`work.add(4)`, `json.go:270`) is before the check and
+The charge of the node (`work.add(4)`, `json.go:274`) is before the check and
 does not depend on it.
 
 | observable | changes? | why |
@@ -134,6 +147,27 @@ does not depend on it.
 
 What changes: time, quadratic in the depth of the value (at most
 `MaxValueDepth`), and the Go memory of a set that is built and not used.
+
+Killed by the white-box tests of the encoder's path set
+(`lib/json/pathset_internal_test.go`):
+`TestEncodePath_ContainsConsultsTheSetFromTheThreshold` (from the threshold
+depth `encodePathSetDepth` = 32 a key that is only in the set is found, and one
+that is only in the slice is not: the mutant reads the slice and fails it),
+`TestEncodePath_SetFromTheThresholdDepth` (the set exists from that depth) and
+`TestEncode_CycleDeeperThanTheSetThreshold` (a cycle below the threshold is
+still found). No guard asserts a wall time.
+
+## `sortSlice.Less`: continues after the stop
+
+The row `if s.stopped { return false // (not reached ...` (`library.go:1444`) is
+mutated (the guard removed or its result changed). Every place that sets
+`s.stopped` (`Less` and `Swap`) panics with `sortStop` in the same statement
+sequence, and `stableSort` is left by that panic, recovered in the caller; so no
+`Less` is called with `s.stopped` true, and the guard is unreachable by design.
+With it removed or changed no result, error, `Work()`, `AllocatedBytes()` or
+`Steps` can differ, because the code it guards never runs: the mutant survives
+by construction. (The property that matters, no comparison after the first
+error, is held by a test that counts the calls of `Less` after the error: 0.)
 
 struct-0147 (`pathSetDepth` 32 to 16, `value.go:1703`) is not equivalent: it
 changes `Work()` (8 units per container at nesting 17 to 32). It is killed by

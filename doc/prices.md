@@ -61,8 +61,8 @@ All of them:
 | rsplit: , | 7413667 | 3015645 | 8 | 2.46 |
 | splitlines | 7163667 | 3015645 | 7 | 2.38 |
 | join: 500000 strings | 5208792 | 523449 | 8 | 9.95 |
-| strip: 5000 non-ascii cutset | 256416 | 100173 | 119 | 2.56 |
-| lstrip: A4 form | 624250 | 210012 | 8 | 2.97 |
+| strip: 5000 non-ascii cutset | 256416 | 250203 | 119 | 1.02 |
+| lstrip: A4 form | 624250 | 300012 | 8 | 2.08 |
 | strip: ascii cutset | 1630958 | 500012 | 7 | 3.26 |
 | upper (ascii) | 2167792 | 760427 | 7 | 2.85 |
 | upper (non-ascii) | 4067500 | 760427 | 7 | 5.35 |
@@ -79,9 +79,9 @@ All of them:
 | hash(s) | 763916 | 250011 | 7 | 3.06 |
 | dict key: 1 MB string | 2701583 | 609702 | 251 | 4.43 |
 | str(s) | 209 | 11 | 7 | 19.00 |
-| repr(s): plain | 1604500 | 750011 | 7 | 2.14 |
-| repr(s): escapes | 6632459 | 750011 | 7 | 8.84 |
-| repr(list of str) | 5618750 | 1100011 | 7 | 5.11 |
+| repr(s): plain | 1604500 | 760427 | 7 | 2.11 |
+| repr(s): escapes | 6632459 | 765636 | 7 | 8.66 |
+| repr(list of str) | 5618750 | 1114594 | 7 | 5.04 |
 | %s % s | 17875 | 10423 | 7 | 1.71 |
 | % d | 9463458 | 1000013 | 1000009 | 9.46 |
 | '{}'.format(s) | 19334 | 10434 | 8 | 1.85 |
@@ -183,7 +183,7 @@ All of them:
 | s in s (long needle hit at the end) | 1258625 | 250013 | 11 | 5.03 |
 | title: non-ascii | 7560917 | 912511 | 7 | 8.29 |
 | isalpha: non-ascii | 942500 | 250011 | 7 | 3.77 |
-| lstrip: 5000-char cutset, 200000 trimmed | 325000 | 107513 | 8 | 3.02 |
+| lstrip: 5000-char cutset, 200000 trimmed | 325000 | 115016 | 8 | 2.83 |
 | lstrip: ascii cutset of 100 | 1556500 | 500113 | 8 | 3.11 |
 | s[::3] | 592167 | 86814 | 9 | 6.82 |
 | s[-1::-1] | 1774083 | 260427 | 11 | 6.81 |
@@ -192,10 +192,10 @@ All of them:
 | %d loop | 18863833 | 2000013 | 2000009 | 9.43 |
 | %s loop with a string | 19871375 | 2000013 | 2000009 | 9.94 |
 | str(i) loop | 19024541 | 2800013 | 2000009 | 6.79 |
-| repr(s) plain 1 MB | 1555125 | 750011 | 7 | 2.07 |
-| repr(s) with escapes 1 MB | 6446209 | 750011 | 7 | 8.59 |
-| repr(s) non-ascii 1 MB | 7207917 | 750011 | 7 | 9.61 |
-| repr of 100000 short strings | 3339417 | 600011 | 7 | 5.57 |
+| repr(s) plain 1 MB | 1555125 | 760427 | 7 | 2.05 |
+| repr(s) with escapes 1 MB | 6446209 | 765636 | 7 | 8.42 |
+| repr(s) non-ascii 1 MB | 7207917 | 760427 | 7 | 9.48 |
+| repr of 100000 short strings | 3339417 | 607302 | 7 | 5.50 |
 | str of 300000 floats | 19579583 | 2430489 | 7 | 8.06 |
 | str of nested dicts | 10552416 | 1214362 | 7 | 8.69 |
 | str of tuples (depth 2) | 11450708 | 2025705 | 7 | 5.65 |

@@ -281,12 +281,20 @@ func (thread *Thread) charge(size, bytes uint64) error {
 // allocBytesPerWork for memory that holds pointers (the collector marks it),
 // allocBytesPerWorkNoscan for strings and the digits of integers (it does not).
 func (thread *Thread) chargeAt(size, bytes, perWork uint64) error {
+	return thread.chargeAtCeiling(size, bytes, perWork, true)
+}
+
+// chargeAtCeiling is chargeAt, with the ceiling (maxAlloc) checked or not: the
+// form that repr returns at the ceiling is bounded, not refused, and is charged
+// the same bytes and the same work as any string (chargeBytes), but is not an
+// error of the ceiling.
+func (thread *Thread) chargeAtCeiling(size, bytes, perWork uint64, ceiling bool) error {
 	if thread != nil && thread.maxAllocBytes != 0 {
 		if err := thread.overBudget(bytes); err != nil {
 			return err
 		}
 	}
-	if size >= uint64(maxAlloc) {
+	if ceiling && size >= uint64(maxAlloc) {
 		return errExcessive
 	}
 	if thread != nil {
@@ -361,6 +369,14 @@ func (thread *Thread) chargeEntries(n int) error {
 // chargeBytes charges for a new String or Bytes of n bytes.
 func (thread *Thread) chargeBytes(n int) error {
 	return thread.chargeAt(uint64(max(n, 0)), uint64(max(n, 0)), allocBytesPerWorkNoscan)
+}
+
+// chargeBytesBounded is chargeBytes without the error of the ceiling: for the
+// form of repr, which at the ceiling returns the bounded form. The work and the
+// budget are those of chargeBytes (the one rule for the result string of str,
+// repr and the others).
+func (thread *Thread) chargeBytesBounded(n int) error {
+	return thread.chargeAtCeiling(uint64(max(n, 0)), uint64(max(n, 0)), allocBytesPerWorkNoscan, false)
 }
 
 // excess translates the error of charge into the error of an operation: a

@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -2087,69 +2086,7 @@ func decodeRuneAt(s string, i int) (rune, int) {
 	return utf8.DecodeRuneInString(s[i:])
 }
 
-// caseWidthLimit bounds the runes that have a case mapping (the last is
-// U+1E943): beyond it the mapping is called.
-const caseWidthLimit = 0x20000
-
-// caseWidths holds, for each direction, the bit of every rune below
-// caseWidthLimit whose upper (or lower) case is not as wide as it is in
-// UTF-8 (U+023F, 2 bytes, to U+2C7E, 3). It is made from the tables of
-// package unicode, so it is exact for the Go version that is used, and once.
-type caseWidths struct{ upper, lower, title [caseWidthLimit / 64]uint64 }
-
-// casedAfter holds, for the lower case (0) and the title case (1) of each
-// non-ASCII rune below caseWidthLimit, whether the rune that the mapping
-// gives is cased (isCasedRune of it): what title keeps from a rune to the
-// next. It is found by asking, of each rune (a rune is cased also by an orbit
-// of SimpleFold that has no mapping, as U+00DF has, and U+0130 is not cased
-// but its lower case is), so it takes ~4 ms, once, by the first non-ASCII
-// rune that title meets.
-var casedAfter = sync.OnceValue(func() *[2][caseWidthLimit / 64]uint64 {
-	t := new([2][caseWidthLimit / 64]uint64)
-	for r := rune(utf8.RuneSelf); r < caseWidthLimit; r++ {
-		if isCasedRune(unicode.ToLower(r)) {
-			t[0][r>>6] |= 1 << (r & 63)
-		}
-		if isCasedRune(unicode.ToTitle(r)) {
-			t[1][r>>6] |= 1 << (r & 63)
-		}
-	}
-	return t
-})
-
-var caseWidthsOnce = sync.OnceValue(func() *caseWidths {
-	t := new(caseWidths)
-	for _, cr := range unicode.CaseRanges {
-		for r := rune(cr.Lo); r <= rune(cr.Hi) && r < caseWidthLimit; r++ {
-			if utf8.RuneLen(unicode.ToUpper(r)) != utf8.RuneLen(r) {
-				t.upper[r>>6] |= 1 << (r & 63)
-			}
-			if utf8.RuneLen(unicode.ToLower(r)) != utf8.RuneLen(r) {
-				t.lower[r>>6] |= 1 << (r & 63)
-			}
-			if utf8.RuneLen(unicode.ToTitle(r)) != utf8.RuneLen(r) {
-				t.title[r>>6] |= 1 << (r & 63)
-			}
-		}
-	}
-	return t
-})
-
-// isCasedAfter is isCasedRune of the lower case (or, if toTitle, the title
-// case) of the non-ASCII rune r, by the table.
-func isCasedAfter(r rune, toTitle bool) bool {
-	if r < caseWidthLimit {
-		k := 0
-		if toTitle {
-			k = 1
-		}
-		return casedAfter()[k][r>>6]&(1<<(r&63)) != 0
-	}
-	if toTitle {
-		return isCasedRune(unicode.ToTitle(r))
-	}
-	return isCasedRune(unicode.ToLower(r))
-}
+// (the tables of the case maps are static: casetab.go, casetables.go)
 
 // titleCaseLen and titleCase are the length of the result and the result of
 // title (capitalize false) and capitalize, as upperLowerLen and upperLower
@@ -2232,8 +2169,6 @@ func titleCase(s string, n int, capitalize bool) string {
 	}
 	return unsafe.String(&buf[0], len(buf)) // (buf is not used again)
 }
-
-func caseWidthTables() *caseWidths { return caseWidthsOnce() }
 
 // upperLower is s upper- or lower-cased (an invalid byte is U+FFFD), built in
 // n bytes, which is upperLowerLen of it.

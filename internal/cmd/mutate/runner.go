@@ -3,26 +3,46 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
 // Verdicts. A mutant is KILLED only by a failed test or a failed build; a
-// timeout and a memory kill are classes of their own and decide nothing.
+// timeout, a memory kill and a crash are classes of their own and decide
+// nothing. A crash is a test binary that failed without a failed test: a Go
+// fatal error, a panic outside a test, a signal (SIGKILL of the system). It is
+// not evidence that a test sees the mutant.
 const (
 	Survived    = "survived"
 	KilledTest  = "killed-test"
 	KilledBuild = "killed-build"
 	Timeout     = "timeout"
 	Memory      = "memory"
+	Crashed     = "crashed"
 )
+
+// Verdicts is the declared order of the verdicts, for the counts.
+var Verdicts = []string{KilledTest, KilledBuild, Timeout, Memory, Crashed, Survived}
+
+// countsLine is "total N, killed-test N, ..." of a map of counts by verdict.
+func countsLine(c map[string]int) string {
+	s := fmt.Sprintf("total %d", c["total"])
+	for _, v := range Verdicts {
+		s += fmt.Sprintf(", %s %d", v, c[v])
+	}
+	return s
+}
 
 // Stage is one run of one test binary. A mutant survives if every stage passes.
 type Stage struct {
@@ -71,6 +91,117 @@ type Runner struct {
 	Cfg Config
 	// Exec lets a test stand in for the go tool; nil means the real one.
 	Exec func(ctx context.Context, dir string, env []string, name string, args ...string) (string, error)
+
+	// The children (the go tool, the test binaries) run in process groups of
+	// their own, so that the terminal does not interrupt them with the tool:
+	// the tool has to kill them itself (KillAll).
+	mu      sync.Mutex
+	groups  map[int]bool // process groups that are running
+	stopped bool         // KillAll was called: no child starts any more
+}
+
+var errStopped = errors.New("the tool is stopping")
+
+// begin starts cmd (already in a process group of its own) and registers its
+// group, unless the runner is stopped.
+func (r *Runner) begin(cmd *exec.Cmd) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopped {
+		return errStopped
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if r.groups == nil {
+		r.groups = map[int]bool{}
+	}
+	r.groups[cmd.Process.Pid] = true
+	return nil
+}
+
+func (r *Runner) end(pid int) {
+	r.mu.Lock()
+	delete(r.groups, pid)
+	r.mu.Unlock()
+}
+
+// KillAll kills the whole process group of every child that runs, and refuses
+// to start another.
+func (r *Runner) KillAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopped = true
+	for pid := range r.groups {
+		killGroup(pid)
+	}
+}
+
+// Stopped reports whether KillAll was called.
+func (r *Runner) Stopped() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stopped
+}
+
+// parkIfStopped waits for the process to be ended by the interrupt handler: a
+// result of a child that was killed by it must not be written or reported.
+func (r *Runner) parkIfStopped() {
+	if r.Stopped() {
+		select {}
+	}
+}
+
+// Interrupt is what the handler of a signal does: the children are killed (no
+// other starts), and then every file is put back to its pristine text and the
+// target refuses any later write.
+func (r *Runner) Interrupt(pristine map[string]string) error {
+	r.KillAll()
+	return r.T.Freeze(pristine)
+}
+
+// HandleInterrupts calls Interrupt on SIGINT or SIGTERM, says whether the files
+// were restored, and calls exit(130). The returned func stops the handler.
+func (r *Runner) HandleInterrupts(pristine map[string]string, exit func(int)) (stop func()) {
+	sig := make(chan os.Signal, 1)
+	quit := make(chan struct{})
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case <-sig:
+			err := r.Interrupt(pristine)
+			fmt.Fprintln(os.Stderr, "mutate: interrupted; children killed; files restored:", err == nil)
+			exit(130)
+		case <-quit:
+		}
+	}()
+	return func() {
+		signal.Stop(sig)
+		close(quit)
+	}
+}
+
+// Baseline decides the pristine tree by all the stages. The suite must be green
+// on the tree that is not mutated, or no verdict on a mutant means anything.
+func (r *Runner) Baseline() error {
+	res := r.decide()
+	r.parkIfStopped()
+	if res.Verdict == Survived {
+		return nil
+	}
+	where := ""
+	if res.StageIndex >= 0 && res.StageIndex < len(r.Cfg.Stages) {
+		st := r.Cfg.Stages[res.StageIndex]
+		where = fmt.Sprintf(" at stage %d (%s, -test.run %s)", res.StageIndex+1, st.Pkg, st.Run)
+	}
+	msg := fmt.Sprintf("baseline: the tree without a mutant is not green: %s%s", res.Verdict, where)
+	if len(res.Failed) > 0 {
+		msg += "; failed: " + strings.Join(res.Failed, ", ")
+	}
+	if res.Detail != "" {
+		msg += "\n" + res.Detail
+	}
+	return errors.New(msg)
 }
 
 var (
@@ -180,7 +311,12 @@ func (r *Runner) exec(ctx context.Context, dir string, env []string, name string
 	cmd.Dir, cmd.Env = dir, env
 	var buf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &buf, &buf
-	err := cmd.Run()
+	setProcessGroup(cmd)
+	if err := r.begin(cmd); err != nil {
+		return buf.String(), err
+	}
+	defer r.end(cmd.Process.Pid)
+	err := cmd.Wait()
 	return buf.String(), err
 }
 
@@ -216,9 +352,10 @@ func (r *Runner) runStage(bin string, st Stage) (verdict, detail string, failed 
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.WaitDelay = 5 * time.Second
 	setProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := r.begin(cmd); err != nil {
 		return KilledBuild, "start: " + err.Error(), nil
 	}
+	defer r.end(cmd.Process.Pid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	t0 := time.Now()
@@ -255,15 +392,32 @@ loop:
 	case reTimedOut.MatchString(text):
 		return Timeout, "test timed out (-test.timeout)", reFailNames(text)
 	}
-	failed = reFailNames(text)
-	if len(failed) == 0 {
-		first := strings.TrimSpace(text)
-		if i := strings.IndexByte(first, '\n'); i >= 0 {
-			first = first[:i]
-		}
-		failed = []string{"(crash) " + cut(first, 80)}
+	return classifyFailure(runErr, text)
+}
+
+// crashLines and crashBytes bound the output of a crash that is kept.
+const (
+	crashLines = 12
+	crashBytes = 1500
+)
+
+// classifyFailure decides a test binary that exited with an error (not a
+// timeout, not a kill by the tool): killed-test if a test failed (a "--- FAIL"
+// line), else crashed, with the error of the exit and the first lines of the
+// output kept as the detail. A crash is not a kill.
+func classifyFailure(runErr error, text string) (verdict, detail string, failed []string) {
+	if failed = reFailNames(text); len(failed) > 0 {
+		return KilledTest, "", failed
 	}
-	return KilledTest, "", failed
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) > crashLines {
+		lines = lines[:crashLines]
+	}
+	detail = strings.Join(lines, "\n")
+	if runErr != nil {
+		detail = runErr.Error() + "\n" + detail
+	}
+	return Crashed, cut(strings.TrimSpace(detail), crashBytes), nil
 }
 
 func reFailNames(text string) []string {

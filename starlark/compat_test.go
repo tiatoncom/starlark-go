@@ -366,3 +366,130 @@ func TestCompatibilityDivergencesFromV020(t *testing.T) {
 	}
 	t.Logf("the Compatibility list (%d):%s", len(ids), b.String())
 }
+
+// ---- the exclusions of the differential tests and the Compatibility list ----
+
+const (
+	skipCompat = "compat" // the program is a case of the Compatibility list
+	skipPanic  = "panic"  // v0.2.0 panicked on it (its golden has the status "panic")
+)
+
+func compatBySrc() map[string]compatCase {
+	m := map[string]compatCase{}
+	for _, c := range compatCases() {
+		m[c.Src] = c
+	}
+	return m
+}
+
+// differentialSkip says why a program of a golden file of v0.2.0 is not
+// compared with this version by the differential tests (TestDifferential*), or
+// "" if it is compared. A program is skipped for one of two reasons: it is a
+// case of the Compatibility list (a difference on purpose, compared with its
+// expected difference by TestCompatibilityDivergencesFromV020), or v0.2.0
+// panicked on it (a panic is not an outcome that this version is to repeat; it
+// is told from the others by the status "panic" that the writer of the golden
+// recorded after it recovered, and it needs no entry of the list).
+func differentialSkip(g diffOutcome, compat map[string]compatCase) string {
+	if _, ok := compat[g.Src]; ok {
+		return skipCompat
+	}
+	if g.Status == "panic" {
+		return skipPanic
+	}
+	return ""
+}
+
+// exclusionProblems holds the exclusions of a differential test to the
+// Compatibility list, both ways, over the programs of one golden file:
+//   - a program that is skipped but is not a panic of v0.2.0 has an entry of the
+//     list (an exclusion that is not declared is a difference that is not
+//     reviewed);
+//   - an entry of the list whose program is in the golden is skipped (else the
+//     differential would fail on a declared difference) and, so that it is
+//     still checked, v0.2.0 gives for it what the entry says and this version
+//     gives what the entry says.
+func exclusionProblems(name string, golden []diffOutcome, skip func(diffOutcome) string, compat map[string]compatCase) []string {
+	var problems []string
+	for _, g := range golden {
+		reason := skip(g)
+		c, declared := compat[g.Src]
+		switch {
+		case declared:
+			if reason == "" {
+				problems = append(problems, fmt.Sprintf("%s: the case %s of the Compatibility list is compared with v0.2.0 (it differs on purpose)", name, c.ID))
+				continue
+			}
+			if o := outcomeOf(g); o != c.V020 {
+				problems = append(problems, fmt.Sprintf("%s: %s: v0.2.0 gave %v, the case says %v", name, c.ID, o, c.V020))
+			}
+			if o := outcomeOf(runDiffProgram(g.Src)); o != c.Now {
+				problems = append(problems, fmt.Sprintf("%s: %s: now %v, the case says %v", name, c.ID, o, c.Now))
+			}
+		case reason == skipPanic:
+			if g.Status != "panic" {
+				problems = append(problems, fmt.Sprintf("%s: %.80q is skipped as a panic of v0.2.0 and its status is %q", name, g.Src, g.Status))
+			}
+		case reason != "":
+			problems = append(problems, fmt.Sprintf("%s: %.80q is excluded from the differential (%s) and is not in the Compatibility list", name, g.Src, reason))
+		}
+	}
+	return problems
+}
+
+func TestDifferentialExclusionsAreTheCompatibilityList(t *testing.T) {
+	compat := compatBySrc()
+	entriesSeen := map[string]bool{}
+	for _, f := range []string{goldenSmall, goldenBig, goldenReview} {
+		golden := readGolden(t, f)
+		for _, p := range exclusionProblems(f, golden, func(g diffOutcome) string { return differentialSkip(g, compat) }, compat) {
+			t.Error(p)
+		}
+		panics, declared := 0, 0
+		for _, g := range golden {
+			if _, ok := compat[g.Src]; ok {
+				declared++
+				entriesSeen[g.Src] = true
+			} else if g.Status == "panic" {
+				panics++
+			}
+		}
+		t.Logf("%s: %d programs, %d of the Compatibility list (skipped), %d panics of v0.2.0 (skipped, no entry needed)", f, len(golden), declared, panics)
+	}
+
+	// The check is not vacuous: each drift of the two lists, made on synthetic
+	// data, is a problem.
+	var some compatCase
+	for _, c := range compatCases() {
+		some = c
+		break
+	}
+	declared := diffOutcome{Src: some.Src, Status: "ok"}
+	plain := diffOutcome{Src: "result = 1 + 1", Status: "ok"}
+	panicking := diffOutcome{Src: "result = f()", Status: "panic"}
+	skipPlain := func(g diffOutcome) string { return differentialSkip(g, compat) }
+	cases := []struct {
+		what   string
+		golden []diffOutcome
+		skip   func(diffOutcome) string
+		want   bool // a problem is expected
+	}{
+		{"a case of the list, compared by the differential", []diffOutcome{declared},
+			func(g diffOutcome) string { return "" }, true},
+		{"a program excluded that is not in the list and did not panic", []diffOutcome{plain},
+			func(g diffOutcome) string { return skipCompat }, true},
+		{"a program skipped as a panic that did not panic", []diffOutcome{plain},
+			func(g diffOutcome) string { return skipPanic }, true},
+		{"a panic of v0.2.0 (needs no entry)", []diffOutcome{panicking}, skipPlain, false},
+		{"a program that is compared and is not in the list", []diffOutcome{plain}, skipPlain, false},
+	}
+	for _, c := range cases {
+		got := exclusionProblems("synthetic", c.golden, c.skip, compat)
+		if (len(got) > 0) != c.want {
+			t.Errorf("%s: problems %v, want a problem: %v", c.what, got, c.want)
+		}
+	}
+	if len(entriesSeen) == 0 {
+		t.Log("no case of the Compatibility list is in a golden file of the differential tests: the first direction is checked on the synthetic data only")
+	}
+}

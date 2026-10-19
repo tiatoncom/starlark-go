@@ -64,26 +64,50 @@ func TestEveryBuiltinHasAPrice(t *testing.T) {
 // operators, and the other operations of the interpreter, each appear in the
 // table (so that an operator added without a price is a red test).
 func TestOperatorPricesAreDeclared(t *testing.T) {
-	var keys []string
 	for k, p := range operatorPrices {
-		keys = append(keys, k)
 		if p.desc == "" || (!p.o1 && !p.inside && p.work == nil) {
 			t.Errorf("operator price %q declares nothing", k)
 		}
 	}
-	all := strings.Join(keys, "\n")
+	// The keys are an exact set: a row missing and a row extra both fail.
+	for _, problem := range operatorKeyProblems(operatorPrices) {
+		t.Error(problem)
+	}
 	for _, tok := range []syntax.Token{syntax.PLUS, syntax.MINUS, syntax.STAR, syntax.SLASH, syntax.SLASHSLASH, syntax.PERCENT,
 		syntax.EQL, syntax.NEQ, syntax.LT, syntax.LE, syntax.GT, syntax.GE, syntax.IN, syntax.PIPE, syntax.AMP,
 		syntax.CIRCUMFLEX, syntax.LTLT, syntax.GTGT, syntax.TILDE} {
-		if !strings.Contains(all, " "+tok.String()+" ") && !strings.Contains(all, " "+tok.String()+",") && !strings.Contains(all, ", "+tok.String()+" ") &&
-			!strings.Contains(all, tok.String()) {
-			t.Errorf("operator %s has no price", tok)
+		if _, ok := operatorOfToken[tok]; !ok {
+			t.Errorf("operator %s has no row in operatorOfToken", tok)
 		}
 	}
-	for _, need := range []string{"x in", "x[i]", "x[k]", "x[i:j:k]", "hash of", "freeze", "json", "f(*l)", "def f", "d1 |", "x == y", "x % y", "x * n", "x + y"} {
-		if !strings.Contains(all, need) {
-			t.Errorf("no price for %q", need)
+
+	// The check itself is not vacuous: a row deleted, a row added and a row
+	// renamed in a scratch copy of the table are each a problem.
+	scratch := func(edit func(m map[string]price)) map[string]price {
+		m := make(map[string]price, len(operatorPrices)+1)
+		for k, p := range operatorPrices {
+			m[k] = p
 		}
+		edit(m)
+		return m
+	}
+	for _, k := range declaredOperatorKeys {
+		deleted := scratch(func(m map[string]price) { delete(m, k) })
+		if len(operatorKeyProblems(deleted)) == 0 {
+			t.Errorf("deleting the row %q is not detected", k)
+		}
+	}
+	added := scratch(func(m map[string]price) { m["x ?? y"] = o1("an operator that does not exist") })
+	if len(operatorKeyProblems(added)) == 0 {
+		t.Error("an extra row is not detected")
+	}
+	renamed := scratch(func(m map[string]price) {
+		k := declaredOperatorKeys[0]
+		m[k+" "] = m[k]
+		delete(m, k)
+	})
+	if len(operatorKeyProblems(renamed)) == 0 {
+		t.Error("a renamed row is not detected")
 	}
 	// Every price in the tables has a formula text for the document.
 	for _, table := range []map[string]price{universePrices, dictPrices, listPrices, setPrices, stringPrices, bytesPrices} {
@@ -93,6 +117,100 @@ func TestOperatorPricesAreDeclared(t *testing.T) {
 			}
 		}
 	}
+}
+
+// declaredOperatorKeys is the exact set of the rows of operatorPrices: every
+// operation the interpreter has, once. A row added or removed in prices.go is
+// a change here, on purpose.
+var declaredOperatorKeys = []string{
+	"load/store/constant/jump/call (opcodes)",
+	"x + y (int, float)",
+	"x + y (string, bytes)",
+	"x + y (list, tuple)",
+	"x * n (string, list, tuple)",
+	"x * y, x // y, x % y (big int)",
+	"x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	"x % y (string interpolation)",
+	"x in l (list, tuple)",
+	"x in s (string, bytes)",
+	"x in d (dict), x in s (set)",
+	"x in r (range)",
+	"x == y, x != y, x < y, x <= y, x > y, x >= y (string)",
+	"x == y, x != y, x < y, x <= y, x > y, x >= y (list, tuple)",
+	"x == y, x != y (dict)",
+	"x == y, x != y, x <= y, x < y, x >= y, x > y (set)",
+	"x == y, x != y, x < y, x > y (int, float, bool, None)",
+	"x[i] (list, tuple, string, range)",
+	"x[k] (dict)",
+	"x[i:j:k] (list, tuple, string, bytes)",
+	"x[i] = v (list)",
+	"x[k] = v (dict)",
+	"d1 | d2, d1 |= d2",
+	"s1 | s2, s1 & s2, s1 - s2, s1 ^ s2",
+	"-x, +x, ~x, not x",
+	"for x in l (iteration)",
+	"a, b = l (unpacking)",
+	"f(*l), f(**d)",
+	"x.attr, x.method",
+	"list comprehension, dict comprehension",
+	"{k: v}, [a, b], (a, b), lambda",
+	"def f(*args, **kwargs) (parameters)",
+	"hash of a string",
+	"hash of a tuple",
+	"hash of an int",
+	"freeze",
+	"json.encode, json.decode, json.indent",
+}
+
+// operatorOfToken says which row prices each token of the binary and unary
+// operators of the syntax.
+var operatorOfToken = map[syntax.Token]string{
+	syntax.PLUS:       "x + y (int, float)",
+	syntax.MINUS:      "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.STAR:       "x * y, x // y, x % y (big int)",
+	syntax.SLASH:      "x * y, x // y, x % y (big int)",
+	syntax.SLASHSLASH: "x * y, x // y, x % y (big int)",
+	syntax.PERCENT:    "x * y, x // y, x % y (big int)",
+	syntax.EQL:        "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.NEQ:        "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.LT:         "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.LE:         "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.GT:         "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.GE:         "x == y, x != y, x < y, x > y (int, float, bool, None)",
+	syntax.IN:         "x in l (list, tuple)",
+	syntax.PIPE:       "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.AMP:        "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.CIRCUMFLEX: "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.LTLT:       "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.GTGT:       "x - y, x & y, x | y, x ^ y, x << y, x >> y (int)",
+	syntax.TILDE:      "-x, +x, ~x, not x",
+}
+
+// operatorKeyProblems compares the keys of a table of operator prices with the
+// declared set both ways, and checks that the row of every token is there.
+func operatorKeyProblems(have map[string]price) []string {
+	var problems []string
+	want := map[string]bool{}
+	for _, k := range declaredOperatorKeys {
+		want[k] = true
+		if _, ok := have[k]; !ok {
+			problems = append(problems, fmt.Sprintf("the operator price %q is declared but has no row", k))
+		}
+	}
+	for k := range have {
+		if !want[k] {
+			problems = append(problems, fmt.Sprintf("the row %q is not in the declared set of operators", k))
+		}
+	}
+	for tok, k := range operatorOfToken {
+		if !want[k] {
+			problems = append(problems, fmt.Sprintf("operator %s: its row %q is not declared", tok, k))
+		}
+		if _, ok := have[k]; !ok {
+			problems = append(problems, fmt.Sprintf("operator %s has no price (row %q)", tok, k))
+		}
+	}
+	return problems
 }
 
 // A price that is declared constant is constant: the call costs the same work

@@ -1,6 +1,10 @@
 // Command mutate makes mutants of the sources of the resource accounting and
 // decides each by the tests: killed (a test or the build fails), survived, or
-// neither (timeout, memory).
+// neither (timeout, memory, crashed: a test binary that died without a failed
+// test is not a kill). Before the first mutant the tree without one is decided
+// by the same stages and must be green (the baseline; it cannot be skipped).
+// A run needs a linked worktree as -root; Ctrl-C or SIGTERM kills the test
+// binaries' process groups and puts the files back.
 //
 // It is an internal tool, imported by nothing. It changes the sources of the
 // tree named by -root, one declared file at a time, and puts every file back
@@ -28,12 +32,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -90,7 +92,7 @@ func main() {
 func run(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("mutate", flag.ContinueOnError)
 	var (
-		root       = fs.String("root", "", "the tree to mutate: a separate copy (required, except for -report)")
+		root       = fs.String("root", "", "the tree to mutate: a LINKED git worktree (.git is a file), made with `git worktree add --detach`; required, except for -report; -list only reads, so it accepts any root")
 		group      = fs.String("group", "", "struct, calls or prices")
 		list       = fs.Bool("list", false, "print the mutants and the tree hash, run nothing")
 		report     = fs.String("report", "", "comma-separated results files: print the counts and the survivors")
@@ -124,6 +126,13 @@ func run(args []string, stdout io.Writer) error {
 	t, err := NewTarget(*root)
 	if err != nil {
 		return err
+	}
+	if !*list {
+		// A run writes the files of the root: only in a worktree made for it.
+		// (-list reads and writes nothing.)
+		if err := requireLinkedWorktree(t.Root); err != nil {
+			return err
+		}
 	}
 	if !*allowDirty {
 		st, err := gitStatus(t.Root)
@@ -188,6 +197,21 @@ func run(args []string, stdout io.Writer) error {
 	if inside(t.Root, absOut) {
 		return fmt.Errorf("-out %s is inside the root", absOut)
 	}
+
+	// On a signal the children (they are in process groups of their own, which
+	// the terminal does not reach) are killed, the files are put back and the
+	// tool stops: no further write. It is installed before the first child.
+	r := &Runner{T: t, Cfg: cfg}
+	defer r.HandleInterrupts(tree.Files, os.Exit)()
+
+	// The baseline: the suite must pass on the tree that is not mutated. There
+	// is no way to skip it: a verdict on a mutant of a red tree means nothing.
+	t0 := time.Now()
+	if err := r.Baseline(); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "# baseline: survived (the suite is green on the tree without a mutant), %.1fs\n", time.Since(t0).Seconds())
+
 	done := map[string]bool{}
 	if *resume {
 		done = doneIDs(absOut)
@@ -208,22 +232,13 @@ func run(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	// On a signal the files are put back and the tool stops: no further write.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sig
-		err := t.Freeze(tree.Files)
-		fmt.Fprintln(os.Stderr, "mutate: interrupted; files restored:", err == nil)
-		os.Exit(130)
-	}()
-
-	r := &Runner{T: t, Cfg: cfg}
+	counts := map[string]int{}
 	for _, m := range sel {
 		if done[m.ID] {
 			continue
 		}
 		res, err := r.RunMutant(m, tree.Files[m.File])
+		r.parkIfStopped() // killed by the interrupt: nothing is written
 		if err != nil {
 			_ = t.Freeze(tree.Files)
 			return fmt.Errorf("%s: %w", m.ID, err)
@@ -231,8 +246,11 @@ func run(args []string, stdout io.Writer) error {
 		if err := enc.Encode(res); err != nil {
 			return err
 		}
+		counts[res.Verdict]++
+		counts["total"]++
 		fmt.Fprintf(stdout, "%s\t%s\t%s\t%.1fs\t%s\t%s\n", res.ID, res.Verdict, m.Label(), res.Seconds, strings.Join(res.Failed, ","), oneLine(res.Detail, 120))
 	}
+	fmt.Fprintf(stdout, "# verdicts of this run: %s\n", countsLine(counts))
 	after, err := t.ReadTree()
 	if err != nil {
 		return err
@@ -259,6 +277,26 @@ func inside(root, p string) bool {
 	}
 	r, err := filepath.Rel(root, p)
 	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator))
+}
+
+// requireLinkedWorktree refuses a root that is not a linked worktree: in one
+// .git is a file ("gitdir: ..."), in the main worktree a directory. The tool
+// writes the files of the root, so it must not be a tree that holds work.
+func requireLinkedWorktree(root string) error {
+	const hint = "make one with `git worktree add --detach <dir> <commit>` and give it as -root"
+	p := filepath.Join(root, ".git")
+	st, err := os.Lstat(p)
+	switch {
+	case err != nil:
+		return fmt.Errorf("-root %s is not a linked git worktree (no .git): %s", root, hint)
+	case st.IsDir():
+		return fmt.Errorf("-root %s is a main worktree (.git is a directory): mutating in place changes a tree that holds work; %s", root, hint)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil || !strings.HasPrefix(string(b), "gitdir:") {
+		return fmt.Errorf("-root %s: .git is not a worktree link (no \"gitdir:\"): %s", root, hint)
+	}
+	return nil
 }
 
 func gitStatus(root string) (string, error) {
@@ -335,8 +373,11 @@ func printReport(w io.Writer, files []string) error {
 		f.Close()
 	}
 	byGroup := map[string]map[string]int{}
-	var survivors []Result
+	var survivors, crashes []Result
 	for _, r := range last {
+		if r.Verdict == Crashed {
+			crashes = append(crashes, r)
+		}
 		if byGroup[r.Group] == nil {
 			byGroup[r.Group] = map[string]int{}
 		}
@@ -351,20 +392,28 @@ func printReport(w io.Writer, files []string) error {
 		if c == nil {
 			continue
 		}
-		fmt.Fprintf(w, "%s: total %d, %s %d, %s %d, %s %d, %s %d, %s %d\n", g, c["total"], KilledTest, c[KilledTest], KilledBuild, c[KilledBuild], Timeout, c[Timeout], Memory, c[Memory], Survived, c[Survived])
+		fmt.Fprintf(w, "%s: %s\n", g, countsLine(c))
 	}
-	sort.Slice(survivors, func(i, j int) bool {
-		a, b := survivors[i], survivors[j]
-		if a.Group != b.Group {
-			return a.Group < b.Group
-		}
-		if a.File != b.File {
-			return a.File < b.File
-		}
-		return a.Line < b.Line
-	})
+	byPlace := func(rs []Result) {
+		sort.Slice(rs, func(i, j int) bool {
+			a, b := rs[i], rs[j]
+			if a.Group != b.Group {
+				return a.Group < b.Group
+			}
+			if a.File != b.File {
+				return a.File < b.File
+			}
+			return a.Line < b.Line
+		})
+	}
+	byPlace(survivors)
+	byPlace(crashes)
 	for _, r := range survivors {
 		fmt.Fprintf(w, "SURVIVED %s\t%s:%d\t%s\t%s => %s\n", r.ID, r.File, r.Line, oneLine(r.Note, 100), oneLine(r.Before, 80), oneLine(r.After, 80))
+	}
+	// A crash is not a kill: each is listed, with the first lines of its output.
+	for _, r := range crashes {
+		fmt.Fprintf(w, "CRASHED %s\t%s:%d\t%s\t%s => %s\n\t%s\n", r.ID, r.File, r.Line, oneLine(r.Note, 100), oneLine(r.Before, 80), oneLine(r.After, 80), strings.ReplaceAll(cut(r.Detail, 400), "\n", "\n\t"))
 	}
 	return nil
 }

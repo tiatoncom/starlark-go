@@ -251,9 +251,7 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 	// The containers being written, to detect a cycle: a slice for the first
 	// levels and a set below them, so that the check is not linear in the
 	// depth (a deep value would take quadratic time).
-	path := make([]unsafe.Pointer, 0, 8)
-	var pathSet map[unsafe.Pointer]struct{}
-	const pathSetDepth = 32
+	path := newEncodePath()
 
 	var emit func(x starlark.Value, depth int) error
 	var emitValue func(x starlark.Value, depth int) error
@@ -279,32 +277,14 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 		}
 		ptr := pointer(x)
 		if ptr != nil {
-			var cycle bool
-			if pathSet != nil {
-				_, cycle = pathSet[ptr]
-			} else {
-				cycle = pathContains(path, ptr)
-			}
-			if cycle {
+			if path.contains(ptr) {
 				return fmt.Errorf("cycle in JSON structure")
 			}
-
-			path = append(path, ptr)
-			if pathSet != nil {
-				pathSet[ptr] = struct{}{}
-			} else if len(path) == pathSetDepth {
-				pathSet = make(map[unsafe.Pointer]struct{}, 2*pathSetDepth)
-				for _, p := range path {
-					pathSet[p] = struct{}{}
-				}
-			}
+			path.push(ptr)
 		}
 		err := emitValue(x, depth)
 		if ptr != nil {
-			if pathSet != nil {
-				delete(pathSet, path[len(path)-1])
-			}
-			path = path[0 : len(path)-1]
+			path.pop()
 		}
 		return err
 	}
@@ -718,8 +698,47 @@ func pointer(i any) unsafe.Pointer {
 	}
 }
 
-func pathContains(path []unsafe.Pointer, item unsafe.Pointer) bool {
-	return slices.Contains(path, item)
+// An encodePath is the containers being written, to detect a cycle: a slice
+// for the first levels, and from the depth encodePathSetDepth a set as well,
+// which is the only thing contains looks at then, so that the check is a lookup
+// and not a linear search of the path (a value nested n deep would take time
+// quadratic in n, with the same results and counters).
+type encodePath struct {
+	stack []unsafe.Pointer
+	set   map[unsafe.Pointer]struct{} // nil until the depth encodePathSetDepth
+}
+
+const encodePathSetDepth = 32
+
+func newEncodePath() *encodePath {
+	return &encodePath{stack: make([]unsafe.Pointer, 0, 8)}
+}
+
+func (p *encodePath) contains(item unsafe.Pointer) bool {
+	if p.set != nil {
+		_, ok := p.set[item]
+		return ok
+	}
+	return slices.Contains(p.stack, item)
+}
+
+func (p *encodePath) push(item unsafe.Pointer) {
+	p.stack = append(p.stack, item)
+	if p.set != nil {
+		p.set[item] = struct{}{}
+	} else if len(p.stack) == encodePathSetDepth {
+		p.set = make(map[unsafe.Pointer]struct{}, 2*encodePathSetDepth)
+		for _, q := range p.stack {
+			p.set[q] = struct{}{}
+		}
+	}
+}
+
+func (p *encodePath) pop() {
+	if p.set != nil {
+		delete(p.set, p.stack[len(p.stack)-1])
+	}
+	p.stack = p.stack[:len(p.stack)-1]
 }
 
 // isPrintableASCII reports whether s contains only printable ASCII.
