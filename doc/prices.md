@@ -7,9 +7,9 @@ The steps of a program (`Thread.Steps`, `ExecutionSteps()`) are what they were i
 
 **The invariant**: a program that has done W units of work has used at most C * W nanoseconds of CPU, with C = 12 ns on the reference machine, darwin/arm64 (C is per platform: see the platforms below;the interpreter's own loops and the priced operations alike: no probe of the calibration cost more).
 
-**The search family** (find, rfind, index, rindex, partition, rpartition) charges each window of the haystack before it scans it (windows of 64 bytes or the needle, doubling up to a chunk of 1024 units), so a call is refused before the window that does not fit, and a match that is found may be charged up to the rest of its last window. The first window is 64 bytes or two needles, and each is twice the last up to a chunk of 1024 units or 16 needles, so the overlap of a match across the join (scanned twice) is at most a sixteenth of the haystack, and a match near the start is charged at most two windows (about 6 needles of bytes: a needle of 1000 bytes is charged at most 1500 units, one of 10000 bytes 15000, at a quarter of a unit a byte); the refusal of a long needle is as coarse as the window that does not fit (up to 16 needles: 40000 units for a needle of 10000 bytes), where a short needle is charged at most a chunk of 1024 units.
+**The search family** (find, rfind, index, rindex, partition, rpartition) charges each window of the haystack before it scans it, so a call is refused before the window that does not fit, and a match that is found may be charged up to the rest of its last window. The first window is max(64, 2*m) bytes (m is the length of the needle), and each is twice the last up to a cap of max(1024*divisor, 16*m) bytes (the divisor is the bytes a unit buys), so the overlap of a match across the join (scanned twice) is at most a sixteenth of the haystack, and a match near the start is charged at most two windows (about 6 needles of bytes: a needle of 1000 bytes is charged at most 1500 units, one of 10000 bytes 15000, at a quarter of a unit a byte); the refusal of a long needle is as coarse as the window that does not fit (up to 16 needles: 40000 units for a needle of 10000 bytes), where a short needle is charged at most a chunk of 1024 units.
 
-## What a unit costs, by probe (308 probes)
+## What a unit costs, by probe (358 probes)
 
 The time is the least of seven runs, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = 12 ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:
 
@@ -24,10 +24,10 @@ The time is the least of seven runs, measured by `TestCalibrate` (the date and t
 | sorted: strings | 43374000 | 4323458 | 10.0 |
 | sorted: 2 elements x 200000 calls | 26969625 | 2700013 | 10.0 |
 | startswith/endswith | 778250 | 78013 | 10.0 |
-| d.update(kw) x 50000 | 10953375 | 1100013 | 10.0 |
 | join: 500000 strings | 5208792 | 523449 | 10.0 |
 | %s loop with a string | 19871375 | 2000013 | 9.9 |
 | abs/min/max of 2 x 300000 | 139596541 | 14100013 | 9.9 |
+| json.encode(list nested 9500) | 4277834 | 432178 | 9.9 |
 | find: needle 63 | 1231709 | 125016 | 9.9 |
 | find: needle 48 | 1225375 | 125016 | 9.8 |
 
@@ -77,7 +77,7 @@ All of them:
 | s == s | 1709042 | 1563513 | 1009 | 1.09 |
 | s < s | 2391375 | 1563513 | 1009 | 1.53 |
 | hash(s) | 763916 | 250011 | 7 | 3.06 |
-| dict key: 1 MB string | 2701583 | 609702 | 251 | 4.43 |
+| dict key: 1 MB string | 2701583 | 609740 | 251 | 4.43 |
 | str(s) | 209 | 11 | 7 | 19.00 |
 | repr(s): plain | 1604500 | 760427 | 7 | 2.11 |
 | repr(s): escapes | 6632459 | 765636 | 7 | 8.66 |
@@ -94,7 +94,7 @@ All of them:
 | x in l (ints, miss) | 1797792 | 500008 | 8 | 3.60 |
 | x in l (strings, miss) | 381292 | 200007 | 7 | 1.91 |
 | x in l (mixed int/float) | 2606167 | 300008 | 8 | 8.69 |
-| x in l (big ints) | 1826334 | 900022 | 9 | 2.03 |
+| x in l (big ints) | 1826334 | 1100022 | 9 | 1.66 |
 | l.index(miss) / remove | 1389666 | 300012 | 8 | 4.63 |
 | max(l) | 9858125 | 1500012 | 7 | 6.57 |
 | min(l) mixed | 6751792 | 1500012 | 7 | 4.50 |
@@ -123,6 +123,7 @@ All of them:
 | l == m (ints) | 4081541 | 1000007 | 7 | 4.08 |
 | l < m (ints) | 4094959 | 1000007 | 7 | 4.09 |
 | l == m (mixed int/float) | 2869792 | 300007 | 7 | 9.57 |
+| nested == (wide, 5 deep) | 1526417 | 271459 | 7 | 5.62 |
 | str(l) ints | 10171083 | 1223853 | 7 | 8.31 |
 | str(l) empty lists depth 40 | 42871292 | 22021333 | 7 | 1.95 |
 | x < 1.5, big int 32 KB | 25500 | 10013 | 10009 | 2.55 |
@@ -131,7 +132,7 @@ All of them:
 | dict(d) | 75681458 | 12558905 | 7 | 6.03 |
 | d == e | 32460750 | 9000007 | 7 | 3.61 |
 | d \| e | 147930166 | 26661744 | 7 | 5.55 |
-| d.update(e) same keys | 36440041 | 11400012 | 8 | 3.20 |
+| d.update(e) same keys | 36440041 | 12000012 | 8 | 3.04 |
 | d.keys()/items()/values() | 51169792 | 6900036 | 15 | 7.42 |
 | d.clear() after growth, x1000000 | 25505542 | 6600013 | 4800009 | 3.86 |
 | s \| t | 177018000 | 27513718 | 7 | 6.43 |
@@ -139,7 +140,7 @@ All of them:
 | s - t | 89987292 | 17734615 | 7 | 5.07 |
 | s ^ t | 92520458 | 24261751 | 7 | 3.81 |
 | s == t | 31075167 | 6000007 | 7 | 5.18 |
-| s <= t | 33077459 | 5765543 | 7 | 5.74 |
+| s <= t | 33077459 | 6365543 | 7 | 5.20 |
 | collisions: i << 16 | 212801375 | 25797083 | 280011 | 8.25 |
 | collisions: i << 40 | 4788542 | 927280 | 280011 | 5.16 |
 | d[k] with 30 char string keys | 32276750 | 10195478 | 2400009 | 3.17 |
@@ -233,6 +234,34 @@ All of them:
 | sorted(reverse=True) | 80740083 | 11464956 | 9 | 7.04 |
 | sorted: organ pipe | 26599083 | 3017979 | 7 | 8.81 |
 | sorted: many equal | 21527042 | 3693615 | 7 | 5.83 |
+| dir(str) x100000 | 144121958 | 33700013 | 1000009 | 4.28 |
+| dir(list) x100000 | 31852542 | 6700013 | 1000009 | 4.75 |
+| dir(dict) x100000 | 47999000 | 11700013 | 1000009 | 4.10 |
+| startswith: tuple of 100 prefixes of 1 MB, miss at the end | 1679959 | 1562612 | 8 | 1.08 |
+| endswith: tuple of 100 suffixes of 1 MB, miss at the start | 1333 | 1562612 | 8 | 0.00 |
+| startswith: tuple of 100000 short prefixes, miss | 3041208 | 1000163 | 119 | 3.04 |
+| endswith: tuple of 100000 short suffixes, miss | 3290542 | 1000163 | 119 | 3.29 |
+| endswith: matching 1 MB suffix x100 | 1693375 | 1564013 | 1109 | 1.08 |
+| int('7'*20) x200000 | 54021625 | 7800013 | 2000009 | 6.93 |
+| int('7'*100) x200000 | 130643042 | 24200013 | 2000009 | 5.40 |
+| int('7'*600) x100000 | 335279833 | 70600013 | 1000009 | 4.75 |
+| find: early match (70), 1-byte needle, 10 MB x100000 | 13490833 | 1600013 | 1100009 | 8.43 |
+| find: early match (70), 16-byte needle, 10 MB x100000 | 19594125 | 2900013 | 1300009 | 6.76 |
+| find: early match (70), 200-byte needle, 10 MB x100000 | 21748417 | 11900013 | 1300009 | 1.83 |
+| rfind: early match (from the end), 1-byte needle, 10 MB x100000 | 15360459 | 1600013 | 1100009 | 9.60 |
+| rfind: early match (from the end), 200-byte needle, 10 MB x100000 | 66598875 | 11900013 | 1300009 | 5.60 |
+| find: missing 100-byte needle, 50 MB | 65072084 | 12500018 | 12 | 5.21 |
+| rfind: missing 100-byte needle, 50 MB | 64727292 | 12500018 | 12 | 5.18 |
+| partition: missing 2-byte needle, 50 MB | 12659750 | 3125012 | 8 | 4.05 |
+| str of a list nested 9000 | 36401542 | 7898593 | 209 | 4.61 |
+| repr of a list nested 9000 | 36126750 | 7898593 | 209 | 4.57 |
+| '%s' of a list nested 9000 | 35860416 | 7898513 | 209 | 4.54 |
+| str(10^20) x100000 | 20821792 | 2500013 | 1000009 | 8.33 |
+| str(10^100) x100000 | 35910125 | 7400013 | 1000009 | 4.85 |
+| str(10^600) x20000 | 25701917 | 9180013 | 200009 | 2.80 |
+| '%d' % 10^20 x100000 | 17678042 | 2100013 | 1000009 | 8.42 |
+| '%d' % 10^100 x100000 | 34715208 | 7000013 | 1000009 | 4.96 |
+| '%d' % 10^600 x20000 | 25456084 | 9100013 | 200009 | 2.80 |
 | list(range) 1M | 15114917 | 2000020 | 9 | 7.56 |
 | list comprehension 500000 | 30884666 | 4500018 | 4500011 | 6.86 |
 | list(str.elems()) 1M | 19141250 | 3000020 | 9 | 6.38 |
@@ -260,32 +289,36 @@ All of them:
 | d[k] hits, int keys | 18690083 | 6606798 | 2400011 | 2.83 |
 | d.get misses, int keys | 32625667 | 8400015 | 4000011 | 3.88 |
 | x in d hits, string keys | 7264709 | 2905589 | 1400009 | 2.50 |
-| d[k] = v new keys, 2M entries (cold) | 547187542 | 67615552 | 14000011 | 8.09 |
+| d[k] = v new keys, 2M entries (cold) | 547187542 | 67615748 | 14000011 | 8.09 |
 | d.pop(k) 200000 | 29107916 | 5877789 | 2200009 | 4.95 |
 | d.popitem 200000 | 22428042 | 5677789 | 2000009 | 3.95 |
 | d.setdefault 200000 | 59263500 | 13859259 | 2400011 | 4.28 |
 | for k in d / d.items() 300000 | 69490041 | 7706801 | 3600011 | 9.02 |
 | dict literal 3 entries x 100000 | 17751583 | 5800013 | 2000009 | 3.06 |
-| dict(zip(l, l)) | 130120500 | 15258915 | 10 | 8.53 |
-| dict(list of pairs) | 106490833 | 12558905 | 7 | 8.48 |
-| d.update(pairs) | 109890167 | 12558874 | 8 | 8.75 |
-| d.update(kw) x 50000 | 10953375 | 1100013 | 700009 | 9.96 |
+| dict(zip(l, l)) | 130120500 | 17058915 | 10 | 7.63 |
+| dict(list of pairs) | 106490833 | 14358905 | 7 | 7.42 |
+| d.update(pairs) | 109890167 | 14358874 | 8 | 7.65 |
+| d.update(pairs) existing keys, 1000 x 3000 | 288816709 | 30045013 | 33009 | 9.61 |
+| d.update(d2) existing keys, 1000 x 3000 | 98402792 | 12045013 | 33009 | 8.17 |
+| s <= t of 1000 x 3000 | 60988750 | 9798013 | 30009 | 6.22 |
+| d.update(kw) x 50000 | 10953375 | 1300009 | 700009 | 8.43 |
 | d.keys() then list | 8578708 | 1200014 | 7 | 7.15 |
 | set.add 300000 | 100880417 | 21712385 | 3300012 | 4.65 |
 | set(range) | 165458875 | 22610880 | 9 | 7.32 |
-| s.issubset(l) | 18914042 | 5765548 | 8 | 3.28 |
+| s.issubset(l) | 18914042 | 6365548 | 8 | 2.97 |
 | s.issuperset(l) | 15697125 | 5700012 | 8 | 2.75 |
 | s.intersection(l) | 42433708 | 11381497 | 8 | 3.73 |
 | s.difference(l) | 92695708 | 17734620 | 8 | 5.23 |
 | s.update(l) | 65175416 | 12558874 | 8 | 5.19 |
 | s.pop() x 100000 | 8182792 | 2639931 | 1000009 | 3.10 |
-| s == t, s <= t strings | 4432500 | 1543571 | 7 | 2.87 |
+| s == t, s <= t strings | 4432500 | 1743571 | 7 | 2.54 |
 | tuple keys (2 ints) 200000 | 66750500 | 13022076 | 3200011 | 5.13 |
 | tuple keys (2 strings) 100000 | 15212583 | 4922973 | 1200009 | 3.09 |
 | float keys 200000 | 39574792 | 10581500 | 2800011 | 3.74 |
 | big int keys (200 bits) 100000 | 26421708 | 6199682 | 1400011 | 4.26 |
 | collisions: ints i << 32 | 5661791 | 927241 | 280011 | 6.11 |
 | collisions: floats 2^k | 8013875 | 1027281 | 320011 | 7.80 |
+| collisions: big ints of one hash (inverse formula) | 523911417 | 69090772 | 202105 | 7.58 |
 | collisions: strings of 11 bytes | 3003375 | 767479 | 240009 | 3.91 |
 | def with 3 params x 300000 | 26593584 | 4200013 | 4200009 | 6.33 |
 | def with kwargs call x 200000 | 26917334 | 3400013 | 2800009 | 7.92 |
@@ -329,11 +362,14 @@ All of them:
 | int(str, 16) 4000 digits x 200 | 3415000 | 1302013 | 2209 | 2.62 |
 | '%x' % int (4000 bits) x 2000 | 1491541 | 166013 | 20009 | 8.98 |
 | float(int) / int(float) x 200000 | 43667291 | 5400008 | 2800009 | 8.09 |
-| hash of int keys above 2^31 | 78483667 | 13395299 | 3200011 | 5.86 |
+| hash of int keys above 2^31 | 78483667 | 13395301 | 3200011 | 5.86 |
 | json.encode(list of int) | 12603417 | 2815985 | 8 | 4.48 |
 | json.encode(list of str) | 15254709 | 2912512 | 8 | 5.24 |
 | json.encode(dict) | 60669125 | 7872750 | 8 | 7.71 |
 | json.encode(nested lists) | 12884375 | 2881958 | 8 | 4.47 |
+| json.encode(list nested 9500) | 4277834 | 432178 | 8 | 9.90 |
+| json.encode(dict nested 5000) | 1951334 | 283116 | 8 | 6.89 |
+| json.encode(int of 4300 digits) | 1879916 | 1142113 | 1109 | 1.65 |
 | json.encode(non-ascii str) | 4546250 | 844699 | 8 | 5.38 |
 | json.decode(list of int) | 13167291 | 2100017 | 8 | 6.27 |
 | json.decode(list of str) | 14144583 | 1800017 | 8 | 7.86 |
@@ -342,6 +378,20 @@ All of them:
 | json.decode(dicts) | 17514916 | 5300017 | 8 | 3.30 |
 | json.indent(flat) | 9274791 | 1243063 | 8 | 7.46 |
 | json.indent(nested) | 141719416 | 19045008 | 8 | 7.44 |
+| json.decode(string of \n escapes) | 5494708 | 937538 | 8 | 5.86 |
+| json.decode(string of \u0041 escapes) | 9011875 | 1343788 | 8 | 6.71 |
+| json.decode(non-ascii string) | 8035959 | 1000038 | 8 | 8.04 |
+| json.decode(invalid UTF-8 string) | 6971750 | 1046918 | 8 | 6.66 |
+| json.decode(20000 short escaped strings) | 3183208 | 660017 | 8 | 4.82 |
+| upper of non-ascii | 8890250 | 1520844 | 7 | 5.85 |
+| lower of non-ascii | 10870625 | 1520844 | 7 | 7.15 |
+| title of non-ascii | 4411584 | 912511 | 7 | 4.83 |
+| capitalize of non-ascii | 9882958 | 1520844 | 7 | 6.50 |
+| upper of invalid UTF-8 | 3714542 | 781261 | 7 | 4.75 |
+| strip with a cutset of 20000 runes | 603583 | 119913 | 8 | 5.03 |
+| rsplit(sep, 2) of 1M fields | 8449458 | 6031272 | 9 | 1.40 |
+| list of a range beyond int32 | 6531916 | 1968793 | 16 | 3.32 |
+| tuple of a range beyond int32 | 6530708 | 1968792 | 16 | 3.32 |
 | hash of a DAG tuple (2^22 paths) | 58648166 | 12582953 | 9 | 4.66 |
 
 ## The platforms
@@ -351,7 +401,7 @@ The units of work are the same on every platform; C turns them into time on a gi
 | platform | machine | date | C (ns / unit) | worst probe | ns / unit |
 |---|---|---|---|---|---|
 | darwin/arm64 | darwin/arm64, Go 1.26 | 2026-10-01 | 12 | any(l) all falsy | 11.7 |
-| linux/amd64 | linux/amd64, go1.26.3, Intel(R) N200 | 2026-10-19 | 34 | f(**d), 60000 keys | 29.5 |
+| linux/amd64 | linux/amd64, go1.26.3, Intel(R) N200 | 2026-10-19 | 38 | f(**d), 60000 keys | 29.8 |
 
 ## The prices
 

@@ -10,7 +10,9 @@ import "go.starlark.net/starlark"
 // except two: "collisions: i << 40" and "collisions: floats 2^k" were taken
 // again on 2026-10-19 after the hash of big integers changed (they had been
 // measured with the old collisions): the least of six processes of seven
-// repeats, under a load average of 111 (so on the safe side, as longer).
+// repeats, under a load average of 111 (so on the safe side, as longer). The
+// probes added by the fixes of the review are a block of their own at the end
+// of the table (2026-10-20, the tree of d6ba4f6; the old floors are kept).
 // Two runs; the least time of each probe is kept. The load of the machine at the
 // start and the end of each run:
 //   18:00  up 23 days, 23:30, 18 users, load averages: 6.71 8.88 10.00
@@ -330,6 +332,61 @@ var calibratedNs_darwin_arm64 = map[string]float64{
 	"x in tuple":                                   1796792,
 	"zip loop 300000":                              64749916,
 	"zip(l, l)":                                    25690333,
+
+	// ADDED on 2026-10-20: the probes that the table above did not have (added by
+	// the fixes of the review), the least time of six processes of seven repeats
+	// on the tree of d6ba4f6 (Go 1.26, a load average of 5 to 46 during the runs);
+	// the dearest of them is 9.90 ns a unit (json.encode of a list nested 9500).
+	"'%d' % 10^100 x100000":                                             34715208,
+	"'%d' % 10^20 x100000":                                              17678042,
+	"'%d' % 10^600 x20000":                                              25456084,
+	"'%s' of a list nested 9000":                                        35860416,
+	"capitalize of non-ascii":                                           9882958,
+	"collisions: big ints of one hash (inverse formula)":                523911417,
+	"d.update(d2) existing keys, 1000 x 3000":                           98402792,
+	"d.update(pairs) existing keys, 1000 x 3000":                        288816709,
+	"dir(dict) x100000":                                                 47999000,
+	"dir(list) x100000":                                                 31852542,
+	"dir(str) x100000":                                                  144121958,
+	"endswith: matching 1 MB suffix x100":                               1693375,
+	"endswith: tuple of 100 suffixes of 1 MB, miss at the start":        1333,
+	"endswith: tuple of 100000 short suffixes, miss":                    3290542,
+	"find: early match (70), 1-byte needle, 10 MB x100000":              13490833,
+	"find: early match (70), 16-byte needle, 10 MB x100000":             19594125,
+	"find: early match (70), 200-byte needle, 10 MB x100000":            21748417,
+	"find: missing 100-byte needle, 50 MB":                              65072084,
+	"int('7'*100) x200000":                                              130643042,
+	"int('7'*20) x200000":                                               54021625,
+	"int('7'*600) x100000":                                              335279833,
+	"json.decode(20000 short escaped strings)":                          3183208,
+	"json.decode(invalid UTF-8 string)":                                 6971750,
+	"json.decode(non-ascii string)":                                     8035959,
+	"json.decode(string of \\n escapes)":                                5494708,
+	"json.decode(string of \\u0041 escapes)":                            9011875,
+	"json.encode(dict nested 5000)":                                     1951334,
+	"json.encode(int of 4300 digits)":                                   1879916,
+	"json.encode(list nested 9500)":                                     4277834,
+	"list of a range beyond int32":                                      6531916,
+	"lower of non-ascii":                                                10870625,
+	"nested == (wide, 5 deep)":                                          1526417,
+	"partition: missing 2-byte needle, 50 MB":                           12659750,
+	"repr of a list nested 9000":                                        36126750,
+	"rfind: early match (from the end), 1-byte needle, 10 MB x100000":   15360459,
+	"rfind: early match (from the end), 200-byte needle, 10 MB x100000": 66598875,
+	"rfind: missing 100-byte needle, 50 MB":                             64727292,
+	"rsplit(sep, 2) of 1M fields":                                       8449458,
+	"s <= t of 1000 x 3000":                                             60988750,
+	"startswith: tuple of 100 prefixes of 1 MB, miss at the end":        1679959,
+	"startswith: tuple of 100000 short prefixes, miss":                  3041208,
+	"str of a list nested 9000":                                         36401542,
+	"str(10^100) x100000":                                               35910125,
+	"str(10^20) x100000":                                                20821792,
+	"str(10^600) x20000":                                                25701917,
+	"strip with a cutset of 20000 runes":                                603583,
+	"title of non-ascii":                                                4411584,
+	"tuple of a range beyond int32":                                     6530708,
+	"upper of invalid UTF-8":                                            3714542,
+	"upper of non-ascii":                                                8890250,
 }
 
 var _ = registerCalibration(calibrationPlatform{
