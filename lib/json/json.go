@@ -1054,9 +1054,7 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				fail("%s", err)
 			}
 			charge(uint64(len(r)))
-			if len(r) > raw {
-				charge(unquoteGrowth * uint64(len(r)-raw))
-			}
+			charge(unquoteGrowthBytes(raw-2, len(r)))
 			return starlark.String(r)
 
 		case 'n':
@@ -1273,13 +1271,11 @@ func chargeUnits(th *starlark.Thread, units uint64) error {
 // short strings allocates 285 bytes (the Value of the string, the slot, the
 // growth of the list included; the base is that, 285, and a margin of 35).
 // So it is charged 3 * raw + unquoteBase
-// before the call and the result after it; if the result is longer than the
-// raw string (every invalid byte is 3), its buffer grows by doubling: 4 bytes
-// more for each byte it adds (measured 8.2 * raw over the result for raw
-// strings of invalid UTF-8, whose result is 3 * raw).
+// before the call and the result after it; if the result reaches the end of
+// its buffer (every invalid byte is 3 bytes), the buffer is made again, see
+// unquoteGrowthBytes.
 const (
-	unquoteBase   = 320
-	unquoteGrowth = 4
+	unquoteBase = 320
 	// The call of Unmarshal on a short string is 190-300 ns (16-25 units of
 	// 12 ns) and the scans 6 ns a raw byte (half a unit). A charged byte of
 	// the allocation is 1/16 of a unit already (the base is 16 units, 3 raw
@@ -1289,6 +1285,28 @@ const (
 )
 
 func unquoteBytes(raw int) uint64 { return 3*uint64(raw) + unquoteBase }
+
+// unquoteGrowthBytes is what encoding/json allocates besides the buffers that
+// unquoteBytes counts, for a body of m bytes whose result is res bytes: its
+// unquote starts with a buffer of m+2*utf8.UTFMax bytes and, when the bytes
+// written reach 2*utf8.UTFMax less than its length at the start of a step,
+// makes one of (len+utf8.UTFMax)*2 (decode.go: unquoteBytes), as many times as
+// the result needs. The last step writes at least a byte, so a result of more
+// than len-8 bytes has made one: a result a little longer than the body makes a
+// buffer twice the body (the edge that a charge by the difference of the
+// lengths missed). The size classes of the allocator round a buffer up: an
+// eighth is added.
+func unquoteGrowthBytes(m, res int) uint64 {
+	if m < 0 {
+		m = 0
+	}
+	var sum uint64
+	for n := m + 2*utf8.UTFMax; res > n-2*utf8.UTFMax; {
+		n = (n + utf8.UTFMax) * 2
+		sum += uint64(n)
+	}
+	return sum + sum/8
+}
 
 // A hostCache keeps the results of the MarshalJSON of host values, in the
 // order of the traversal, from the first pass of an encode to the second.

@@ -20,10 +20,14 @@ import (
 // 3 * raw + 320, and after, the result and 4 bytes for each it adds to the raw.
 func g2UnquoteBytes(raw, res int) uint64 {
 	n := uint64(3*raw + 320 + res)
-	if res > raw {
-		n += uint64(4 * (res - raw))
+	// the buffer of encoding/json is made again, twice as long, each time the
+	// result comes within 8 bytes of its end (it starts at the body + 8 bytes)
+	var sum uint64
+	for c := raw - 2 + 8; res > c-8; {
+		c = (c + 4) * 2
+		sum += uint64(c)
 	}
-	return n
+	return n + sum + sum/8
 }
 
 // g2Exec runs src with the Go string raw as the global x, and returns what
@@ -84,9 +88,8 @@ func TestG2_DecodeUnquoteChargesExactly(t *testing.T) {
 			// the base, and by that of the result, whole units each).
 			pre := uint64(3*c.raw + 320)
 			want := uint64(g2StepsOfTheProgram+6+4+c.raw/4) + pre/16 + uint64(c.res)/16
-			if c.res > c.raw {
-				want += uint64(4*(c.res-c.raw)) / 16
-			}
+			// (the growth of the buffer of Unmarshal, charged apart)
+			want += (g2UnquoteBytes(c.raw, c.res) - uint64(3*c.raw+320+c.res)) / 16
 			if got := r.works[1] - r.works[0]; got != want {
 				t.Errorf("%s (budget %d): charged %d work, want %d", c.name, budget, got, want)
 			}
@@ -151,8 +154,17 @@ func TestG2_DecodeBigIntIsChargedBeforeItIsMade(t *testing.T) {
 // What the runtime allocates for a decode of such strings is not more than
 // what it charged (and so not more than 6 times).
 func TestG2_DecodeUnquotePeak(t *testing.T) {
+	if raceOn {
+		t.Skip("the race detector inflates the allocations")
+	}
 	const bs = "\\" // a backslash
 	for _, c := range []struct{ name, raw string }{
+		// the edge of the doubling of the buffer of Unmarshal (G4b, M3): the
+		// result a byte or three over the body (j invalid bytes of 3, 2j-d
+		// escapes of 1: the body is 5j-2d, the result 5j-d)
+		{"result 1 over the body", `"` + strings.Repeat("\xff", 40000) + strings.Repeat(bs+"n", 79999) + `"`},
+		{"result 3 over the body", `"` + strings.Repeat("\xff", 40000) + strings.Repeat(bs+"n", 79997) + `"`},
+		{"result as long as the body", `"` + strings.Repeat("\xff", 40000) + strings.Repeat(bs+"n", 80000) + `"`},
 		{"escapes, one string", `"` + strings.Repeat(bs+"n", 100000) + `"`},
 		{"unicode escapes, one string", `"` + strings.Repeat(bs+"u"+"0041", 100000) + `"`},
 		{"surrogate pairs, one string", `"` + strings.Repeat(bs+"ud83d"+bs+"ude00", 50000) + `"`},
