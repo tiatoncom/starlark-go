@@ -1114,18 +1114,45 @@ func (r rangeValue) slice(start, end, step int) (Value, error) {
 	b, ok2 := mulInt(r.step, end)
 	newStep, ok3 := mulInt(r.step, step)
 	if !ok1 || !ok2 || !ok3 || newStep == 0 {
-		return nil, errOverflow
+		return r.sliceExact(start, end, step, errOverflow)
 	}
 	newStart, ok4 := addInt(r.start, a)
 	newStop, ok5 := addInt(r.start, b)
 	if !ok4 || !ok5 {
-		return nil, errOverflow
+		return r.sliceExact(start, end, step, errOverflow)
 	}
 	n, ok := rangeLenChecked(newStart, newStop, newStep)
 	if !ok {
 		return nil, errOverflow
 	}
 	return rangeValue{start: newStart, stop: newStop, step: newStep, len: n}, nil
+}
+
+// sliceExact is slice when an intermediate product overflowed an int: the
+// start, stop and step of the result are computed exactly, and the result is
+// the one of v0.2.3 (which wrapped round, and was right where the wrapped
+// numbers were the exact ones, or the range is empty) if they fit; an empty
+// range if the slice is empty; and an error only if the result is a range
+// that has no int start, stop and step.
+func (r rangeValue) sliceExact(start, end, step int, errOverflow error) (Value, error) {
+	bi := func(x int) *big.Int { return big.NewInt(int64(x)) }
+	exact := func(i int) *big.Int { return new(big.Int).Add(bi(r.start), new(big.Int).Mul(bi(r.step), bi(i))) }
+	s, e, st := exact(start), exact(end), new(big.Int).Mul(bi(r.step), bi(step))
+	if st.Sign() == 0 {
+		return nil, errOverflow
+	}
+	if s.IsInt64() && e.IsInt64() && st.IsInt64() {
+		newStart, newStop, newStep := int(s.Int64()), int(e.Int64()), int(st.Int64())
+		n, ok := rangeLenChecked(newStart, newStop, newStep)
+		if !ok {
+			return nil, errOverflow
+		}
+		return rangeValue{start: newStart, stop: newStop, step: newStep, len: n}, nil
+	}
+	if (st.Sign() > 0 && s.Cmp(e) >= 0) || (st.Sign() < 0 && s.Cmp(e) <= 0) {
+		return rangeValue{start: 0, stop: 0, step: 1, len: 0}, nil // empty
+	}
+	return nil, errOverflow
 }
 
 // mulInt and addInt return the product and sum of two ints, and whether they
