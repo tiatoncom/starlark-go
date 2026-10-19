@@ -124,7 +124,9 @@ func equalFast(m *meter, x, y Value, depth int) (bool, error) {
 				if ys, yb := y.get(); yb == nil {
 					return xs == ys, nil
 				}
-			} else if err := m.add(bigEqualWork); err != nil {
+			}
+			// (a big int on either side: the word, and the memory far away)
+			if err := m.add(bigEqualWork); err != nil {
 				return false, err
 			}
 		}
@@ -210,7 +212,13 @@ func compareM(m *meter, op syntax.Token, x, y Value, depth int) (bool, error) {
 			}
 		case Int:
 			if y, ok := y.(Int); ok {
+				// the word(s) of the big int, whichever side it is on (of x
+				// if both are)
 				if _, big := x.get(); big != nil {
+					if err := m.add(words64(big)); err != nil {
+						return false, err
+					}
+				} else if _, big := y.get(); big != nil {
 					if err := m.add(words64(big)); err != nil {
 						return false, err
 					}

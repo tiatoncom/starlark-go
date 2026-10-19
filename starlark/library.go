@@ -1161,6 +1161,20 @@ func (r rangeValue) sliceExact(start, end, step int, errOverflow error) (Value, 
 	if (st.Sign() > 0 && s.Cmp(e) >= 0) || (st.Sign() < 0 && s.Cmp(e) <= 0) {
 		return rangeValue{start: 0, stop: 0, step: 1, len: 0}, nil // empty
 	}
+	// One element (the distance to the end is not more than the step), and an
+	// int: v0.2.3 gave that range whatever its step. Any step does for the one
+	// element (ranges of one element are equal if their first elements are, and
+	// iterate to it): 1 or -1, as the end is above or below the start.
+	if s.IsInt64() {
+		span := new(big.Int).Sub(e, s)
+		if span.CmpAbs(st) <= 0 {
+			if start := int(s.Int64()); start < math.MaxInt {
+				return rangeValue{start: start, stop: start + 1, step: 1, len: 1}, nil
+			} else {
+				return rangeValue{start: start, stop: start - 1, step: -1, len: 1}, nil
+			}
+		}
+	}
 	return nil, errOverflow
 }
 

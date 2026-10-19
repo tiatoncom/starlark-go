@@ -229,8 +229,17 @@ func (i Int) Cmp(v Value, depth int) (int, error) {
 	j := v.(Int)
 	iSmall, iBig := i.get()
 	jSmall, jBig := j.get()
-	if iBig != nil || jBig != nil {
-		return i.bigInt().Cmp(j.bigInt()), nil
+	switch {
+	case iBig != nil && jBig != nil:
+		return iBig.Cmp(jBig), nil
+	case jBig != nil:
+		// (a big int is never in the range of the small ones: makeBigInt is
+		// called for ints that are not representable as int32 only, see
+		// MakeInt64, MakeUint64 and MakeBigInt; so the sign of the big one
+		// decides, and no big.Int is made of the small one)
+		return -jBig.Sign(), nil
+	case iBig != nil:
+		return iBig.Sign(), nil
 	}
 	return signum64(iSmall - jSmall), nil // safe: int32 operands
 }

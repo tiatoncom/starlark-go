@@ -120,6 +120,23 @@ func TestG4EqualHashBigIntsAreCharged(t *testing.T) {
 	}
 }
 
+// G5-1: the family has the hash of the small int 777 (T = 777: the hash of a
+// small int is 12582917 * (777 + 3)), so a small key probes the whole chain of
+// big ints, and each comparison of the small key with a big int is charged as
+// the one of two big ints is (3 units: the word and bigEqualWork). The work of
+// the same lookup before the fix: 254 (the buckets and the hash: the
+// comparisons were free).
+func TestG4SmallKeyInAChainOfBigIntsIsCharged(t *testing.T) {
+	const build = "d = {}\nfor k in ks:\n    d[k] = 1\n"
+	steps, _ := g4ExtWork(t, g4CollidingInts+build+"x = 777\n")
+	w, _ := g4ExtWork(t, g4CollidingInts+build+"x = 777 in d\n")
+	got := w - steps
+	t.Logf("the lookup of 777: %d", got)
+	if want := uint64(2000*3 + 254); got != want {
+		t.Errorf("the lookup of a small key in 2000 big ints of its hash: work %d, want %d", got, want)
+	}
+}
+
 // The family is real: 2000 distinct ints of one hash.
 func TestG4CollidingFamilyIsOneHash(t *testing.T) {
 	_, g := g4ExtWork(t, g4CollidingInts)

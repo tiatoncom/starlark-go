@@ -2,8 +2,11 @@ package starlark
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
+
+	"go.starlark.net/syntax"
 )
 
 // g4Nested returns a tuple nested d levels deep (d tuples), made in Go.
@@ -80,6 +83,61 @@ func TestG4OrdOfALongStringChargesTheRunePass(t *testing.T) {
 	var we *WorkBudgetError
 	if !errors.As(err, &we) || th.Work() != 1000 {
 		t.Errorf("work limit 1000: err %v, work %d, want a work refusal at 1000", err, th.Work())
+	}
+}
+
+// G5-1: the comparison of a small int with a big one is charged whichever side
+// the big one is on (the word of the big int, and for the equality of a table
+// bigEqualWork), as two big ints are; and it makes no big.Int of the small one.
+func TestG4SmallVersusBigComparisonIsChargedBothOrders(t *testing.T) {
+	big, small := MakeInt64(1<<40), MakeInt(5)
+	units := func(f func(m *meter) error) uint64 {
+		m := (&Thread{}).meter()
+		if err := f(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m.units
+	}
+	for _, c := range []struct {
+		name string
+		x, y Int
+		eq   uint64 // equalFast
+		cmp  uint64 // compareM
+	}{
+		{"big, small", big, small, 1 + bigEqualWork, 1},
+		{"small, big", small, big, 1 + bigEqualWork, 1},
+		{"big, big", big, big, 1 + bigEqualWork, 1},
+		{"small, small", small, small, 0, 0},
+	} {
+		if got := units(func(m *meter) error { _, err := equalFast(m, c.x, c.y, 10); return err }); got != c.eq {
+			t.Errorf("equalFast(%s): %d units, want %d", c.name, got, c.eq)
+		}
+		if got := units(func(m *meter) error { _, err := compareM(m, syntax.LT, c.x, c.y, 10); return err }); got != c.cmp {
+			t.Errorf("compareM(%s): %d units, want %d", c.name, got, c.cmp)
+		}
+	}
+}
+
+// The order of a small int and a big one is decided by the sign of the big
+// one (a big int is never in the range of the small ones), and Cmp makes no
+// big.Int for it.
+func TestG4SmallVersusBigCmpDoesNotAllocate(t *testing.T) {
+	smalls := []Int{MakeInt(0), MakeInt(5), MakeInt(-5), MakeInt(math.MaxInt32), MakeInt(math.MinInt32)}
+	bigs := []Int{MakeInt64(1 << 40), MakeInt64(-(1 << 40)), MakeInt64(math.MaxInt32 + 1), MakeInt64(math.MinInt32 - 1)}
+	for _, s := range smalls {
+		for _, b := range bigs {
+			want := s.bigInt().Cmp(b.bigInt())
+			if got, _ := s.Cmp(b, 10); got != want {
+				t.Errorf("%v.Cmp(%v) = %d, want %d", s, b, got, want)
+			}
+			if got, _ := b.Cmp(s, 10); got != -want {
+				t.Errorf("%v.Cmp(%v) = %d, want %d", b, s, got, -want)
+			}
+		}
+	}
+	a, b := smalls[1], bigs[1]
+	if n := testing.AllocsPerRun(100, func() { a.Cmp(b, 10); b.Cmp(a, 10) }); n != 0 {
+		t.Errorf("Cmp of a small and a big int allocates %v times, want 0", n)
 	}
 }
 

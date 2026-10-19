@@ -299,4 +299,9 @@ func (g *generator) structGroup() {
 				return nil, err
 			}
 			n := utf8.RuneCountInString(s)`, `ord: the rune pass of the error text is not charged (workRunes, before the count)`)
+	// G5: the comparison of a small int with a big one is charged on either side
+	s(fCmp, `// (a big int on either side: the word, and the memory far away)\n\t\t\tif err := m.add(bigEqualWork); err != nil {`, `if _, xb := x.get(); xb == nil {\n\t\t\t\treturn equalM(m, x, y, depth)\n\t\t\t}\n\t\t\tif err := m.add(bigEqualWork); err != nil {`, `equalFast: bigEqualWork only when x is big (a small key in a chain of big ints is free)`)
+	s(fCmp, `} else if _, big := y.get(); big != nil {`, `} else if _, big := y.get(); false && big != nil {`, `compareM: the word of a big y is not charged when x is small`)
+	s(fInt, `return -jBig.Sign(), nil`, `return jBig.Sign(), nil`, `Int.Cmp: a small int against a big one, the sign of the big one is taken the wrong way`)
+	s(fLib, `if span.CmpAbs(st) <= 0 {`, `if false && span.CmpAbs(st) <= 0 {`, `rangeValue.sliceExact: a range of one element whose step does not fit is an error`)
 }

@@ -39,7 +39,22 @@ func TestG4RangeSliceEqualsV023(t *testing.T) {
 	bi := func(x int) *big.Int { return new(big.Int).SetInt64(int64(x)) }
 	edge := []int{0, 1, -1, 2, -2, 3, 7, -7, 1 << 31, -(1 << 31), 1 << 40, -(1 << 40), 1 << 61, -(1 << 61), 1 << 62, -(1 << 62), math.MaxInt, math.MinInt, math.MaxInt - 1, math.MinInt + 1}
 	steps := []int{1, -1, 2, -2, 3, 1 << 31, -(1 << 31), 1 << 61, -(1 << 61), math.MaxInt, math.MinInt + 1}
-	var cases, errs, empties int
+	// oneElement: the exact range start:stop:step has exactly one element
+	oneElement := func(s, e, st *big.Int) bool {
+		span := new(big.Int).Sub(e, s)
+		if st.Sign() > 0 {
+			if span.Sign() <= 0 {
+				return false
+			}
+		} else {
+			if span.Sign() >= 0 {
+				return false
+			}
+			span.Neg(span)
+		}
+		return span.Cmp(new(big.Int).Abs(st)) <= 0 // (span-1)/|st| + 1 == 1
+	}
+	var cases, errs, empties, ones int
 	for _, rs := range edge {
 		for _, re := range edge {
 			for _, rst := range steps {
@@ -91,6 +106,31 @@ func TestG4RangeSliceEqualsV023(t *testing.T) {
 								if err != nil || got.(rangeValue).len != 0 {
 									t.Errorf("%v[%d:%d:%d] is empty (v0.2.3: len %d): got %v, err %v", r, a, b, st, want.len, got, err)
 								}
+							case exStart.IsInt64() && oneElement(exStart, exStop, exStep):
+								// G5-2: one element, whose step (or end) is not an int:
+								// the range of that element, as v0.2.3 gave it
+								ones++
+								if err != nil {
+									t.Errorf("%v[%d:%d:%d] has one element %v: error %v", r, a, b, st, exStart, err)
+									continue
+								}
+								g := got.(rangeValue)
+								if same, _ := Equal(g.Index(0), MakeInt64(exStart.Int64())); g.len != 1 || !same {
+									t.Errorf("%v[%d:%d:%d]: got %v, want the one element %v", r, a, b, st, g, exStart)
+								}
+								it := g.Iterate()
+								var x Value
+								count := 0
+								for it.Next(&x) {
+									count++
+								}
+								it.Done()
+								if count != 1 {
+									t.Errorf("%v[%d:%d:%d]: %d elements by iteration, want 1", r, a, b, st, count)
+								}
+								if want.len == 1 && want.start == int(exStart.Int64()) && !rangeEqual(g, want) {
+									t.Errorf("%v[%d:%d:%d]: %v is not equal to v0.2.3's %v", r, a, b, st, g, want)
+								}
 							default:
 								errs++
 								if err == nil {
@@ -103,7 +143,7 @@ func TestG4RangeSliceEqualsV023(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("%d slices: %d empty with an overflow, %d errors", cases, empties, errs)
+	t.Logf("%d slices: %d empty with an overflow, %d of one element, %d errors", cases, empties, ones, errs)
 }
 
 // The slice of the review, by the interpreter.

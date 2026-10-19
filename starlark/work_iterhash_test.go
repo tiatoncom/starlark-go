@@ -422,7 +422,9 @@ func TestIhCompare_Bytes(t *testing.T) {
 }
 
 // TestIhCompare_BigInts: a comparison of two integers, when the left one is
-// big, is its words of 64 bits (a small left one is free, whatever the right).
+// big, is its words of 64 bits; a small left one is the words of the right one
+// if that is big (G5-1: it was free, and a small key probing a chain of big
+// ints was not charged), and free if both are small.
 func TestIhCompare_BigInts(t *testing.T) {
 	two := func(e uint) Int { return MakeBigInt(new(big.Int).Lsh(big.NewInt(1), e)) }
 	for _, op := range []syntax.Token{syntax.EQL, syntax.LT, syntax.GE} {
@@ -433,7 +435,7 @@ func TestIhCompare_BigInts(t *testing.T) {
 		ihCheck(t, "2**5000 "+op.String()+" 2**100", cmp(two(5000), two(100)), 79)
 		ihCheck(t, "2**100 "+op.String()+" 2**5000", cmp(two(100), two(5000)), 2)
 		ihCheck(t, "2**5000 "+op.String()+" 7", cmp(two(5000), MakeInt(7)), 79)
-		ihCheck(t, "7 "+op.String()+" 2**5000", cmp(MakeInt(7), two(5000)), 0)
+		ihCheck(t, "7 "+op.String()+" 2**5000", cmp(MakeInt(7), two(5000)), 79) // (G5-1: the big one decides, on either side)
 		ihCheck(t, "2**64000 "+op.String()+" 2**64000", cmp(two(64*1000), two(64*1000)), 1001)
 	}
 }
