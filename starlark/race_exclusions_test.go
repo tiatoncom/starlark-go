@@ -48,6 +48,7 @@ import (
 var raceExcluded = map[string]string{
 	"starlark/allocs_small_test.go: TestSmallAllocs_NoMoreThanV020":       "compares testing.AllocsPerRun and runtime TotalAlloc of short paths with the numbers of v0.2.0, taken without the detector (sorted(l) makes 272 B under -race, 257 B without it, the bound is 269 B)",
 	"starlark/peak_test.go: TestPeak_AnOperationAllocatesWhatItCharged":   "compares the runtime's TotalAlloc with the bytes charged, within 1.25x (json.indent is 2.00x and json.encode_indent 1.68x under -race, 1.00x and 1.01x without it)",
+	"lib/json/norace_test.go: (no test function)":                         "the constant raceOn = false of the json tests (race_test.go has raceOn = true): the tests that compare the runtime's TotalAlloc with the bytes charged by the unquote of json.decode (TestG2_DecodeUnquotePeak, TestG4b_DecodeUnquoteGrowthIsChargedForEveryLength) skip themselves under -race by it",
 	"starlark/peak_test.go: TestCharged_NotMoreThanTwiceWhatWasAllocated": "the other side of the same comparison (the bytes charged against the runtime's TotalAlloc), by the same helper and the same tables as the test above; it passes under -race only because the detector's extra allocations loosen its one-sided bound",
 }
 
