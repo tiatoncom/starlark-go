@@ -8,8 +8,15 @@ mutation is, and for each observable of a run (the result of the program, the
 error, `Thread.Work()`, `Thread.AllocatedBytes()`, `Thread.Steps`) whether it
 changes and why. What changes is time or Go memory that is not charged.
 
-Ids are those of the numbering of the tool for this tree. File:line are of the
-unmutated source.
+Ids are those of the numbering of the tool, and they hold for the tree hash it
+prints (`mutate -list`), not for the tree in general: the numbering is made from
+the text of the declared files. They were made and run for the tree
+`a7bca9f5e72c5fc50435aa11af5cdcb3f5ec3c9877da3658d9efd3b47da8a89c` (62cca72);
+the comments of 242d9c5 changed the hash to
+`42203a1b66b358f2867f665269f81721b19b687391b8bfede7fb4e0256e2cdfd`, and every
+id there names the same mutation (the lists of the three groups compared, id by
+id). After another change of the declared files, compare the lists before
+reusing an id. File:line are of the unmutated source of 242d9c5.
 
 | id | place | changes |
 |---|---|---|
