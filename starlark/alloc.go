@@ -149,13 +149,17 @@ const (
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
 	// charged (see above). It is asserted by TestAllocUnchargedGrowthPerStep.
-	// 9: the worst row is a comprehension of bound methods
-	// ([s.upper for i in range(N)], 8.28 a step): a bound method is a *Builtin
-	// that every attribute access makes, and it is not charged, because every
-	// method call makes one (charging it would charge ~64 bytes to each call of
-	// l.append and move the cost of the hot path and the charges of every
-	// program).
-	allocUnchargedBytesPerStep = 9
+	// 34: the worst row is a literal of bound methods ([s.upper, s.upper, ...],
+	// 32.18 a step; 24.18 for a list receiver): a bound method is a *Builtin of
+	// 48 bytes that every attribute access makes (and the boxed string
+	// receiver), two steps an element in a literal. It is not charged, because
+	// every method call makes one (charging it would charge 48 bytes to each
+	// call of l.append and move the cost of the hot path and the charges of
+	// every program). The memory of a program is therefore at most its byte
+	// limit plus allocUnchargedBytesPerStep * its steps: the bound is linear in
+	// the steps, and a host that sets a byte limit (SetMaxAllocBytes) must set a
+	// step limit too (SetMaxExecutionSteps). 32.18 rounded up, and a byte.
+	allocUnchargedBytesPerStep = 34
 )
 
 func listBytes(n int) uint64 {

@@ -8,6 +8,7 @@ package starlark
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"go.starlark.net/syntax"
@@ -116,8 +117,8 @@ func TestAllocFormulaCalibration(t *testing.T) {
 // A program that runs S steps without a charged operation retains at most
 // allocUnchargedBytesPerStep * S bytes beyond what it was charged: the claim
 // of alloc.go that bounds what the step limit leaves unaccounted for. The
-// worst measured is a list of big integers (~5 bytes a step); the constant
-// is 8.
+// worst measured is a literal of bound methods with a string receiver (32.18
+// bytes a step); the constant is 34.
 func TestAllocUnchargedGrowthPerStep(t *testing.T) {
 	var worst float64
 	for _, c := range []struct{ name, setup, op string }{
@@ -134,6 +135,12 @@ func TestAllocUnchargedGrowthPerStep(t *testing.T) {
 		{"append(bound method)", "r = []\ns = 'abc'", "for i in range(100000): r.append(s.upper)"},
 		{"append(bound method of list)", "r = []\nl = []", "for i in range(100000): r.append(l.append)"},
 		{"append(bound method of dict)", "r = []\nd = {}", "for i in range(100000): r.append(d.get)"},
+		// M2 (round 2): a literal of bound methods, two steps an element (LOAD,
+		// ATTR), each a box of 48 bytes (and the string receiver is boxed too):
+		// the worst row, not charged by decision (a bound method is made by
+		// every method call; charging it moves the cost of the hot path)
+		{"literal of bound methods", "l = []", "r = [" + strings.Repeat("l.append, ", 5000) + "]"},
+		{"literal of bound methods (string)", "s = 'abc'", "r = [" + strings.Repeat("s.upper, ", 5000) + "]"},
 		{"comprehension of bound methods", "s = 'abc'", "r = [s.upper for i in range(100000)]"},
 		{"comprehension of bound methods (list)", "l = []", "r = [l.append for i in range(100000)]"},
 		{"r += [bound method]", "r = []\ns = 'abc'", "for i in range(100000): r += [s.upper]"},
@@ -170,7 +177,10 @@ func TestAllocUnchargedGrowthPerStep(t *testing.T) {
 		}
 	}
 	t.Logf("worst uncharged growth: %.2f B/step; at 10M steps: %.0f MiB", worst, worst*1e7/(1<<20))
-	if allocUnchargedBytesPerStep*10_000_000 > 100<<20 {
-		t.Errorf("allocUnchargedBytesPerStep = %d: over 100 MiB unaccounted for at the engine's 10M steps", allocUnchargedBytesPerStep)
+	// the constant is the measured maximum, not a round number above it: it is
+	// a guarantee (memory <= the byte limit + constant * steps), so it must not
+	// drift up unnoticed
+	if float64(allocUnchargedBytesPerStep) > worst+3 {
+		t.Errorf("allocUnchargedBytesPerStep = %d, but the worst row is %.2f: the constant is the measured maximum, rounded up, and a byte", allocUnchargedBytesPerStep, worst)
 	}
 }
