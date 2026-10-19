@@ -11,9 +11,9 @@ decode(s)	700009
 decode(sd)	355801
 decode(ss)	80009
 decode(floats)	700016
-decode(4000 digits)	4056
+decode(4000 digits)	4074
 decode(long string)	125006
-decode(string with escapes)	125006
+decode(string with escapes)	287530
 indent(s)	368055
 indent(sd)	79862
 indent(ss)	61805
@@ -30,9 +30,9 @@ small: decode(s)	7009
 small: decode(sd)	2384
 small: decode(ss)	809
 small: decode(floats)	7016
-small: decode(4000 digits)	4056
+small: decode(4000 digits)	4074
 small: decode(long string)	1256
-small: decode(string with escapes)	1256
+small: decode(string with escapes)	2905
 small: indent(s)	2430
 small: indent(sd)	550
 small: indent(ss)	492

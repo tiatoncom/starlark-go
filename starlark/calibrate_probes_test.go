@@ -367,6 +367,23 @@ var calibrationProbes = []probe{
 	{"json.decode(dicts)", "s = json.encode([{'a': i} for i in range(100000)])", "r = json.decode(s)"},
 	{"json.indent(flat)", "s = json.encode(list(range(300000)))", "r = json.indent(s)"},
 	{"json.indent(nested)", "s = '[' * 1000 + '1,' * 100000 + '1' + ']' * 1000", "r = json.indent(s)"},
+	// the unquoting of json.decode (G2): escapes, non-ASCII, invalid UTF-8, many short strings
+	{"json.decode(string of \\n escapes)", `s = '"' + '\\n' * 1000000 + '"'`, "r = json.decode(s)"},
+	{"json.decode(string of \\u0041 escapes)", `s = '"' + '\\u0041' * 500000 + '"'`, "r = json.decode(s)"},
+	{"json.decode(non-ascii string)", "s = json.encode('é' * 1000000)", "r = json.decode(s)"},
+	{"json.decode(invalid UTF-8 string)", `s = '"' + 'é'[:1] * 1000000 + '"'`, "r = json.decode(s)"}, // a lone first byte of é
+	{"json.decode(20000 short escaped strings)", `s = '[' + ','.join(['"a\\nb"'] * 20000) + ']'`, "r = json.decode(s)"},
+
+	// the forms of G2: case maps that change the length, a non-ASCII cutset, rsplit with a limit, ranges of boxed ints
+	{"upper of non-ascii", "s = 'é' * 1000000", "r = s.upper()"},
+	{"lower of non-ascii", "s = 'É' * 1000000", "r = s.lower()"},
+	{"title of non-ascii", "s = 'éa ' * 300000", "r = s.title()"},
+	{"capitalize of non-ascii", "s = 'é' * 1000000", "r = s.capitalize()"},
+	{"upper of invalid UTF-8", `s = 'é'[:1] * 1000000`, "r = s.upper()"},
+	{"strip with a cutset of 20000 runes", "s = 'α' * 1000 + 'x' + 'β' * 1000\nc = ''.join([chr(0x3b1 + i) for i in range(20000)])", "r = s.strip(c)"},
+	{"rsplit(sep, 2) of 1M fields", "s = 'a,' * 1000000", "r = s.rsplit(',', 2)"},
+	{"list of a range beyond int32", "", "r = list(range(1 << 31, (1 << 31) + 300000))"},
+	{"tuple of a range beyond int32", "", "r = tuple(range(1 << 31, (1 << 31) + 300000))"},
 
 	// ---- deep and shared structure
 	{"hash of a DAG tuple (2^22 paths)", "t = (1,)\nfor i in range(22):\n    t = (t, t)", "r = {t: 1}"},

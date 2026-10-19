@@ -151,8 +151,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	// pass counts its bytes, charges them, and enforces the headroom, and
 	// allocates nothing; the second writes into a buffer of the exact size.
 	out := &outBuf{probe: formProbe}
-	var garbage uint64 // bytes of the items of the dictionaries (see encodeTo)
-	stop, err := encodeTo(thread, x, out, &work, thread.AllocHeadroom(), &garbage)
+	var garbage uint64    // bytes of the items of the dictionaries (see encodeTo)
+	hosts := &hostCache{} // what the host values returned, for the second pass
+	stop, err := encodeTo(thread, x, out, &work, thread.AllocHeadroom(), &garbage, hosts)
 	if err != nil {
 		if stop != nil {
 			return nil, allocErr(b, stop)
@@ -178,7 +179,8 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 	w := &outBuf{}
 	w.b.Grow(n)
-	if _, err := encodeTo(thread, x, w, nil, math.MaxUint64, nil); err != nil {
+	hosts.replay = true
+	if _, err := encodeTo(thread, x, w, nil, math.MaxUint64, nil, hosts); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
 	}
 	if w.n != n {
@@ -192,7 +194,11 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 // size at which the output is refused (stop is then the error: the budget's);
 // garbage is the first pass's, which charges the items of the dictionaries it
 // makes (they are allocated, and garbage at once) and adds them up.
-func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *workMeter, headroom uint64, garbage *uint64) (stop error, _ error) {
+//
+// hosts holds what the MarshalJSON of the host values returned: the first
+// pass records it, the second replays it (a host value is called once, the
+// bytes it returns are in the output the first pass has charged).
+func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *workMeter, headroom uint64, garbage *uint64, hosts *hostCache) (stop error, _ error) {
 	// The output of a value with shared substructure is exponential in the
 	// depth of the sharing (cycles are detected, shared children are not):
 	// stop as soon as it outgrows the headroom of the thread. Once it has,
@@ -324,9 +330,22 @@ func encodeTo(thread *starlark.Thread, x starlark.Value, buf *outBuf, work *work
 		case json.Marshaler:
 			// Application-defined starlark.Value types
 			// may define their own JSON encoding.
-			data, err := x.MarshalJSON()
-			if err != nil {
-				return err
+			var data []byte
+			if hosts.replay {
+				data = hosts.data[hosts.next]
+				hosts.next++
+			} else {
+				var err error
+				data, err = x.MarshalJSON()
+				if err != nil {
+					return err
+				}
+				// The slice header of the cache is allocated: it is charged.
+				if err := thread.ChargeAlloc(hostSlotBytes); err != nil {
+					stop = err
+					return err
+				}
+				hosts.data = append(hosts.data, data)
 			}
 			if tooBig(len(data)) {
 				return stop
@@ -856,11 +875,23 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			// unquote
 			if safe {
 				r = r[1 : len(r)-1]
-			} else if err := json.Unmarshal([]byte(r), &r); err != nil {
+				charge(uint64(len(r)))
+				spend(uint64(len(r)) / 4)
+				return starlark.String(r)
+			}
+			// What json.Unmarshal allocates is charged before the call, from
+			// the raw length (the result is not known yet), and what the result
+			// adds after it (see unquoteBytes).
+			raw := len(r)
+			charge(unquoteBytes(raw))
+			spend(unquoteUnits + uint64(raw)/4) // the rest of the call, the scans of the raw string
+			if err := json.Unmarshal([]byte(r), &r); err != nil {
 				fail("%s", err)
 			}
 			charge(uint64(len(r)))
-			spend(uint64(len(r)) / 4)
+			if len(r) > raw {
+				charge(unquoteGrowth * uint64(len(r)-raw))
+			}
 			return starlark.String(r)
 
 		case 'n':
@@ -1006,12 +1037,24 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 						}
 						return starlark.MakeInt(v)
 					}
+					if len(digits) <= 19 {
+						// if it fits in 64 bits the size is exact, and charged as
+						// the package charges an Int of that many bits (0 below 32).
+						if v, err := strconv.ParseInt(num, 10, 64); err == nil {
+							mag := uint64(v)
+							if v < 0 {
+								mag = -mag
+							}
+							charge(starlark.BigIntAllocBytes(bits.Len64(mag)))
+							return starlark.MakeInt64(v)
+						}
+					}
+					// Charged before it is made, by the upper bound of its bits
+					// (log2(10) < 3.322): the digits are at most MaxIntDigits.
+					charge(starlark.BigIntAllocBytes(len(digits)*3322/1000 + 2))
 					x, ok := new(big.Int).SetString(num, 10)
 					if !ok {
 						fail("invalid number: %s", short(num))
-					}
-					if x.BitLen() >= 32 { // a small integer is a word in the Value
-						charge(uint64(x.BitLen()+7) / 8)
 					}
 					return starlark.MakeBigInt(x)
 				}
@@ -1055,6 +1098,43 @@ func isdigit(b byte) bool {
 func chargeUnits(th *starlark.Thread, units uint64) error {
 	return th.ChargeWork(units)
 }
+
+// A string with an escape or a non-ASCII byte is unquoted by json.Unmarshal
+// (measured with runtime.MemStats, 2000-200000 repeats, Go 1.2x on
+// darwin/arm64): it copies the raw string to a []byte (1 byte a raw byte),
+// unquotes into a buffer of about the raw length, makes the result (2.1 bytes
+// a raw byte of escapes "\n", 1.1 of "A" or of non-ASCII) and allocates
+// 152-176 bytes for a string of 3-6 bytes; a decoded element of a list of
+// short strings allocates 285 bytes (the Value of the string, the slot, the
+// growth of the list included; the base is that, 285, and a margin of 35).
+// So it is charged 3 * raw + unquoteBase
+// before the call and the result after it; if the result is longer than the
+// raw string (every invalid byte is 3), its buffer grows by doubling: 4 bytes
+// more for each byte it adds (measured 8.2 * raw over the result for raw
+// strings of invalid UTF-8, whose result is 3 * raw).
+const (
+	unquoteBase   = 320
+	unquoteGrowth = 4
+	// The call of Unmarshal on a short string is 190-300 ns (16-25 units of
+	// 12 ns) and the scans 6 ns a raw byte (half a unit). A charged byte of
+	// the allocation is 1/16 of a unit already (the base is 16 units, 3 raw
+	// bytes 0.19 unit), so what is charged here is the rest: 4 units and a
+	// quarter a raw byte (with the 6 of the value, 26 units for a short one).
+	unquoteUnits = 4
+)
+
+func unquoteBytes(raw int) uint64 { return 3*uint64(raw) + unquoteBase }
+
+// A hostCache keeps the results of the MarshalJSON of host values, in the
+// order of the traversal, from the first pass of an encode to the second.
+type hostCache struct {
+	data   [][]byte
+	next   int
+	replay bool
+}
+
+// hostSlotBytes is the size of a slice header of the cache.
+const hostSlotBytes = 24
 
 // jsonItemBytes is the size of an item of Items() (a pair of values and the
 // slice that holds them), rounded up.

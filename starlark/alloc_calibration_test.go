@@ -129,6 +129,14 @@ func TestAllocUnchargedGrowthPerStep(t *testing.T) {
 		{"append({})", "r = []", "for i in range(20000): r.append({})"},
 		{"append([])", "r = []", "for i in range(100000): r.append([])"},
 		{"append(lambda)", "r = []", "for i in range(100000): r.append(lambda: i)"},
+		// a bound method is a *Builtin made at each attribute access: retained
+		// and not charged (G2, item 7 of the review)
+		{"append(bound method)", "r = []\ns = 'abc'", "for i in range(100000): r.append(s.upper)"},
+		{"append(bound method of list)", "r = []\nl = []", "for i in range(100000): r.append(l.append)"},
+		{"append(bound method of dict)", "r = []\nd = {}", "for i in range(100000): r.append(d.get)"},
+		{"comprehension of bound methods", "s = 'abc'", "r = [s.upper for i in range(100000)]"},
+		{"comprehension of bound methods (list)", "l = []", "r = [l.append for i in range(100000)]"},
+		{"r += [bound method]", "r = []\ns = 'abc'", "for i in range(100000): r += [s.upper]"},
 		{"d[i] = i", "r = {}", "for i in range(100000): r[i] = i"},
 		{"d[str] = i", "r = {}", "for i in range(100000): r['k%d' % i] = i"},
 		{"s.add(i)", "r = set()", "for i in range(100000): r.add(i)"},

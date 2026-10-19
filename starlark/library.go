@@ -20,9 +20,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+	"unsafe"
 
 	"go.starlark.net/syntax"
 )
@@ -1559,7 +1561,7 @@ func tuple(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 	// elements one by one, below.
 	var cerr error
 	if n >= 0 {
-		cerr = thread.chargeTuple(n)
+		cerr = thread.chargeTupleOf(n, iterable)
 	} else {
 		cerr = thread.charge(allocBaseTuple, allocBaseTuple)
 	}
@@ -2004,20 +2006,272 @@ func string_capitalize(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (
 		return nil, err
 	}
 	s := string(b.Receiver().(String))
-	if err := thread.chargeBytes(len(s)); err != nil {
-		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+	n := titleCaseLen(s, true)
+	if err := thread.chargeBytes(n); err != nil {
+		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), n)
 	}
-	res := new(strings.Builder)
-	res.Grow(len(s))
-	for i, r := range s {
-		if i == 0 {
+	return String(titleCase(s, n, true)), nil
+}
+
+// The case mappings make a string whose size is not that of the operand: an
+// invalid byte becomes U+FFFD (3 bytes) and some runes change their width
+// (U+023F, 2 bytes, upper-cases to U+2C7E, 3). So the size of the result is
+// computed first and charged, and the result is built to that size: a charge
+// by the length of the operand is a third of what a string of invalid bytes
+// makes.
+
+// runeWidth is the size of r as WriteRune writes it (an invalid rune is
+// written as U+FFFD).
+func runeWidth(r rune) int {
+	if n := utf8.RuneLen(r); n > 0 {
+		return n
+	}
+	return utf8.RuneLen(utf8.RuneError)
+}
+
+// upperLowerLen and upperLower are the length of the result and the result of
+// upper and lower, in two passes that are written out (no call of a closure
+// for each rune, a run of ASCII is taken as a run, a rune whose mapping keeps
+// its width is not mapped by the first pass), since the time of the form is
+// that of the mapping, and the first pass must not repeat it.
+func upperLowerLen(s string, upper bool) int {
+	widths := caseWidthTables()
+	tab := &widths.lower
+	if upper {
+		tab = &widths.upper
+	}
+	n := 0
+	for i := 0; i < len(s); {
+		if s[i] < utf8.RuneSelf {
+			j := i + 1
+			for j < len(s) && s[j] < utf8.RuneSelf {
+				j++
+			}
+			n += j - i
+			i = j
+			continue
+		}
+		r, w := decodeRuneAt(s, i)
+		i += w
+		if r < caseWidthLimit && tab[r>>6]&(1<<(r&63)) == 0 {
+			// the mapping keeps the width of r: no need to map it twice
+			if r == utf8.RuneError {
+				w = 3 // an invalid byte is written as U+FFFD
+			}
+			n += w
+			continue
+		}
+		if upper {
+			r = unicode.ToUpper(r)
+		} else {
+			r = unicode.ToLower(r)
+		}
+		n += runeWidth(r)
+	}
+	return n
+}
+
+// decodeRuneAt is utf8.DecodeRuneInString(s[i:]) with the two-byte rune (the
+// Latin, Greek and Cyrillic of most text) taken inline. s[i] is not ASCII.
+func decodeRuneAt(s string, i int) (rune, int) {
+	c := s[i]
+	if c < 0xC2 || c > 0xF4 {
+		return utf8.RuneError, 1 // a continuation byte, or a byte that starts no rune
+	}
+	if c < 0xE0 {
+		if i+1 < len(s) && s[i+1]&0xC0 == 0x80 {
+			return rune(c&0x1F)<<6 | rune(s[i+1]&0x3F), 2
+		}
+		return utf8.RuneError, 1
+	}
+	return utf8.DecodeRuneInString(s[i:])
+}
+
+// caseWidthLimit bounds the runes that have a case mapping (the last is
+// U+1E943): beyond it the mapping is called.
+const caseWidthLimit = 0x20000
+
+// caseWidths holds, for each direction, the bit of every rune below
+// caseWidthLimit whose upper (or lower) case is not as wide as it is in
+// UTF-8 (U+023F, 2 bytes, to U+2C7E, 3). It is made from the tables of
+// package unicode, so it is exact for the Go version that is used, and once.
+type caseWidths struct{ upper, lower, title [caseWidthLimit / 64]uint64 }
+
+// casedAfter holds, for the lower case (0) and the title case (1) of each
+// non-ASCII rune below caseWidthLimit, whether the rune that the mapping
+// gives is cased (isCasedRune of it): what title keeps from a rune to the
+// next. It is found by asking, of each rune (a rune is cased also by an orbit
+// of SimpleFold that has no mapping, as U+00DF has, and U+0130 is not cased
+// but its lower case is), so it takes ~4 ms, once, by the first non-ASCII
+// rune that title meets.
+var casedAfter = sync.OnceValue(func() *[2][caseWidthLimit / 64]uint64 {
+	t := new([2][caseWidthLimit / 64]uint64)
+	for r := rune(utf8.RuneSelf); r < caseWidthLimit; r++ {
+		if isCasedRune(unicode.ToLower(r)) {
+			t[0][r>>6] |= 1 << (r & 63)
+		}
+		if isCasedRune(unicode.ToTitle(r)) {
+			t[1][r>>6] |= 1 << (r & 63)
+		}
+	}
+	return t
+})
+
+var caseWidthsOnce = sync.OnceValue(func() *caseWidths {
+	t := new(caseWidths)
+	for _, cr := range unicode.CaseRanges {
+		for r := rune(cr.Lo); r <= rune(cr.Hi) && r < caseWidthLimit; r++ {
+			if utf8.RuneLen(unicode.ToUpper(r)) != utf8.RuneLen(r) {
+				t.upper[r>>6] |= 1 << (r & 63)
+			}
+			if utf8.RuneLen(unicode.ToLower(r)) != utf8.RuneLen(r) {
+				t.lower[r>>6] |= 1 << (r & 63)
+			}
+			if utf8.RuneLen(unicode.ToTitle(r)) != utf8.RuneLen(r) {
+				t.title[r>>6] |= 1 << (r & 63)
+			}
+		}
+	}
+	return t
+})
+
+// isCasedAfter is isCasedRune of the lower case (or, if toTitle, the title
+// case) of the non-ASCII rune r, by the table.
+func isCasedAfter(r rune, toTitle bool) bool {
+	if r < caseWidthLimit {
+		k := 0
+		if toTitle {
+			k = 1
+		}
+		return casedAfter()[k][r>>6]&(1<<(r&63)) != 0
+	}
+	if toTitle {
+		return isCasedRune(unicode.ToTitle(r))
+	}
+	return isCasedRune(unicode.ToLower(r))
+}
+
+// titleCaseLen and titleCase are the length of the result and the result of
+// title (capitalize false) and capitalize, as upperLowerLen and upperLower
+// are for upper and lower.
+func titleCaseLen(s string, capitalize bool) int {
+	t := caseWidthTables()
+	n := 0
+	prevCased := false
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			n++
+			i++
+			prevCased = !capitalize && 'a' <= c|0x20 && c|0x20 <= 'z'
+			continue
+		}
+		tab := &t.lower
+		if capitalize && i == 0 || !capitalize && !prevCased {
+			tab = &t.title
+		}
+		r, w := decodeRuneAt(s, i)
+		i += w
+		if !capitalize {
+			prevCased = isCasedAfter(r, tab == &t.title)
+		}
+		if r < caseWidthLimit && tab[r>>6]&(1<<(r&63)) == 0 {
+			if r == utf8.RuneError {
+				w = 3
+			}
+			n += w
+			continue
+		}
+		if tab == &t.title {
 			r = unicode.ToTitle(r)
 		} else {
 			r = unicode.ToLower(r)
 		}
-		res.WriteRune(r)
+		n += runeWidth(r)
 	}
-	return String(res.String()), nil
+	return n
+}
+
+func titleCase(s string, n int, capitalize bool) string {
+	if n == 0 {
+		return ""
+	}
+	buf := make([]byte, 0, n)
+	prevCased := false
+	for i := 0; i < len(s); {
+		c := s[i]
+		toTitle := capitalize && i == 0 || !capitalize && !prevCased
+		if c < utf8.RuneSelf {
+			prevCased = !capitalize && 'a' <= c|0x20 && c|0x20 <= 'z'
+			if toTitle {
+				if 'a' <= c && c <= 'z' {
+					c -= 'a' - 'A'
+				}
+			} else if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			buf = append(buf, c)
+			i++
+			continue
+		}
+		r, w := decodeRuneAt(s, i)
+		i += w
+		if !capitalize {
+			prevCased = isCasedAfter(r, toTitle)
+		}
+		if r == utf8.RuneError {
+			buf = append(buf, "\xef\xbf\xbd"...)
+			continue
+		}
+		if toTitle {
+			r = unicode.ToTitle(r)
+		} else {
+			r = unicode.ToLower(r)
+		}
+		buf = utf8.AppendRune(buf, r)
+	}
+	return unsafe.String(&buf[0], len(buf)) // (buf is not used again)
+}
+
+func caseWidthTables() *caseWidths { return caseWidthsOnce() }
+
+// upperLower is s upper- or lower-cased (an invalid byte is U+FFFD), built in
+// n bytes, which is upperLowerLen of it.
+func upperLower(s string, n int, upper bool) string {
+	if n == 0 {
+		return ""
+	}
+	buf := make([]byte, 0, n)
+	for i := 0; i < len(s); {
+		c := s[i]
+		if c < utf8.RuneSelf {
+			if upper {
+				if 'a' <= c && c <= 'z' {
+					c -= 'a' - 'A'
+				}
+			} else if 'A' <= c && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			buf = append(buf, c)
+			i++
+			continue
+		}
+		r, w := decodeRuneAt(s, i)
+		i += w
+		if r == utf8.RuneError {
+			// an invalid byte, or U+FFFD itself: written as U+FFFD, which
+			// has no case
+			buf = append(buf, "\xef\xbf\xbd"...)
+			continue
+		}
+		if upper {
+			r = unicode.ToUpper(r)
+		} else {
+			r = unicode.ToLower(r)
+		}
+		buf = utf8.AppendRune(buf, r)
+	}
+	return unsafe.String(&buf[0], len(buf)) // (buf is not used again)
 }
 
 // string_iterable returns an unspecified iterable value whose iterator yields:
@@ -2441,9 +2695,9 @@ func string_join(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 		if !ok {
 			return fmt.Errorf("join: in list, want string, got %s", x.Type())
 		}
-		total += len(s)
+		total = addSizes(total, len(s))
 		if i > 0 {
-			total += len(recv)
+			total = addSizes(total, len(recv))
 		}
 		if total >= limit {
 			return thread.refuseBytes(total, "join: excessive result size")
@@ -2516,9 +2770,11 @@ func string_lower(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	}
 	s := string(b.Receiver().(String))
 	if changesCase(s, 'A', 'Z') { // else the same string is returned
-		if err := thread.chargeBytes(len(s)); err != nil {
-			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+		n := upperLowerLen(s, false)
+		if err := thread.chargeBytes(n); err != nil {
+			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), n)
 		}
+		return String(upperLower(s, n, false)), nil
 	}
 	return String(strings.ToLower(s)), nil
 }
@@ -2675,6 +2931,13 @@ func string_strip(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	case 'r': // rstrip
 		right = true
 	}
+	// The map of the characters of chars that are not ASCII is memory: charged
+	// before it is made (see cutsetBytes).
+	if cb := cutsetBytes(chars); cb > 0 {
+		if err := thread.charge(cb, cb); err != nil {
+			return nil, excess(err, "%s: excessive cutset (%d bytes)", b.Name(), len(chars))
+		}
+	}
 	s, err := trimString(&m, recv, chars, left, right)
 	if err != nil {
 		return nil, err
@@ -2693,6 +2956,32 @@ type cutset struct {
 	ascii  [2]uint64
 	others map[rune]struct{}
 	n      int // the characters
+}
+
+const (
+	// cutsetBaseBytes is the header of the map of a cutset (and the cutset
+	// itself, 32 bytes, that escapes), and cutsetRuneBytes the bytes of an entry
+	// of it, measured ~40 for a table of many runes (a group of 8 slots of
+	// 4 bytes and a byte of control each, at a load of 7/8, rounded by growth).
+	cutsetBaseBytes = 48
+	cutsetRuneBytes = 48
+)
+
+// cutsetBytes is the size charged for the table of the characters of chars
+// that are not ASCII (the ASCII ones are in the cutset itself): 0 if there are
+// none, else a base and a fixed size for each. The number of distinct ones is
+// not known before the table is built, so each is counted: an upper bound.
+func cutsetBytes(chars string) uint64 {
+	var n uint64
+	for _, r := range chars {
+		if r >= utf8.RuneSelf {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return satAdd(cutsetBaseBytes, satMul(n, cutsetRuneBytes))
 }
 
 func newCutset(chars string) *cutset {
@@ -2780,26 +3069,15 @@ func string_title(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	}
 
 	s := string(b.Receiver().(String))
-	if err := thread.chargeBytes(len(s)); err != nil {
-		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+	n := titleCaseLen(s, false)
+	if err := thread.chargeBytes(n); err != nil {
+		return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), n)
 	}
 
 	// Python semantics differ from x==strings.{To,}Title(x) in Go:
 	// "uppercase characters may only follow uncased characters and
 	// lowercase characters only cased ones."
-	buf := new(strings.Builder)
-	buf.Grow(len(s))
-	var prevCased bool
-	for _, r := range s {
-		if prevCased {
-			r = unicode.ToLower(r)
-		} else {
-			r = unicode.ToTitle(r)
-		}
-		prevCased = isCasedRune(r)
-		buf.WriteRune(r)
-	}
-	return String(buf.String()), nil
+	return String(titleCase(s, n, false)), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·upper
@@ -2809,9 +3087,11 @@ func string_upper(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	}
 	s := string(b.Receiver().(String))
 	if changesCase(s, 'a', 'z') { // else the same string is returned
-		if err := thread.chargeBytes(len(s)); err != nil {
-			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), len(s))
+		n := upperLowerLen(s, true)
+		if err := thread.chargeBytes(n); err != nil {
+			return nil, excess(err, "%s: excessive size (%d bytes)", b.Name(), n)
 		}
+		return String(upperLower(s, n, true)), nil
 	}
 	return String(strings.ToUpper(s)), nil
 }
@@ -2879,7 +3159,7 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		} else if b.Name() == "split" {
 			res = splitspace(recv, maxsplit)
 		} else { // rsplit
-			res = rsplitspace(recv, maxsplit)
+			res = rsplitspace(recv, maxsplit, fields)
 		}
 
 	} else if sep, ok := AsString(sep_); ok {
@@ -2894,7 +3174,14 @@ func string_split(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 		} else { // rsplit
 			res = strings.Split(recv, sep)
 			if excess := len(res) - maxsplit; excess > 0 {
-				res[0] = strings.Join(res[:excess], sep)
+				// The fields that are joined are the prefix of recv up to the
+				// end of the last of them: slice it, a join would make a copy
+				// of it that nothing charges.
+				end := (excess - 1) * len(sep)
+				for _, f := range res[:excess] {
+					end += len(f)
+				}
+				res[0] = recv[:end]
 				res = append(res[:1], res[excess:]...)
 			}
 		}
@@ -2963,11 +3250,11 @@ func fieldsCount(s string) int {
 	return n
 }
 
-// Precondition: max >= 0.
-func rsplitspace(s string, max int) []string {
-	// A field is at least a byte and a separator: preallocate no more than
-	// the string can hold, whatever max is.
-	res := make([]string, 0, min(max, len(s)/2)+1)
+// Precondition: max >= 0, and fields is the number of fields of the result,
+// which the caller has counted and charged (the preallocation is by it, not by
+// the length of s: a string of white space has one field and many bytes).
+func rsplitspace(s string, max, fields int) []string {
+	res := make([]string, 0, fields)
 	end := -1 // index of field end, or -1 in a region of spaces.
 	for i := len(s); i > 0; {
 		r, sz := utf8.DecodeLastRuneInString(s[:i])
@@ -3259,7 +3546,7 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 	// The result has at most the elements of both operands (when the
 	// length of the other is not known, Call charges the result).
 	known := Len(other) >= 0
-	n := b.Receiver().(*Set).Len() + max(Len(other), 0)
+	n := addSizes(b.Receiver().(*Set).Len(), max(Len(other), 0))
 	// (the entries that are added are charged: not the elements of the other
 	// that are in the receiver)
 	if err := thread.roomEntries(n); err != nil {
@@ -3295,7 +3582,7 @@ func set_symmetric_difference(thread *Thread, b *Builtin, args Tuple, kwargs []T
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·union.
 func set_union(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	// The result has at most the elements of the receiver and the arguments.
-	n := b.Receiver().(*Set).Len() + setUpdateLen(args)
+	n := addSizes(b.Receiver().(*Set).Len(), setUpdateLen(args))
 	if err := thread.roomEntries(n); err != nil {
 		return nil, excess(err, "union: excessive size (%d elements)", n)
 	}
@@ -3552,7 +3839,7 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple, fresh
 func setUpdateLen(args Tuple) int {
 	n := 0
 	for _, arg := range args {
-		n += max(Len(arg), 0)
+		n = addSizes(n, max(Len(arg), 0)) // (two ranges of 2**62 elements)
 	}
 	return n
 }

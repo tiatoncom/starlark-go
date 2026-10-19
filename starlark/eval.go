@@ -688,13 +688,15 @@ func makeExprFunc(opts *syntax.FileOptions, expr syntax.Expr, env StringDict) (*
 func listExtend(thread *Thread, x *List, y Iterable) error {
 	if n := Len(y); n >= 0 {
 		// Known length (fast path for list += list): check before growing.
-		if err := thread.charge(listBytes(len(x.elems)+n), satMul(uint64(n), allocBytesPerValue)); err != nil {
+		// (the sum is saturated: a range of 2**63-1 elements must not wrap it)
+		total := addSizes(len(x.elems), n)
+		if err := thread.charge(listBytes(total), satMul(uint64(n), allocBytesPerValue)); err != nil {
 			return excess(err, "excessive list extension (%d + %d elements)", len(x.elems), n)
 		}
 		// A unit for each element that is added, and for each that is there if
 		// the slice grows (it is copied, and the new memory is zeroed).
 		w := uint64(n)
-		if cap(x.elems) < len(x.elems)+n {
+		if cap(x.elems) < total {
 			w += uint64(len(x.elems))
 		}
 		if err := thread.chargeWork(satMul(w, elemWork(y))); err != nil {
@@ -913,7 +915,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			if y, ok := y.(String); ok {
 				// Bound concatenation like repeat (maxAlloc). Repeated
 				// s = s + s doubles the string in a single step.
-				if err := thread.chargeBytes(len(x) + len(y)); err != nil {
+				if err := thread.chargeBytes(addSizes(len(x), len(y))); err != nil {
 					return nil, excess(err, "excessive string concatenation (%d + %d bytes)", len(x), len(y))
 				}
 				return x + y, nil
@@ -953,7 +955,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			if y, ok := y.(*List); ok {
 				// Bound concatenation like repeat (maxAlloc). Repeated
 				// x = x + x doubles the list in a single step.
-				if err := thread.chargeValues(x.Len() + y.Len()); err != nil {
+				if err := thread.chargeValues(addSizes(x.Len(), y.Len())); err != nil {
 					return nil, excess(err, "excessive list concatenation (%d + %d elements)", x.Len(), y.Len())
 				}
 				z := make([]Value, 0, x.Len()+y.Len())
@@ -964,7 +966,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Tuple:
 			if y, ok := y.(Tuple); ok {
 				// Bound concatenation like repeat (maxAlloc).
-				if err := thread.chargeTuple(len(x) + len(y)); err != nil {
+				if err := thread.chargeTuple(addSizes(len(x), len(y))); err != nil {
 					return nil, excess(err, "excessive tuple concatenation (%d + %d elements)", len(x), len(y))
 				}
 				z := make(Tuple, 0, len(x)+len(y))
@@ -1303,7 +1305,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 
 		case *Dict: // union
 			if y, ok := y.(*Dict); ok {
-				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(addSizes(x.Len(), y.Len())); err != nil {
 					return nil, excess(err, "excessive dict union (%d + %d entries)", x.Len(), y.Len())
 				}
 				if err := thread.chargeEntries(0); err != nil {
@@ -1319,7 +1321,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 
 		case *Set: // union
 			if y, ok := y.(*Set); ok {
-				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(addSizes(x.Len(), y.Len())); err != nil {
 					return nil, excess(err, "excessive set union (%d + %d elements)", x.Len(), y.Len())
 				}
 				if err := thread.chargeEntries(0); err != nil {
@@ -1375,7 +1377,7 @@ func binaryOp(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 			}
 		case *Set: // symmetric difference
 			if y, ok := y.(*Set); ok {
-				if err := thread.roomEntries(x.Len() + y.Len()); err != nil {
+				if err := thread.roomEntries(addSizes(x.Len(), y.Len())); err != nil {
 					return nil, excess(err, "excessive set symmetric difference (%d + %d elements)", x.Len(), y.Len())
 				}
 				if err := thread.chargeEntries(0); err != nil {

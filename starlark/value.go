@@ -2152,7 +2152,12 @@ func (b Bytes) Has(y Value) (bool, error) {
 // quotedPrefix is the first room bytes (or fewer, to end at the start of a
 // character) of syntax.Quote(s, bytes), made without quoting the whole of s.
 func quotedPrefix(s string, bytes bool, room int) string {
-	buf := make([]byte, 0, min(room, len(s)*4)+16)
+	// (min(room, len(s)*4), without the product, which wraps on 32 bits)
+	prefix := room
+	if len(s) < room/4 {
+		prefix = len(s) * 4
+	}
+	buf := make([]byte, 0, prefix+16)
 	if bytes {
 		buf = append(buf, 'b')
 	}

@@ -423,7 +423,7 @@ loop:
 				// The elements are copied: charge before growing.
 				n := Len(args)
 				if n >= 0 {
-					if err2 := thread.charge(tupleBytes(len(positional)+n), satMul(uint64(n), allocBytesPerValue)); err2 != nil {
+					if err2 := thread.charge(tupleBytes(addSizes(len(positional), n)), satMul(uint64(n), allocBytesPerValue)); err2 != nil {
 						iter.Done()
 						err = excess(err2, "excessive * argument (%d elements)", n)
 						break loop

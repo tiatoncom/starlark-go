@@ -98,6 +98,11 @@ var peakTable = []peakRow{
 	{"print-like str of nested", "l = [[1, 2, 3]] * 100000", "r = str(l)"},
 	{"s.upper()", "s = 'abcdefghij' * 400000", "r = s.upper()"},
 	{"s.title()", "s = 'abcdefghij' * 400000", "r = s.title()"},
+	// each invalid byte becomes U+FFFD: the result is three times the operand
+	{"s.upper() (invalid UTF-8)", "s = str(b'\\xff') * 400000", "r = s.upper()"},
+	{"s.lower() (invalid UTF-8)", "s = str(b'\\xff') * 400000", "r = s.lower()"},
+	{"s.title() (invalid UTF-8)", "s = str(b'\\xff') * 400000", "r = s.title()"},
+	{"s.capitalize() (invalid UTF-8)", "s = str(b'\\xff') * 400000", "r = s.capitalize()"},
 	{"s[::-1]", "s = 'abcdefghij' * 400000", "r = s[::-1]"},
 	{"l[::2]", "l = list(range(2000000))", "r = l[::2]"},
 	{"l[::-1]", "l = list(range(1000000))", "r = l[::-1]"},

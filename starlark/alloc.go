@@ -65,7 +65,7 @@ import (
 // (TestAllocUnchargedGrowthPerStep) the worst retained-but-uncharged growth
 // is allocUnchargedBytesPerStep bytes per step, so a program that runs S steps
 // without any amplifier retains at most allocUnchargedBytesPerStep * S bytes
-// beyond what was charged (~20-50 MiB at the engine default of 10M steps). The
+// beyond what was charged (~20-90 MiB at the engine default of 10M steps). The
 // operations that create a container or a function, add an entry to a dict or
 // set, or copy many existing elements in one step (x += x, x.extend(x),
 // f(*x)) are charged. Slicing a string, bytes or tuple with step 1 shares the
@@ -149,7 +149,13 @@ const (
 	// allocUnchargedBytesPerStep is the measured upper bound of the memory a
 	// program retains per interpreter step through the growth that is not
 	// charged (see above). It is asserted by TestAllocUnchargedGrowthPerStep.
-	allocUnchargedBytesPerStep = 8
+	// 9: the worst row is a comprehension of bound methods
+	// ([s.upper for i in range(N)], 8.28 a step): a bound method is a *Builtin
+	// that every attribute access makes, and it is not charged, because every
+	// method call makes one (charging it would charge ~64 bytes to each call of
+	// l.append and move the cost of the hot path and the charges of every
+	// program).
+	allocUnchargedBytesPerStep = 9
 )
 
 func listBytes(n int) uint64 {
@@ -165,7 +171,11 @@ func tupleBytes(n int) uint64 {
 
 // dictBytes is the size of a Dict or Set of n entries.
 func dictBytes(n int) uint64 {
-	return satAdd(allocBaseDict, satMul(uint64(max(n-allocDictInline, 0)), allocBytesPerEntry))
+	// (n - 7 cannot wrap for n >= 0; a negative n is no entries)
+	if n <= allocDictInline {
+		return allocBaseDict
+	}
+	return satAdd(allocBaseDict, satMul(uint64(n-allocDictInline), allocBytesPerEntry))
 }
 
 // An AllocBudgetError is the error reported when an allocation would exceed
@@ -422,19 +432,37 @@ func satMul(a, b uint64) uint64 {
 	return lo
 }
 
+// addSizes is the sum of sizes (lengths, counts) that are not negative,
+// saturated at MaxInt: a sum of the lengths of operands that need not exist
+// (a range of 2**63-1 elements) must not wrap around to a small or negative
+// size that every check lets through. The result is then refused, by the
+// ceiling or by the budget, like any size that is too large.
+func addSizes(a int, rest ...int) int {
+	for _, b := range rest {
+		if a > math.MaxInt-b {
+			return math.MaxInt
+		}
+		a += b
+	}
+	return a
+}
+
 // sliceLen returns the number of elements of the slice [start:end:step]
 // after slice has normalized its indices.
 func sliceLen(start, end, step int) int {
+	// (the forms below cannot wrap, as end - start + step - 1 does for a step
+	// near MaxInt, and -step for MinInt: the count is the distance less one,
+	// divided, plus one, and the divisor is taken as unsigned)
 	if step > 0 {
 		if end <= start {
 			return 0
 		}
-		return (end - start + step - 1) / step
+		return int(uint(end-start-1)/uint(step)) + 1
 	}
 	if start <= end {
 		return 0
 	}
-	return (start - end - step - 1) / -step
+	return int(uint(start-end-1)/(-uint(step))) + 1
 }
 
 // A big integer (one that does not fit in 32 bits) is a big.Int, 32 bytes, and
@@ -451,6 +479,25 @@ const (
 
 // intBytesOfWords is the size charged for a big integer of w words.
 func intBytesOfWords(w uint64) uint64 { return satAdd(allocBaseInt, satMul(allocBytesPerWord, w)) }
+
+// BigIntAllocBytes returns the bytes that this package charges for an Int
+// whose magnitude has the given number of bits: the formula of a big integer,
+// intBytesOfWords((bits+63)/64) (64 + 9 bytes for each word of 64 bits). A
+// host built-in that makes an integer (a decoder) can charge it with
+// ChargeAlloc before it makes it.
+//
+// An Int that fits in a small integer (int32) is not boxed and is charged
+// nothing, as in this package: it returns 0 for bits <= 31, which are small
+// for either sign. For bits >= 32 it returns the size of a big integer (32 bits
+// is a big integer unless the value is -2**31: a host that knows the value
+// charges that one nothing). A bits that is not positive returns 0, and a
+// huge bits saturates at MaxUint64.
+func BigIntAllocBytes(bits int) uint64 {
+	if bits <= 31 {
+		return 0
+	}
+	return intBytesOfWords((uint64(bits) + 63) / 64)
+}
 
 // bigIntBytes returns the size charged for x if it is a big integer (one that
 // does not fit in 32 bits), and 0 for a small one.
@@ -633,9 +680,15 @@ func DictAllocBytes(n int) uint64  { return dictBytes(n) }
 // elemUnit is the size charged per element when a sequence is built from the
 // iterable it: the elements of string.elems() and string.codepoints() are
 // new strings (a slot and a header), the elements of anything else exist, or
-// are small values.
+// are small values. The elements of a range with an element beyond int32 are
+// integers that are not small: each is a big.Int (a box of its own, an integer
+// of one word), made when the range is iterated. The range is charged as if
+// all of its elements were such (the first and the last decide: the elements
+// are monotonic), an upper bound for a range that straddles int32.
 func elemUnit(it Value) uint64 {
 	switch it := it.(type) {
+	case rangeValue:
+		return satAdd(allocBytesPerValue, rangeBoxBytes(it))
 	case stringElems:
 		if !it.ords {
 			return allocBytesPerNewValue
@@ -646,6 +699,38 @@ func elemUnit(it Value) uint64 {
 		}
 	}
 	return allocBytesPerValue
+}
+
+func fitsInt32(x int) bool { return math.MinInt32 <= int64(x) && int64(x) <= math.MaxInt32 }
+
+// rangeBoxBytes is the size of the box of each element of r if it has an
+// element beyond int32, and 0 if all of them are small.
+func rangeBoxBytes(r rangeValue) uint64 {
+	if r.len <= 0 {
+		return 0
+	}
+	last := r.start + (r.len-1)*r.step
+	if fitsInt32(r.start) && fitsInt32(last) {
+		return 0
+	}
+	return intBytesOfWords(1)
+}
+
+// chargeTupleOf charges for a new Tuple of n elements built from it: the
+// slots, and the boxes of the integers of a range beyond int32.
+func (thread *Thread) chargeTupleOf(n int, it Value) error {
+	if n <= 0 {
+		return thread.chargeTuple(n)
+	}
+	b := satAdd(tupleBytes(n), satMul(uint64(n), rangeBoxBytesOf(it)))
+	return thread.charge(b, b)
+}
+
+func rangeBoxBytesOf(it Value) uint64 {
+	if r, ok := it.(rangeValue); ok {
+		return rangeBoxBytes(r)
+	}
+	return 0
 }
 
 // chargeListOf charges for a new List of n elements built from it.
@@ -702,7 +787,7 @@ func (thread *Thread) chargeFrame(nspace int) error {
 // growthBytes is the memory that a dict or set of before entries gains by
 // growing by added entries.
 func growthBytes(before, added int) uint64 {
-	return dictBytes(before+added) - dictBytes(before)
+	return dictBytes(addSizes(before, added)) - dictBytes(before)
 }
 
 // roomGrowth refuses, before anything is done, a growth of a dict or set of
@@ -713,7 +798,7 @@ func (thread *Thread) roomGrowth(before, bound int) error {
 	if bound <= 0 {
 		return nil
 	}
-	return thread.checkRoom(dictBytes(before+bound), growthBytes(before, bound))
+	return thread.checkRoom(dictBytes(addSizes(before, bound)), growthBytes(before, bound))
 }
 
 // chargeGrowth charges the entries that the operation of m added to a table
