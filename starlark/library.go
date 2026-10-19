@@ -3562,16 +3562,15 @@ var searchScanned func(n int)
 // the work of the search BEFORE it is made, as it goes: the work is that of the
 // distance searched (workSearch of it: the whole of s if sub is not in it), and
 // the distance is not known until it is searched, so s is searched in windows
-// whose work is charged before each one. The first window is 64 bytes (or 16
+// whose work is charged before each one. The first window is 64 bytes (or 2
 // lengths of sub, if that is more: a search reads the needle), and each is twice
 // the last up to the bytes of a chunk (flushWork units, or 16 lengths of sub if
-// that is more), so a match near the
-// start costs about the work of the distance (at most twice, and the first
-// window), a search that is refused is refused before the window that does not
-// fit, and no window is made after the limit: the work done and not charged is
-// never more than a chunk. A window overlaps the one before by len(sub)-1 bytes
-// (a match across the join), and is at least 16 len(sub) long, so the bytes
-// that are read are at most 17/16 of those that are charged.
+// that is more), so a match near the start costs about the work of the
+// distance (at most twice, and the first window), a search that is refused is
+// refused before the window that does not fit, and no window is made after the
+// limit: the work done and not charged is never more than a chunk. A window
+// overlaps the one before by len(sub)-1 bytes (a match across the join): the
+// bytes that are read are at most 17/16 of the haystack, and 4 needles.
 func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 	n, m := len(s), len(sub)
 	if m == 0 { // found at once, nothing is read
@@ -3580,11 +3579,14 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 		}
 		return 0, nil
 	}
-	// A window is at least 16 needles: the m-1 bytes that it shares with the
-	// one before are scanned twice, at most a sixteenth more than the bytes
-	// that are charged.
+	// The first window is two needles (or 64 bytes) and each is twice the last,
+	// up to the chunk, which is 16 needles at least: the m-1 bytes that a window
+	// shares with the one before are scanned twice, at most a half in the first
+	// (then a quarter, an eighth, ...) and a sixteenth in the others, so the
+	// bytes scanned are at most 17/16 of the haystack and 4 needles. A match
+	// near the start is charged two windows at most (6 needles).
 	chunk := max(flushWork*searchDivisor(m), 16*m) // bytes
-	step := max(64, 16*m)
+	step := max(64, 2*m)
 	var charged uint64
 	charge := func(bound int) error {
 		if w := workSearch(bound, m); w > charged {

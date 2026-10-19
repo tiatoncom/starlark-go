@@ -363,7 +363,9 @@ func TestG1bSearchCharged_ScansAtMostASixteenthMore(t *testing.T) {
 			if err != nil || i != c.found {
 				t.Fatalf("m=%d %s: got %d, %v, want %d", m, c.name, i, err, c.found)
 			}
-			if max := n + n/16; scanned > max {
+			// (the first windows are 2, 4 and 8 needles and overlap by one: at most
+			// 3 needles more, and the 4 needles of the last)
+			if max := n + n/16 + 4*m; scanned > max {
 				t.Errorf("m=%d %s: %d bytes scanned of a haystack of %d, want at most %d", m, c.name, scanned, n, max)
 			}
 			if scanned < n-m { // the whole of it is looked at
@@ -376,6 +378,35 @@ func TestG1bSearchCharged_ScansAtMostASixteenthMore(t *testing.T) {
 	(&Thread{}).searchCharged(strings.Repeat("a", n), "b", false)
 	if scanned != n {
 		t.Errorf("a needle of one byte: %d bytes scanned of %d", scanned, n)
+	}
+}
+
+// A match of a long needle near the start is charged at most two windows: the
+// first is max(64, 2m) bytes, the second twice that, so the bytes decided are
+// at most 6m, and a match in the first window (here, at 70, for 2m > 70) is
+// charged exactly the first: workSearch(2m, m). A match that the first window
+// does not hold (at 2m) is charged the two, workSearch(6m, m), and no more.
+func TestG1bSearchCharged_EarlyMatchOfALongNeedleIsTwoWindows(t *testing.T) {
+	const n = 1 << 22
+	for _, m := range []int{200, 1000, 10000} {
+		needle := g1bRep("a", m)
+		for _, name := range []string{"find", "index", "partition"} {
+			// at 70: the first window
+			hay := g1bRep("x", 70) + needle + g1bRep("x", n)
+			if got, want := g1bCall2(stringMethods[name], hay, Tuple{needle})-isBaseCall, workSearch(2*m, m); got != want {
+				t.Errorf("%s, needle %d: a match at 70 is charged %d, want %d (the first window of %d bytes)", name, m, got, want, 2*m)
+			}
+			// at 2m: the second
+			hay = g1bRep("x", 2*m) + needle + g1bRep("x", n)
+			if got, want := g1bCall2(stringMethods[name], hay, Tuple{needle})-isBaseCall, workSearch(6*m, m); got != want {
+				t.Errorf("%s, needle %d: a match at %d is charged %d, want %d (two windows: 6m bytes)", name, m, 2*m, got, want)
+			}
+		}
+		// from the end: the same
+		hay := g1bRep("x", n) + needle + g1bRep("x", 70)
+		if got, want := g1bCall2(stringMethods["rfind"], hay, Tuple{needle})-isBaseCall, workSearch(2*m, m); got != want {
+			t.Errorf("rfind, needle %d: a match 70 from the end is charged %d, want %d", m, got, want)
+		}
 	}
 }
 
