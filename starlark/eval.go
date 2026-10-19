@@ -690,7 +690,7 @@ func listExtend(thread *Thread, x *List, y Iterable) error {
 		// Known length (fast path for list += list): check before growing.
 		// (the sum is saturated: a range of 2**63-1 elements must not wrap it)
 		total := addSizes(len(x.elems), n)
-		if err := thread.charge(listBytes(total), satMul(uint64(n), allocBytesPerValue)); err != nil {
+		if err := thread.charge(listBytes(total), satAdd(satMul(uint64(n), allocBytesPerValue), rangeBoxTotal(n, y))); err != nil {
 			return excess(err, "excessive list extension (%d + %d elements)", len(x.elems), n)
 		}
 		// A unit for each element that is added, and for each that is there if

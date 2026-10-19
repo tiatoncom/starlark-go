@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"go.starlark.net/internal/sizes"
 	"go.starlark.net/syntax"
 )
 
@@ -395,6 +396,9 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 	if n := Len(iterable); n >= 0 {
 		// common case: known length
 		if err := thread.chargeItems(n); err != nil {
+			return nil, excess(err, "enumerate: excessive size (%d elements)", n)
+		}
+		if err := thread.chargeRangeBoxes(n, iterable); err != nil {
 			return nil, excess(err, "enumerate: excessive size (%d elements)", n)
 		}
 		pairs = make([]Value, 0, n)
@@ -1328,6 +1332,11 @@ func set(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	if err := thread.chargeEntries(0); err != nil {
 		return nil, excess(err, "set: excessive size")
 	}
+	if n > 0 {
+		if err := thread.chargeRangeBoxes(n, iterable); err != nil {
+			return nil, excess(err, "set: excessive size (%d elements)", n)
+		}
+	}
 	set := new(Set)
 	if iterable != nil {
 		iter := iterable.Iterate()
@@ -1662,7 +1671,11 @@ func zip(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 	if rows >= 0 {
 		// length known
 		b := satAdd(allocBaseList, satMul(uint64(rows), rowBytes))
-		if err := thread.charge(b, b); err != nil {
+		boxes := uint64(0) // the integers of the ranges that are zipped
+		for _, seq := range args {
+			boxes = satAdd(boxes, rangeBoxTotal(rows, seq))
+		}
+		if err := thread.charge(b, satAdd(b, boxes)); err != nil {
 			return nil, excess(err, "zip: excessive size (%d rows of %d)", rows, cols)
 		}
 		result = make([]Value, rows)
@@ -3633,8 +3646,7 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 	// (then a quarter, an eighth, ...) and a sixteenth in the others, so the
 	// bytes scanned are at most 17/16 of the haystack and 4 needles. A match
 	// near the start is charged two windows at most (6 needles).
-	chunk := max(flushWork*searchDivisor(m), 16*m) // bytes
-	step := max(64, 2*m)
+	chunk, step := searchWindowSizes(m) // bytes
 	var charged uint64
 	charge := func(bound int) error {
 		if w := workSearch(bound, m); w > charged {
@@ -3646,7 +3658,7 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 		return nil
 	}
 	for done := 0; done < n; {
-		next := min(n, done+step) // bytes decided by this window, counted from the end if last
+		next := searchNext(done, step, n) // bytes decided by this window, counted from the end if last
 		if err := charge(next); err != nil {
 			return -1, err
 		}
@@ -3661,7 +3673,7 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 				return i, charge(n - i)
 			}
 		} else {
-			hi := min(n, next+m-1)
+			hi := min(n, sizes.Add(next, m)-1)
 			if searchScanned != nil {
 				searchScanned(hi - done)
 			}
@@ -3671,10 +3683,22 @@ func (thread *Thread) searchCharged(s, sub string, last bool) (int, error) {
 			}
 		}
 		done = next
-		step = min(step*2, chunk)
+		step = min(sizes.Mul(step, 2), chunk)
 	}
 	return -1, nil
 }
+
+// searchWindowSizes returns the bytes of the largest window (a chunk: the work
+// of flushWork units, or 16 needles if that is more) and of the first (two
+// needles, or 64 bytes) of a search for a needle of m bytes. The products are
+// saturated: a needle of 128 MB made 16*m negative on a platform of 32-bit ints.
+func searchWindowSizes(m int) (chunk, step int) {
+	return max(sizes.Mul(flushWork, searchDivisor(m)), sizes.Mul(16, m)), max(64, sizes.Mul(2, m))
+}
+
+// searchNext is the end of the window that starts at done and is step bytes
+// long, in a haystack of n bytes (the sum is saturated).
+func searchNext(done, step, n int) int { return min(n, sizes.Add(done, step)) }
 
 // searchDivisor is the bytes of a haystack that workSearch charges a unit for,
 // for a needle of m bytes.
@@ -3859,8 +3883,13 @@ func setUpdateM(thread *Thread, m *meter, s *Set, args Tuple, kwargs []Tuple) er
 		if err := func() error {
 			iter := iterable.Iterate()
 			defer iter.Done()
-			if Len(arg) >= 0 {
-				return s.insertAllM(m, iter) // charged by the caller
+			if n := Len(arg); n >= 0 {
+				// (the slots are charged by the caller, the integers of a
+				// range are charged here, before they are made)
+				if err := thread.chargeRangeBoxes(n, arg); err != nil {
+					return excess(err, "excessive size (%d elements)", n)
+				}
+				return s.insertAllM(m, iter)
 			}
 			// Unknown length: charge each element as it comes.
 			ci := &chargedIter{Iterator: iter, thread: thread, have: s.Len(), unit: allocBytesPerEntry}

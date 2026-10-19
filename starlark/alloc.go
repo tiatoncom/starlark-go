@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"math/bits"
 	"strings"
 
+	"go.starlark.net/internal/sizes"
 	"go.starlark.net/syntax"
 )
 
@@ -432,36 +432,18 @@ func shallowSize(v Value) uint64 {
 	return 0
 }
 
-func satAdd(a, b uint64) uint64 {
-	s, carry := bits.Add64(a, b, 0)
-	if carry != 0 {
-		return math.MaxUint64
-	}
-	return s
-}
+// satAdd and satMul are the saturating sum and product of byte counts
+// (internal/sizes: the one implementation).
+func satAdd(a, b uint64) uint64 { return sizes.AddU64(a, b) }
 
-func satMul(a, b uint64) uint64 {
-	hi, lo := bits.Mul64(a, b)
-	if hi != 0 {
-		return math.MaxUint64
-	}
-	return lo
-}
+func satMul(a, b uint64) uint64 { return sizes.MulU64(a, b) }
 
 // addSizes is the sum of sizes (lengths, counts) that are not negative,
 // saturated at MaxInt: a sum of the lengths of operands that need not exist
 // (a range of 2**63-1 elements) must not wrap around to a small or negative
 // size that every check lets through. The result is then refused, by the
 // ceiling or by the budget, like any size that is too large.
-func addSizes(a int, rest ...int) int {
-	for _, b := range rest {
-		if a > math.MaxInt-b {
-			return math.MaxInt
-		}
-		a += b
-	}
-	return a
-}
+func addSizes(a int, rest ...int) int { return sizes.Sum(a, rest...) }
 
 // sliceLen returns the number of elements of the slice [start:end:step]
 // after slice has normalized its indices.
@@ -730,6 +712,26 @@ func rangeBoxBytes(r rangeValue) uint64 {
 		return 0
 	}
 	return intBytesOfWords(1)
+}
+
+// rangeBoxTotal is the size of the boxes of the n elements that are taken from
+// it, if it is a range with an element beyond int32 (rangeBoxBytes of each),
+// else 0. THE rule of the integers of a range that a consumer keeps: list,
+// tuple, sorted, reversed, list.extend and +=, f(*r), enumerate, zip, set and
+// the set methods that add its elements charge it.
+func rangeBoxTotal(n int, it Value) uint64 {
+	if n <= 0 {
+		return 0
+	}
+	return satMul(uint64(n), rangeBoxBytesOf(it))
+}
+
+// chargeRangeBoxes charges rangeBoxTotal.
+func (thread *Thread) chargeRangeBoxes(n int, it Value) error {
+	if b := rangeBoxTotal(n, it); b > 0 {
+		return thread.charge(b, b)
+	}
+	return nil
 }
 
 // chargeTupleOf charges for a new Tuple of n elements built from it: the

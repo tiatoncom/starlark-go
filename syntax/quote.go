@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"go.starlark.net/internal/sizes"
 )
 
 // unesc maps single-letter chars following \ to their actual values.
@@ -353,29 +355,33 @@ func QuoteLen(s string, b bool) int {
 			for j < len(s) && plainASCII(s[j]) {
 				j++
 			}
-			n += j
+			n = sizes.Add(n, j)
 			width = j
 			continue
 		}
 		if r >= utf8.RuneSelf {
 			r, width = utf8.DecodeRuneInString(s)
 		}
+		var w int // the bytes of this character in the form
 		switch {
 		case width == 1 && r == utf8.RuneError:
-			n += 4 // \xXX
+			w = 4 // \xXX
 		case r == '"' || r == '\\':
-			n += 2
+			w = 2
 		case strconv.IsPrint(r):
-			n += utf8.RuneLen(r)
+			w = utf8.RuneLen(r)
 		case r == '\a' || r == '\b' || r == '\f' || r == '\n' || r == '\r' || r == '\t' || r == '\v':
-			n += 2
+			w = 2
 		case r < ' ' || r == 0x7f:
-			n += 4 // \xXX
+			w = 4 // \xXX
 		case r < 0x10000:
-			n += 6 // \uXXXX
+			w = 6 // \uXXXX
 		default:
-			n += 10 // \UXXXXXXXX
+			w = 10 // \UXXXXXXXX
 		}
+		// (saturated: the form of a string of a gigabyte is 10 times its size,
+		// which wraps on a platform of 32-bit ints)
+		n = sizes.Add(n, w)
 	}
 	return n
 }
