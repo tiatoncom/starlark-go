@@ -290,6 +290,13 @@ func (g *generator) pricesGroup() {
 	s := g.src(fPrices)
 	for _, loc := range rePriceReturn.FindAllStringSubmatchIndex(s, -1) {
 		a, e := loc[2], loc[3]
+		if strings.TrimSpace(s[a:e]) == "p" {
+			// price.fixed returns the price itself, not a number: its value is
+			// the work of the call (p.call), zeroed or halved.
+			g.add(fPrices, a, e, "func() price { p.call = 0; return p }()", "ZERO return p (the call of the price)")
+			g.add(fPrices, a, e, "func() price { p.call /= 2; return p }()", "HALF return p (the call of the price)")
+			continue
+		}
 		g.zeroAndHalf(fPrices, a, e, "return "+oneLine(s[a:e], 70))
 	}
 	w := g.src(fWork)

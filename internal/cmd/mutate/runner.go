@@ -212,10 +212,12 @@ func (r *Runner) Baseline() error {
 }
 
 var (
-	reUnused   = regexp.MustCompile(`declared and not used: (\w+)`)
-	reNotUsed  = regexp.MustCompile(`is not used`)
-	reFailLine = regexp.MustCompile(`(?m)^--- FAIL: (\S+)`)
-	reTimedOut = regexp.MustCompile(`panic: test timed out after`)
+	reUnused  = regexp.MustCompile(`declared and not used: (\w+)`)
+	reNotUsed = regexp.MustCompile(`is not used`)
+	// an import that only the span used (the span is zeroed)
+	reImportUnused = regexp.MustCompile(`"[\w/.]+" imported and not used`)
+	reFailLine     = regexp.MustCompile(`(?m)^--- FAIL: (\S+)`)
+	reTimedOut     = regexp.MustCompile(`panic: test timed out after`)
 )
 
 // RunMutant makes the mutant, decides it, and restores the file. src is the
@@ -236,22 +238,30 @@ func (r *Runner) RunMutant(m Mutant, src string) (res Result, err error) {
 	if d.Verdict == KilledBuild && (m.After == "error(nil)" || m.After == "0") {
 		// The span was an expression the code uses (a call, a price): give the
 		// replacement a form that builds, once.
-		alt := ""
+		var alts []string
 		x := reUnused.FindStringSubmatch(d.Detail)
 		switch {
 		case x != nil && m.After == "error(nil)":
-			alt = "func() error { _ = " + x[1] + "; return nil }()"
+			alts = append(alts, "func() error { _ = "+x[1]+"; return nil }()")
 		case x != nil:
-			alt = "func() uint64 { _ = " + x[1] + "; return 0 }()"
+			// (0 times the span first: it keeps the type of the span, an int
+			// or a uint64, and keeps what the span used in use; the literal
+			// is a uint64 only)
+			alts = append(alts, "0 * ("+src[m.Start:m.End]+")", "func() uint64 { _ = "+x[1]+"; return 0 }()")
+		case reImportUnused.MatchString(d.Detail) && m.After == "0":
+			alts = append(alts, "0 * ("+src[m.Start:m.End]+")")
 		case reNotUsed.MatchString(d.Detail) && m.After == "error(nil)":
-			alt = "_ = error(nil)"
+			alts = append(alts, "_ = error(nil)")
 		}
-		if alt != "" {
+		for _, alt := range alts {
 			if err = r.T.Write(m.File, src[:m.Start]+alt+src[m.End:]); err != nil {
 				return res, err
 			}
 			d = r.decide()
 			d.Retry = alt
+			if d.Verdict != KilledBuild {
+				break
+			}
 		}
 	}
 	d.ID, d.Group, d.Index, d.File, d.Line, d.Note, d.Before, d.After = res.ID, res.Group, res.Index, res.File, res.Line, res.Note, res.Before, res.After

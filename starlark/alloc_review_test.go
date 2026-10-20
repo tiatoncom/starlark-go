@@ -157,18 +157,33 @@ func TestDeepNesting_Limit(t *testing.T) {
 
 func TestRangeSlice_OverflowIsAnError(t *testing.T) {
 	for _, c := range []struct{ src, want string }{
-		// the product of the steps wraps to 0
-		{"x = range(10)[::1 << 30][::1 << 30][::1 << 30]", "range slice is out of range"},
-		// the product of the steps wraps to a non-zero number
-		{"x = range(10)[::2147483647][::2147483647][::2147483647]", "range slice is out of range"},
-		// the stop (start + step * end) overflows
-		{"x = range(9223372036854775000, 9223372036854775807, 1000)[0:1]", "range slice is out of range"},
+		// two elements (-2**63 and 0) at a step of 2**63, which is no int
+		// (v0.2.3 wrapped the step round to another range)
+		{"x = range(-(1 << 63), (1 << 63) - 1, 1 << 61)[::4]", "range slice is out of range"},
 		// the length does not fit an int
 		{"x = range(-(1 << 62), 1 << 62)", "range is too long"},
 	} {
 		r := runProg(t, 0, c.src)
 		if r.err == nil || !strings.Contains(r.err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want %q", c.src, r.err, c.want)
+		}
+	}
+	// A slice of ONE element whose step (or end) does not fit an int is the
+	// range of that element (G5-2): its length, the element and the iteration.
+	// The expectations are what v0.2.3 gives, run on v0.2.3 (the worktree of
+	// the review at c73d478), where it is right, and the true value where it
+	// is not (Compatibility): the first panics there ("rangeLen: zero step":
+	// the product of three steps of 2**30 wraps to 0), the second is [0], and
+	// the third is the EMPTY range there (the stop wrapped round to a number
+	// below the start), where the slice has the one element it has.
+	for _, c := range []struct{ src, elem string }{
+		{"range(10)[::1 << 30][::1 << 30][::1 << 30]", "0"},
+		{"range(10)[::2147483647][::2147483647][::2147483647]", "0"},
+		{"range(9223372036854775000, 9223372036854775807, 1000)[0:1]", "9223372036854775000"},
+	} {
+		r := runProg(t, 0, "x = "+c.src+"\nif len(x) != 1 or x[0] != "+c.elem+" or list(x) != ["+c.elem+"]: fail('one element')\n")
+		if r.err != nil {
+			t.Errorf("%s: err = %v, want the range of the one element %s", c.src, r.err, c.elem)
 		}
 	}
 	// Legitimate slices of ranges are unchanged.

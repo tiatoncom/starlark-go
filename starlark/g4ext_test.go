@@ -137,6 +137,40 @@ func TestG4SmallKeyInAChainOfBigIntsIsCharged(t *testing.T) {
 	}
 }
 
+// G6 (calls-0115, calls-0197): the join of an iterable that is not a list or a
+// tuple (the keys of a dict) is charged a unit for each element as it goes
+// (the meter), besides the bytes of the elements it collects and the scan of
+// the result: the exact work, for 1000 keys of 3 or 4 bytes with a separator
+// of 1.
+func TestG4JoinOfADictChargesAUnitForEachKey(t *testing.T) {
+	d := starlark.NewDict(1000)
+	var elems []starlark.Value
+	for i := 0; i < 1000; i++ {
+		d.SetKey(starlark.String(strconv.Itoa(1000+i)), starlark.None)
+		elems = append(elems, starlark.String(strconv.Itoa(1000+i)))
+	}
+	work := func(v starlark.Value) uint64 {
+		th := &starlark.Thread{}
+		if _, err := starlark.ExecFile(th, "j.star", "r = ','.join(V)", starlark.StringDict{"V": v}); err != nil {
+			t.Fatal(err)
+		}
+		return th.Work()
+	}
+	wd, wl := work(d), work(starlark.NewList(elems))
+	t.Logf("join of 1000 keys: dict %d, list %d", wd, wl)
+	// the list: its length + the scan of the 4999 bytes of the result (+ the call);
+	// the dict: the same, and the elements it collects are charged to the budget
+	// (a slot each: allocBytesPerValue / allocBytesPerWork units)
+	// list: 1000 (a unit for each element, charged before the sizing) + 89 (the
+	// scan of the result); dict: 1000 (the meter, a unit for each key as it
+	// comes) + 1000 (the slots it collects: 16 bytes each, a unit for 16) + 89.
+	// Without the meter's unit (calls-0115) the dict is 1089, with less than
+	// the unit (calls-0197, halved) less than 2089: both are red here.
+	if wd != 2089 || wl != 1089 {
+		t.Errorf("join of 1000 keys: dict %d, list %d, want 2089 and 1089", wd, wl)
+	}
+}
+
 // The family is real: 2000 distinct ints of one hash.
 func TestG4CollidingFamilyIsOneHash(t *testing.T) {
 	_, g := g4ExtWork(t, g4CollidingInts)

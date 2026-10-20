@@ -261,7 +261,7 @@ func (g *generator) structGroup() {
 	s(fSizes, `if b > 0 && a > math.MaxInt-b {\n\t\treturn math.MaxInt\n\t}`, `if false {\n\t\treturn math.MaxInt\n\t}`, `sizes.Add (addSizes): saturation removed`)
 	s(fAlloc, `if bits <= 31 {`, `if bits <= 0 {`, `BigIntAllocBytes: a small int is charged`)
 	s(fAlloc, `intBytesOfWords((uint64(bits) + 63) / 64)`, `intBytesOfWords(uint64(bits) / 64)`, `BigIntAllocBytes: the words are rounded down`)
-	s(fAlloc, `if fitsInt32(r.start) && fitsInt32(last) {`, `if true {`, `rangeBoxBytes: a range beyond int32 is not boxed`)
+	s(fAlloc, `if fitsInt32(r.start) && fitsInt32(last) {`, `if true || fitsInt32(last) {`, `rangeBoxBytes: a range beyond int32 is not boxed`)
 	s(fAlloc, `return intBytesOfWords(1)\n}`, `return 0\n}`, `rangeBoxBytes: the box of an element is free`)
 	s(fAlloc, `last := r.start + (r.len-1)*r.step`, `last := r.start`, `rangeBoxBytes: the last element is the first`)
 	s(fAlloc, `b := satAdd(tupleBytes(n), satMul(uint64(n), rangeBoxBytesOf(it)))`, `b := tupleBytes(n)`, `chargeTupleOf: the boxes of a range are not charged`)

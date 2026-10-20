@@ -287,7 +287,9 @@ func TestRunMutantRetriesAnUnusedVariableOfAPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(seen) != 2 || !strings.HasPrefix(seen[1], "func() uint64 { _ = s; return 0 }()") || res.Retry == "" {
+	// 0 times the span first (it keeps the type), then the literal with the
+	// variable used; the last one tried is the retry.
+	if len(seen) != 3 || !strings.HasPrefix(seen[1], "0 * (") || !strings.HasPrefix(seen[2], "func() uint64 { _ = s; return 0 }()") || res.Retry == "" {
 		t.Fatalf("seen %q retry %q", seen, res.Retry)
 	}
 }
