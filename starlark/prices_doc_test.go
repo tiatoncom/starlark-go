@@ -63,7 +63,7 @@ func TestWritePricesDoc(t *testing.T) {
 		}
 	}
 	sort.Slice(worst, func(i, j int) bool { return worst[i].nsPerUnit > worst[j].nsPerUnit })
-	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of seven runs, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = %d ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(starlark.WorkNanoseconds))
+	fmt.Fprintf(&b, "\n## What a unit costs, by probe (%d probes)\n\nThe time is the least of six processes of seven repeats, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = %d ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:\n\n| probe | ns | work | ns / unit |\n|---|---|---|---|\n", len(rows), int(starlark.WorkNanoseconds))
 	for i, r := range worst {
 		if i >= 15 {
 			break

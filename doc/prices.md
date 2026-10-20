@@ -11,7 +11,7 @@ The steps of a program (`Thread.Steps`, `ExecutionSteps()`) are what they were i
 
 ## What a unit costs, by probe (358 probes)
 
-The time is the least of seven runs, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = 12 ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:
+The time is the least of six processes of seven repeats, measured by `TestCalibrate` (the date and the load of the machine are in the header of `calibrate_floors_test.go`; doc/budgets.md says what they mean); the work is what the operation is charged now. The ratio is the nanoseconds a unit of work bought in that probe: no probe is over C = 12 ns (`TestWork_NoProbeCostsMoreThanC`) and every priced one is held to it (`TestPrices_AtLeastTheMeasuredCost`). The worst of the operations that are priced:
 
 | probe | ns | work | ns / unit |
 |---|---|---|---|
